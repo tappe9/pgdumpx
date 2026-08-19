@@ -59,6 +59,7 @@ jobs:
         run: |
           set +e
           bash -Eeuo pipefail <<'VERIFY' 2>&1 | tee /tmp/issue-5-green.log
+          cargo fmt
           bash scripts/generate-alpha1-fixtures.sh
           cargo test -p pgdumpx --test fixture_manifest
           cargo fmt --check
