@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feat/first-end-to-end-find
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
