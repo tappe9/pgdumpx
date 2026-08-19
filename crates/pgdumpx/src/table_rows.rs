@@ -64,6 +64,7 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         self.rows.next_row()
     }
 
+    #[cfg(test)]
     pub(crate) const fn consumed_input_bytes(&self) -> u64 {
         self.rows.consumed_input_bytes()
     }
