@@ -40,6 +40,10 @@ Archive behavior must not depend on terminal output, Python, Arrow, a PostgreSQL
 
 The project must include repeatable benchmarks before making comparative performance claims.
 
+### G-008 — Bounded scan work
+
+The library must provide a way for applications to bound total row-scan/decompression work in addition to bounding individual metadata and row allocations.
+
 ## 3. Non-goals for v0.1
 
 v0.1 will not:
@@ -51,6 +55,7 @@ v0.1 will not:
 - support Directory (`-Fd`) or Tar (`-Ft`) formats;
 - support arbitrary historical archive versions older than 1.14;
 - guarantee Binary COPY decoding;
+- provide row-aware parsing for INSERT-based dump modes such as `--inserts`, `--column-inserts`, or INSERT output produced by `--rows-per-insert`;
 - provide a SQL `WHERE` parser or general SQL expression engine;
 - provide a persistent row-level index or guarantee constant-time row lookup;
 - expose Arrow, Polars, Parquet, or Python APIs from the core crate;
@@ -152,18 +157,22 @@ The library must provide a row iterator/reader for supported table-data entries 
 
 The parser must correctly handle at least:
 
-- tab-separated fields;
+- tab-separated fields in the normal pg_dump COPY text representation;
 - newline record boundaries;
 - `\N` NULL marker;
-- backslash escapes used by COPY text;
+- PostgreSQL COPY text backslash escapes;
 - empty non-NULL fields;
 - `\.` end-of-data marker when present in the stream representation;
 - rows larger than the configured row limit;
 - non-UTF-8 field bytes at the byte-oriented API layer.
 
+Detailed byte semantics live in `docs/COPY-TEXT.md` and must remain consistent with this requirement.
+
 ### FR-015 — Byte-oriented field access
 
 The core row API must allow fields to be consumed as bytes. String conversion is an explicit convenience operation, not a parser prerequisite.
+
+`FieldRef::Bytes` represents logical field bytes **after COPY text escape decoding**, not the escaped archive spelling.
 
 ### FR-016 — Metadata-only inspection
 
@@ -174,6 +183,25 @@ Callers must be able to enumerate header and TOC information without touching en
 For supported pg_dump-generated table-data entries, pgdumpx must derive the COPY column layout from the entry's recorded COPY statement when the required metadata is available.
 
 The row reader must expose column names as bytes and provide efficient name-to-index lookup.
+
+Column-aware APIs must distinguish:
+
+```text
+metadata valid + column found      -> Ok(Some(index))
+metadata valid + column not found  -> Ok(None)
+metadata unavailable/malformed     -> Err(...)
+```
+
+Representative direction:
+
+```rust
+pub fn columns(&self) -> Result<&[Column], PgDumpError>;
+
+pub fn column_index(
+    &self,
+    name: &[u8],
+) -> Result<Option<usize>, PgDumpError>;
+```
 
 If table rows are positionally readable but the supported column layout cannot be derived, positional row iteration may remain available, while column-aware lookup/filtering must fail explicitly with a typed error rather than guessing field names.
 
@@ -219,6 +247,35 @@ Therefore first-match lookup is a sequential scan within the selected table:
 
 The project must not describe this API as database-index lookup or imply constant-time row access.
 
+### FR-021 — Explicit unsupported table-data representation
+
+Before row-aware parsing, pgdumpx must determine whether the selected entry is supported as COPY text from the available TOC/table-data metadata.
+
+INSERT-based dump modes such as `--inserts`, `--column-inserts`, and INSERT output produced through `--rows-per-insert` must not be sent through the COPY text parser.
+
+Row-aware access to such data must return a typed error equivalent to `UnsupportedTableDataRepresentation`. Raw entry extraction may remain available if the archive entry itself is readable.
+
+### FR-022 — Scan work budgets
+
+Long-running row operations must support configurable work budgets equivalent in purpose to:
+
+```rust
+pub struct ScanLimits {
+    pub max_rows: Option<u64>,
+    pub max_decompressed_bytes: Option<u64>,
+}
+```
+
+Exact naming and defaults may evolve during TDD.
+
+Requirements:
+
+- row count is checked using overflow-safe accounting;
+- decompressed-byte accounting applies to bytes consumed for the selected row-aware operation;
+- exceeding a configured budget returns a typed resource-limit error;
+- budget enforcement must not require buffering the complete entry;
+- the library must expose this mechanism directly rather than requiring every caller to reimplement the scan loop.
+
 ## 5. CLI requirements
 
 ### CLI-001 — Inspect
@@ -243,13 +300,27 @@ List TOC entries with stable, understandable identifiers and schema/name context
 pgdumpx extract <FILE> <SCHEMA.TABLE>
 ```
 
-Stream the selected table's decompressed COPY text data to stdout by default. Structured conversion options are deferred unless they naturally fit v0.1.
+Stream the selected table's decompressed entry data to stdout by default. Structured conversion options are deferred unless they naturally fit v0.1.
 
-### CLI-004 — Exit behavior
+### CLI-004 — Find first matching field value
 
-I/O, format, decompression, COPY, or integrity errors must result in a non-zero exit code and diagnostics on stderr.
+```text
+pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+```
 
-A CLI query language is not required for v0.1; first-match filtering is initially a core Rust API capability.
+The command must resolve the column through the same COPY column metadata path as the library and return the first row whose selected field equals the provided byte/string value according to the CLI's documented encoding rules.
+
+It must use the core streaming `find_first` path rather than implementing a separate parser.
+
+The command is intentionally narrow. A SQL `WHERE` parser or general condition DSL is not required for v0.1.
+
+The CLI should expose practical scan-budget options once exact names are established, for example maximum rows and/or maximum decompressed bytes.
+
+### CLI-005 — Exit behavior
+
+I/O, format, decompression, COPY, integrity, unsupported-representation, unknown-column, or resource-limit errors must result in a non-zero exit code and diagnostics on stderr.
+
+A no-match result for `find` must have documented, stable behavior that is distinguishable from parser failure.
 
 ## 6. Error requirements
 
@@ -272,12 +343,13 @@ Expected categories include:
 - decompression failure;
 - malformed COPY row/escape;
 - malformed or unavailable COPY column metadata;
+- unsupported table-data representation;
 - unknown requested column where a convenience API requires one;
-- resource limit exceeded;
+- resource limit exceeded, including scan budgets;
 - arithmetic overflow;
 - UTF-8 conversion failure for explicit string accessors.
 
-Errors should include byte offsets, dump IDs, or object context where meaningful.
+Errors should include byte offsets, dump IDs, object context, row numbers, or resource-limit context where meaningful.
 
 ## 7. Resource and safety requirements
 
@@ -315,11 +387,17 @@ The initial implementation uses no project-authored `unsafe`. Introducing it req
 
 ### SAFE-009 — Decompression resource awareness
 
-The API and documentation must make clear which limits bound individual rows/metadata and where callers must bound total extracted output or scan work to defend against decompression bombs.
+The API and documentation must distinguish individual allocation limits from total scan/decompression work.
+
+Callers processing untrusted input must have a supported way to bound total rows and/or decompressed bytes consumed by a row scan.
 
 ### SAFE-010 — First-match result allocation
 
 Creating an `OwnedRow` for a match must copy only the matched row and must remain bounded by the configured row and field limits.
+
+### SAFE-011 — Scan budget enforcement
+
+Configured scan budgets must be checked on the normal streaming path and terminate processing with a typed error when exceeded. A scan budget is not permission to pre-decompress or pre-count the complete entry.
 
 ## 8. Compatibility requirements
 
@@ -335,6 +413,8 @@ Relevant upstream files include:
 Reference fixtures should be generated by official PostgreSQL `pg_dump`, not invented solely from reverse-engineered assumptions.
 
 Known version conditions that affect supported parsing must be recorded in `docs/PG-DUMP-CUSTOM-FORMAT.md` and tests.
+
+`docs/COMPATIBILITY.md` is the public matrix separating intended support from fixture-verified support. A combination must not be described as verified until reference fixtures and tests support that claim.
 
 ## 9. Testing requirements
 
@@ -356,13 +436,16 @@ The test suite should cover at least:
 - gzip/LZ4/Zstandard entry streaming;
 - short reads across framing boundaries;
 - table/table-data lookup;
-- COPY NULL, empty string, tabs, escapes, embedded escaped newline, and terminator;
+- COPY NULL, empty string, tabs, escapes, embedded escaped control characters, and terminator;
 - non-UTF-8 field bytes;
 - row-size and field-count limits;
 - malformed COPY escapes;
 - supported COPY column-list parsing;
 - byte-oriented column-name lookup;
+- metadata valid + column present;
+- metadata valid + column absent;
 - column metadata unavailable/malformed behavior;
+- INSERT-based table-data representation rejected explicitly by row APIs;
 - first-row first-match;
 - middle/late first-match;
 - no-match result;
@@ -371,6 +454,8 @@ The test suite should cover at least:
 - owned matched row surviving reader drop;
 - non-UTF-8 predicate values;
 - first-match behavior under row/field resource limits;
+- max-row scan budget exceeded;
+- max-decompressed-byte scan budget exceeded;
 - arbitrary-input no-panic fuzzing for metadata and COPY parsing;
 - fixture comparison with `pg_restore` where practical.
 
@@ -384,7 +469,8 @@ v0.1 must include a benchmark harness capable of measuring:
 - peak memory for extraction;
 - COPY parsing throughput;
 - first-match scan with matches near the beginning, middle, end, and absent;
-- compression-specific throughput.
+- compression-specific throughput;
+- overhead of enabled scan-budget accounting.
 
 Performance optimizations must preserve tests and safety invariants.
 
@@ -393,16 +479,22 @@ Performance optimizations must preserve tests and safety invariants.
 v0.1 is ready when:
 
 - the supported archive versions open from reference-generated fixtures;
+- `docs/COMPATIBILITY.md` marks only actually tested combinations as verified;
 - metadata inspection does not read all payloads;
 - a selected table-data entry can be streamed and decompressed;
 - supported COPY text data can be iterated as rows/fields;
+- `FieldRef::Bytes` behavior matches the documented post-escape-decoding contract;
 - supported COPY column metadata can be resolved for column-aware access;
+- missing columns are distinguishable from unavailable/malformed column metadata;
+- INSERT-based unsupported row representations fail explicitly rather than being misparsed as COPY;
 - a caller can return the first row matching a Rust predicate without buffering the table;
 - the returned first-match row is owned and remains valid after reader teardown;
+- row scans can be bounded by configurable total-work budgets;
 - first-match documentation explicitly states sequential-scan performance semantics;
 - resource budgets are enforced with typed errors;
 - malformed parser input has broad boundary/fuzz coverage;
-- CLI inspect/list/extract consume the same public library API;
+- CLI `inspect`, `list`, `extract`, and `find` consume the same public library API;
+- `docs/COPY-TEXT.md` and compatibility documentation match tested behavior;
 - CI passes on supported platforms;
 - public APIs have rustdoc documentation;
 - benchmark methodology is documented;
