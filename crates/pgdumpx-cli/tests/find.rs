@@ -34,21 +34,13 @@ fn official_gzip_fixture_uses_the_same_end_to_end_find_path() {
     let fixture = fixture_path("pg18-gzip-copy-basic.dump");
     let output = run_find(&fixture, "public.orders", "order_number", "SECOND-200");
 
-    assert_match(
-        output,
-        b"2\tSECOND-200\trepeat\ttab\\tvalue\tfilled\n",
-    );
+    assert_match(output, b"2\tSECOND-200\trepeat\ttab\\tvalue\tfilled\n");
 }
 
 #[test]
 fn no_match_is_exit_one_with_clean_stdout_and_stderr() {
     let fixture = fixture_path("pg18-none-copy-basic.dump");
-    let output = run_find(
-        &fixture,
-        "public.orders",
-        "order_number",
-        "NOT-PRESENT",
-    );
+    let output = run_find(&fixture, "public.orders", "order_number", "NOT-PRESENT");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
@@ -158,11 +150,7 @@ fn non_utf8_query_argument_is_rejected_as_usage_error() {
 
 #[test]
 fn wrong_command_and_wrong_argument_count_are_usage_failures() {
-    for args in [
-        vec!["inspect"],
-        vec!["find"],
-        vec!["find", "only-a-file"],
-    ] {
+    for args in [vec!["inspect"], vec!["find"], vec!["find", "only-a-file"]] {
         let output = Command::new(env!("CARGO_BIN_EXE_pgdumpx"))
             .args(args)
             .output()
@@ -219,10 +207,8 @@ struct TempArchive {
 impl TempArchive {
     fn new(bytes: &[u8]) -> Self {
         let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "pgdumpx-cli-{}-{id}.dump",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("pgdumpx-cli-{}-{id}.dump", std::process::id()));
         fs::write(&path, bytes).expect("temporary archive must be writable");
         Self { path }
     }
