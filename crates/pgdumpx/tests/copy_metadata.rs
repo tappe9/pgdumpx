@@ -41,7 +41,10 @@ fn official_fixture_exposes_ordered_columns_and_prepared_lookup() {
 
         let first = columns.as_ptr();
         let second = table.columns().unwrap().as_ptr();
-        assert_eq!(first, second, "column metadata must be parsed and stored once");
+        assert_eq!(
+            first, second,
+            "column metadata must be parsed and stored once"
+        );
     }
 }
 
@@ -49,7 +52,8 @@ fn official_fixture_exposes_ordered_columns_and_prepared_lookup() {
 fn parses_pg_dump_quoted_unquoted_and_non_utf8_column_names_as_bytes() {
     let copy_statement =
         b"COPY public.data (plain, \"spaced name\", \"quote\"\"name\", \"\xff\") FROM stdin;\n";
-    let archive = Archive::open(Cursor::new(archive_with_table_data(Some(copy_statement)))).unwrap();
+    let archive =
+        Archive::open(Cursor::new(archive_with_table_data(Some(copy_statement)))).unwrap();
     let table = archive.table(b"public", b"data").unwrap();
 
     let columns = table.columns().unwrap();
