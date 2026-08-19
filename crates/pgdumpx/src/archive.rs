@@ -90,11 +90,7 @@ impl ArchiveIndex {
         }
 
         let mut tables_by_schema = HashMap::new();
-        reserve_map(
-            &mut tables_by_schema,
-            entries.len(),
-            "table schema index",
-        )?;
+        reserve_map(&mut tables_by_schema, entries.len(), "table schema index")?;
         let mut tables_without_schema = HashMap::new();
         reserve_map(
             &mut tables_without_schema,
@@ -264,9 +260,8 @@ fn catalog_oids_compatible(table_oid: &[u8], data_oid: &[u8]) -> bool {
 }
 
 fn clone_index_bytes(bytes: &[u8], context: &'static str) -> Result<Vec<u8>, PgDumpError> {
-    let requested = u64::try_from(bytes.len()).map_err(|_| PgDumpError::ArithmeticOverflow {
-        offset: 0,
-    })?;
+    let requested =
+        u64::try_from(bytes.len()).map_err(|_| PgDumpError::ArithmeticOverflow { offset: 0 })?;
     let mut copy = Vec::new();
     copy.try_reserve_exact(bytes.len())
         .map_err(|_| PgDumpError::ArchiveIndexAllocationFailed { context, requested })?;
@@ -274,7 +269,7 @@ fn clone_index_bytes(bytes: &[u8], context: &'static str) -> Result<Vec<u8>, PgD
     Ok(copy)
 }
 
-fn reserve_map<K, V>(
+fn reserve_map<K: Eq + std::hash::Hash, V>(
     map: &mut HashMap<K, V>,
     requested: usize,
     context: &'static str,

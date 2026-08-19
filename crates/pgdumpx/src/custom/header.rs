@@ -87,24 +87,11 @@ pub(crate) fn read_header<R: Read>(
         read_archive_integer(reader, integer_size)?,
         read_archive_integer(reader, integer_size)?,
     );
-    let database_name = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        "archive database name",
-    )?;
-    let server_version = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        "archive server version",
-    )?;
-    let dump_version = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        "archive dump version",
-    )?;
+    let database_name =
+        read_required_string(reader, integer_size, limits, "archive database name")?;
+    let server_version =
+        read_required_string(reader, integer_size, limits, "archive server version")?;
+    let dump_version = read_required_string(reader, integer_size, limits, "archive dump version")?;
 
     Ok(ParsedHeader {
         header: ArchiveHeader::new(
@@ -129,8 +116,7 @@ fn read_required_string<R: Read>(
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.string())?.ok_or(
-        PgDumpError::MissingRequiredArchiveString { field, offset },
-    )?;
+    let bytes = read_archive_string(reader, integer_size, limits.string())?
+        .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }

@@ -46,12 +46,7 @@ pub(crate) fn read_toc<R: Read>(
         })?;
 
     for _ in 0..count {
-        entries.push(read_toc_entry(
-            reader,
-            integer_size,
-            offset_size,
-            limits,
-        )?);
+        entries.push(read_toc_entry(reader, integer_size, offset_size, limits)?);
     }
 
     Ok(entries)
@@ -74,14 +69,9 @@ fn read_toc_entry<R: Read>(
     let id = DumpId::from_valid(id_value);
 
     let has_data = read_archive_integer(reader, integer_size)? != 0;
-    let catalog_table_oid = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        "TOC catalog table OID",
-    )?;
-    let catalog_oid =
-        read_required_string(reader, integer_size, limits, "TOC catalog object OID")?;
+    let catalog_table_oid =
+        read_required_string(reader, integer_size, limits, "TOC catalog table OID")?;
+    let catalog_oid = read_required_string(reader, integer_size, limits, "TOC catalog object OID")?;
     let name = read_required_string(reader, integer_size, limits, "TOC tag")?;
     let description = read_required_string(reader, integer_size, limits, "TOC description")?;
 
@@ -183,11 +173,7 @@ fn read_dependencies<R: Read>(
     }
 }
 
-fn parse_dependency(
-    bytes: &[u8],
-    entry_id: DumpId,
-    offset: u64,
-) -> Result<DumpId, PgDumpError> {
+fn parse_dependency(bytes: &[u8], entry_id: DumpId, offset: u64) -> Result<DumpId, PgDumpError> {
     if bytes.is_empty() {
         return Err(PgDumpError::InvalidDependencyEncoding {
             entry_id: entry_id.as_i32(),
@@ -234,9 +220,8 @@ fn read_required_string<R: Read>(
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.string())?.ok_or(
-        PgDumpError::MissingRequiredArchiveString { field, offset },
-    )?;
+    let bytes = read_archive_string(reader, integer_size, limits.string())?
+        .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
 

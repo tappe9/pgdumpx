@@ -40,18 +40,11 @@ pub enum PgDumpError {
     /// Memory for a bounded archive string could not be reserved.
     ArchiveStringAllocationFailed { length: u64, offset: u64 },
     /// A required header or TOC string was encoded as NULL.
-    MissingRequiredArchiveString {
-        field: &'static str,
-        offset: u64,
-    },
+    MissingRequiredArchiveString { field: &'static str, offset: u64 },
     /// The encoded TOC entry count is negative.
     InvalidTocEntryCount { value: i32, offset: u64 },
     /// The encoded TOC entry count exceeds the provisional finite bound.
-    TocEntryLimitExceeded {
-        count: u64,
-        limit: u64,
-        offset: u64,
-    },
+    TocEntryLimitExceeded { count: u64, limit: u64, offset: u64 },
     /// Memory for the bounded TOC vector could not be reserved.
     TocAllocationFailed { count: u64, offset: u64 },
     /// A TOC dump ID is not a positive `i32`.
