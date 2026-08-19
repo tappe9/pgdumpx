@@ -1,3 +1,4 @@
+use crate::copy_metadata::TableDataRepresentation;
 use std::{error::Error, fmt, io};
 
 /// Errors produced while reading PostgreSQL dump archives.
@@ -92,6 +93,25 @@ pub enum PgDumpError {
         first_data_id: i32,
         second_data_id: i32,
     },
+    /// The selected table has no related `TABLE DATA` TOC entry.
+    TableDataEntryUnavailable { table_id: i32 },
+    /// A `TABLE DATA` entry has no usable COPY statement metadata.
+    CopyColumnMetadataUnavailable { dump_id: i32 },
+    /// A non-empty COPY statement is outside the supported pg_dump shape.
+    MalformedCopyStatement { dump_id: i32, reason: &'static str },
+    /// Row-aware parsing was requested for an unsupported data representation.
+    UnsupportedTableDataRepresentation {
+        dump_id: i32,
+        representation: TableDataRepresentation,
+    },
+    /// A COPY statement exceeds the provisional finite column-count bound.
+    CopyColumnCountLimitExceeded {
+        dump_id: i32,
+        limit: u64,
+        actual: u64,
+    },
+    /// Memory for bounded COPY column metadata could not be reserved.
+    CopyColumnMetadataAllocationFailed { dump_id: i32, requested: u64 },
     /// The selected TOC entry explicitly has no data block.
     EntryHasNoData { dump_id: i32 },
     /// The selected TOC entry has no recorded direct-seek position.
@@ -333,6 +353,37 @@ impl fmt::Display for PgDumpError {
             } => write!(
                 formatter,
                 "TABLE dump ID {table_id} is claimed by TABLE DATA dump IDs {first_data_id} and {second_data_id}"
+            ),
+            Self::TableDataEntryUnavailable { table_id } => write!(
+                formatter,
+                "TABLE dump ID {table_id} has no related TABLE DATA entry"
+            ),
+            Self::CopyColumnMetadataUnavailable { dump_id } => write!(
+                formatter,
+                "TABLE DATA dump ID {dump_id} has no usable COPY column metadata"
+            ),
+            Self::MalformedCopyStatement { dump_id, reason } => write!(
+                formatter,
+                "TABLE DATA dump ID {dump_id} has a malformed COPY statement: {reason}"
+            ),
+            Self::UnsupportedTableDataRepresentation {
+                dump_id,
+                representation,
+            } => write!(
+                formatter,
+                "TABLE DATA dump ID {dump_id} uses unsupported {representation:?} row representation"
+            ),
+            Self::CopyColumnCountLimitExceeded {
+                dump_id,
+                limit,
+                actual,
+            } => write!(
+                formatter,
+                "COPY metadata for dump ID {dump_id} has {actual} columns, exceeding limit {limit}"
+            ),
+            Self::CopyColumnMetadataAllocationFailed { dump_id, requested } => write!(
+                formatter,
+                "could not reserve {requested} elements or bytes for COPY metadata of dump ID {dump_id}"
             ),
             Self::EntryHasNoData { dump_id } => {
                 write!(formatter, "TOC dump ID {dump_id} has no data block")

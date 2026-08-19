@@ -247,9 +247,7 @@ impl<'a> CopyStatementParser<'a> {
             ));
         }
         if !tail.is_empty() {
-            return Ok(ParsedStatement::Unsupported(
-                TableDataRepresentation::Other,
-            ));
+            return Ok(ParsedStatement::Unsupported(TableDataRepresentation::Other));
         }
 
         Err(MetadataParseError::Malformed(
@@ -291,12 +289,12 @@ impl<'a> CopyStatementParser<'a> {
                 }
                 .into());
             }
-            columns
-                .try_reserve(1)
-                .map_err(|_| PgDumpError::CopyColumnMetadataAllocationFailed {
+            columns.try_reserve(1).map_err(|_| {
+                PgDumpError::CopyColumnMetadataAllocationFailed {
                     dump_id: self.dump_id.as_i32(),
                     requested: actual_u64,
-                })?;
+                }
+            })?;
             columns.push(Column::new(self.parse_column_identifier()?));
 
             self.skip_whitespace();
@@ -331,9 +329,7 @@ impl<'a> CopyStatementParser<'a> {
             self.position += 1;
         }
         if self.position == start {
-            return Err(MetadataParseError::Malformed(
-                "COPY column name is missing",
-            ));
+            return Err(MetadataParseError::Malformed("COPY column name is missing"));
         }
         clone_bytes(&self.input[start..self.position], self.dump_id).map_err(Into::into)
     }
@@ -378,9 +374,9 @@ impl<'a> CopyStatementParser<'a> {
                 if byte == b'\"' {
                     if self.peek_byte() == Some(b'\"') {
                         self.position += 1;
-                        logical_bytes = logical_bytes.checked_add(1).ok_or(
-                            PgDumpError::ArithmeticOverflow { offset: 0 },
-                        )?;
+                        logical_bytes = logical_bytes
+                            .checked_add(1)
+                            .ok_or(PgDumpError::ArithmeticOverflow { offset: 0 })?;
                         continue;
                     }
                     if logical_bytes == 0 {
@@ -430,10 +426,7 @@ impl<'a> CopyStatementParser<'a> {
         Ok(())
     }
 
-    fn require_whitespace(
-        &mut self,
-        reason: &'static str,
-    ) -> Result<(), MetadataParseError> {
+    fn require_whitespace(&mut self, reason: &'static str) -> Result<(), MetadataParseError> {
         if !self.skip_whitespace() {
             return Err(MetadataParseError::Malformed(reason));
         }
@@ -442,7 +435,10 @@ impl<'a> CopyStatementParser<'a> {
 
     fn skip_whitespace(&mut self) -> bool {
         let start = self.position;
-        while self.peek_byte().is_some_and(|byte| byte.is_ascii_whitespace()) {
+        while self
+            .peek_byte()
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
             self.position += 1;
         }
         self.position != start
@@ -475,22 +471,18 @@ fn clone_bytes(bytes: &[u8], dump_id: DumpId) -> Result<Vec<u8>, PgDumpError> {
     Ok(copy)
 }
 
-fn push_byte(
-    bytes: &mut Vec<u8>,
-    byte: u8,
-    dump_id: DumpId,
-) -> Result<(), MetadataParseError> {
+fn push_byte(bytes: &mut Vec<u8>, byte: u8, dump_id: DumpId) -> Result<(), MetadataParseError> {
     if bytes.len() == bytes.capacity() {
         let requested = bytes
             .len()
             .checked_add(1)
             .ok_or(PgDumpError::ArithmeticOverflow { offset: 0 })?;
-        bytes.try_reserve(1).map_err(|_| {
-            PgDumpError::CopyColumnMetadataAllocationFailed {
+        bytes
+            .try_reserve(1)
+            .map_err(|_| PgDumpError::CopyColumnMetadataAllocationFailed {
                 dump_id: dump_id.as_i32(),
                 requested: u64::try_from(requested).unwrap_or(u64::MAX),
-            }
-        })?;
+            })?;
     }
     bytes.push(byte);
     Ok(())
