@@ -8,44 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair:
-    name: Apply metadata visibility repair
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
-        with:
-          toolchain: stable
-          components: rustfmt
-
-      - name: Apply repair and commit
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("crates/pgdumpx/src/copy_metadata.rs")
-          text = path.read_text()
-          old = "struct CopyColumnLayout {"
-          new = "pub(crate) struct CopyColumnLayout {"
-          assert text.count(old) == 1
-          path.write_text(text.replace(old, new, 1))
-          PY
-          cargo fmt
-          cargo check --workspace --all-targets --all-features
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add crates/pgdumpx/src/copy_metadata.rs
-          git commit -m "fix: align COPY metadata visibility"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   quality:
     name: Quality gates
     runs-on: ubuntu-latest
