@@ -210,13 +210,13 @@ GZIP_SHA256="$(sha256sum "${GZIP_ARCHIVE}" | awk '{print $1}')"
 readonly NONE_SHA256 GZIP_SHA256
 
 FIXTURE_GENERATOR_VERSION="${GENERATOR_VERSION}" \
+FIXTURE_NONE_COMMAND="${NONE_COMMAND}" \
+FIXTURE_GZIP_COMMAND="${GZIP_COMMAND}" \
+FIXTURE_NONE_SHA256="${NONE_SHA256}" \
+FIXTURE_GZIP_SHA256="${GZIP_SHA256}" \
 GENERATOR_IMAGE="${IMAGE_TAG}" \
 GENERATOR_IMAGE_DIGEST="${IMAGE_DIGEST}" \
 GENERATOR_PLATFORM="${PLATFORM}" \
-NONE_COMMAND="${NONE_COMMAND}" \
-GZIP_COMMAND="${GZIP_COMMAND}" \
-NONE_SHA256="${NONE_SHA256}" \
-GZIP_SHA256="${GZIP_SHA256}" \
 MANIFEST_PATH="${MANIFEST}" \
 python3 <<'PY'
 from pathlib import Path
@@ -254,10 +254,10 @@ fixtures = [
         **common,
         "name": "pg18-none-copy-basic",
         "path": "tests/fixtures/archives/pg18-none-copy-basic.dump",
-        "command": os.environ["NONE_COMMAND"],
+        "command": os.environ["FIXTURE_NONE_COMMAND"],
         "compression": "none",
         "compression_detail": "none",
-        "sha256": os.environ["NONE_SHA256"],
+        "sha256": os.environ["FIXTURE_NONE_SHA256"],
         "purpose": [
             "header",
             "toc",
@@ -271,10 +271,10 @@ fixtures = [
         **common,
         "name": "pg18-gzip-copy-basic",
         "path": "tests/fixtures/archives/pg18-gzip-copy-basic.dump",
-        "command": os.environ["GZIP_COMMAND"],
+        "command": os.environ["FIXTURE_GZIP_COMMAND"],
         "compression": "gzip",
         "compression_detail": "level=6",
-        "sha256": os.environ["GZIP_SHA256"],
+        "sha256": os.environ["FIXTURE_GZIP_SHA256"],
         "purpose": [
             "header",
             "toc",
