@@ -169,10 +169,7 @@ fn dependency_limit_accepts_below_and_exact_and_rejects_above() {
     ));
 }
 
-fn parse_toc(
-    bytes: Vec<u8>,
-    limits: MetadataLimits,
-) -> Result<Vec<TocEntry>, PgDumpError> {
+fn parse_toc(bytes: Vec<u8>, limits: MetadataLimits) -> Result<Vec<TocEntry>, PgDumpError> {
     let mut reader = ArchiveReader::new(Cursor::new(bytes));
     read_toc(
         &mut reader,
