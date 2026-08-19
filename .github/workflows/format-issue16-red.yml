@@ -1,0 +1,36 @@
+name: Format Issue 16 Red tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/format-issue16-red.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Format tests and publish
+        run: |
+          cargo fmt
+          git add crates/pgdumpx-cli/tests/find.rs
+          git rm .github/workflows/format-issue16-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style: format pgdumpx find acceptance tests"
+          git push origin HEAD:feat/first-end-to-end-find
