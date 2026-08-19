@@ -28,8 +28,8 @@ impl<R: Read> ArchiveReader<R> {
     }
 
     pub(crate) fn read_exact(&mut self, mut output: &mut [u8]) -> Result<(), PgDumpError> {
-        let requested = u64::try_from(output.len())
-            .map_err(|_| PgDumpError::ArithmeticOverflow {
+        let requested =
+            u64::try_from(output.len()).map_err(|_| PgDumpError::ArithmeticOverflow {
                 offset: self.offset,
             })?;
         self.offset
@@ -46,11 +46,10 @@ impl<R: Read> ArchiveReader<R> {
                     });
                 }
                 Ok(read) => {
-                    let read_u64 = u64::try_from(read).map_err(|_| {
-                        PgDumpError::ArithmeticOverflow {
+                    let read_u64 =
+                        u64::try_from(read).map_err(|_| PgDumpError::ArithmeticOverflow {
                             offset: self.offset,
-                        }
-                    })?;
+                        })?;
                     self.offset = self.offset.checked_add(read_u64).ok_or(
                         PgDumpError::ArithmeticOverflow {
                             offset: self.offset,

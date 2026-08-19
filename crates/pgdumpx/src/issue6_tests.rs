@@ -1,11 +1,11 @@
 use crate::{
+    PgDumpError,
     custom::primitives::{
-        read_archive_integer, read_archive_offset, read_archive_string, ArchiveIntegerSize,
-        ArchiveOffset, ArchiveOffsetSize,
+        ArchiveIntegerSize, ArchiveOffset, ArchiveOffsetSize, read_archive_integer,
+        read_archive_offset, read_archive_string,
     },
     io::archive_reader::ArchiveReader,
-    limits::{ArchiveStringLimit, ALPHA1_ARCHIVE_STRING_LIMIT},
-    PgDumpError,
+    limits::{ALPHA1_ARCHIVE_STRING_LIMIT, ArchiveStringLimit},
 };
 use std::{
     cell::Cell,
@@ -47,9 +47,7 @@ fn exact_read_rejects_counter_overflow_before_reading() {
 
     assert!(matches!(
         error,
-        PgDumpError::ArithmeticOverflow {
-            offset: u64::MAX
-        }
+        PgDumpError::ArithmeticOverflow { offset: u64::MAX }
     ));
     assert_eq!(read_bytes.get(), 0);
     assert_eq!(reader.offset(), u64::MAX);
@@ -103,7 +101,10 @@ fn archive_integer_treats_any_nonzero_sign_as_negative() {
     let mut negative_zero = encode_integer(0, 4);
     negative_zero[0] = 1;
     let mut reader = ArchiveReader::new(Cursor::new(negative_zero));
-    assert_eq!(read_archive_integer(&mut reader, integer_size()).unwrap(), 0);
+    assert_eq!(
+        read_archive_integer(&mut reader, integer_size()).unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -182,15 +183,13 @@ fn archive_offset_rejects_invalid_size_and_state() {
 #[test]
 fn archive_offset_accepts_zero_extension_and_rejects_overflow() {
     let size = ArchiveOffsetSize::new(9, 0).unwrap();
-    let mut valid =
-        ArchiveReader::new(Cursor::new(encode_offset(2, 9, u128::from(u64::MAX))));
+    let mut valid = ArchiveReader::new(Cursor::new(encode_offset(2, 9, u128::from(u64::MAX))));
     assert_eq!(
         read_archive_offset(&mut valid, size).unwrap(),
         ArchiveOffset::Position(u64::MAX)
     );
 
-    let mut overflowing =
-        ArchiveReader::new(Cursor::new(encode_offset(2, 9, 1_u128 << 64)));
+    let mut overflowing = ArchiveReader::new(Cursor::new(encode_offset(2, 9, 1_u128 << 64)));
     let error = read_archive_offset(&mut overflowing, size).unwrap_err();
     assert!(matches!(
         error,
@@ -246,12 +245,8 @@ fn archive_string_rejects_oversize_before_payload_read() {
     let source = CountingReader::new(&encoded, Rc::clone(&read_bytes));
     let mut reader = ArchiveReader::new(source);
 
-    let error = read_archive_string(
-        &mut reader,
-        integer_size(),
-        ArchiveStringLimit::new(3),
-    )
-    .unwrap_err();
+    let error =
+        read_archive_string(&mut reader, integer_size(), ArchiveStringLimit::new(3)).unwrap_err();
 
     assert!(matches!(
         error,
@@ -271,12 +266,8 @@ fn archive_string_payload_truncation_is_typed() {
     encoded.extend_from_slice(b"ab");
     let mut reader = ArchiveReader::new(Cursor::new(encoded));
 
-    let error = read_archive_string(
-        &mut reader,
-        integer_size(),
-        ArchiveStringLimit::new(3),
-    )
-    .unwrap_err();
+    let error =
+        read_archive_string(&mut reader, integer_size(), ArchiveStringLimit::new(3)).unwrap_err();
 
     assert!(matches!(error, PgDumpError::UnexpectedEof { offset: 7 }));
 }

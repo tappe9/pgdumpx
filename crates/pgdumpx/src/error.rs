@@ -34,10 +34,16 @@ impl fmt::Display for PgDumpError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { offset, source } => {
-                write!(formatter, "I/O error at archive byte offset {offset}: {source}")
+                write!(
+                    formatter,
+                    "I/O error at archive byte offset {offset}: {source}"
+                )
             }
             Self::UnexpectedEof { offset } => {
-                write!(formatter, "unexpected end of archive at byte offset {offset}")
+                write!(
+                    formatter,
+                    "unexpected end of archive at byte offset {offset}"
+                )
             }
             Self::UnsupportedArchiveIntegerSize { size, offset } => write!(
                 formatter,
@@ -72,7 +78,10 @@ impl fmt::Display for PgDumpError {
                 "could not reserve {length} bytes for archive string at byte offset {offset}"
             ),
             Self::ArithmeticOverflow { offset } => {
-                write!(formatter, "arithmetic overflow at archive byte offset {offset}")
+                write!(
+                    formatter,
+                    "arithmetic overflow at archive byte offset {offset}"
+                )
             }
         }
     }

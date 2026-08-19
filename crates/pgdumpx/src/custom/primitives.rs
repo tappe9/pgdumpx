@@ -1,6 +1,4 @@
-use crate::{
-    io::archive_reader::ArchiveReader, limits::ArchiveStringLimit, PgDumpError,
-};
+use crate::{PgDumpError, io::archive_reader::ArchiveReader, limits::ArchiveStringLimit};
 use std::io::Read;
 
 const POSITION_NOT_SET: u8 = 1;
@@ -58,25 +56,27 @@ pub(crate) fn read_archive_integer<R: Read>(
 
     for byte_index in 0..size.get() {
         let byte = reader.read_byte()?;
-        let shift = u32::from(byte_index)
-            .checked_mul(8)
+        let shift =
+            u32::from(byte_index)
+                .checked_mul(8)
+                .ok_or(PgDumpError::ArithmeticOverflow {
+                    offset: start_offset,
+                })?;
+        let component =
+            u64::from(byte)
+                .checked_shl(shift)
+                .ok_or(PgDumpError::ArithmeticOverflow {
+                    offset: start_offset,
+                })?;
+        magnitude = magnitude
+            .checked_add(component)
             .ok_or(PgDumpError::ArithmeticOverflow {
                 offset: start_offset,
             })?;
-        let component = u64::from(byte).checked_shl(shift).ok_or(
-            PgDumpError::ArithmeticOverflow {
-                offset: start_offset,
-            },
-        )?;
-        magnitude = magnitude.checked_add(component).ok_or(
-            PgDumpError::ArithmeticOverflow {
-                offset: start_offset,
-            },
-        )?;
     }
 
-    let magnitude = i64::try_from(magnitude)
-        .map_err(|_| PgDumpError::ArchiveIntegerOutOfRange {
+    let magnitude =
+        i64::try_from(magnitude).map_err(|_| PgDumpError::ArchiveIntegerOutOfRange {
             offset: start_offset,
         })?;
     let signed = if sign == 0 {
@@ -112,21 +112,23 @@ pub(crate) fn read_archive_offset<R: Read>(
         let byte_offset = reader.offset();
         let byte = reader.read_byte()?;
         if byte_index < 8 {
-            let shift = u32::from(byte_index)
-                .checked_mul(8)
+            let shift =
+                u32::from(byte_index)
+                    .checked_mul(8)
+                    .ok_or(PgDumpError::ArithmeticOverflow {
+                        offset: byte_offset,
+                    })?;
+            let component =
+                u64::from(byte)
+                    .checked_shl(shift)
+                    .ok_or(PgDumpError::ArithmeticOverflow {
+                        offset: byte_offset,
+                    })?;
+            value = value
+                .checked_add(component)
                 .ok_or(PgDumpError::ArithmeticOverflow {
                     offset: byte_offset,
                 })?;
-            let component = u64::from(byte).checked_shl(shift).ok_or(
-                PgDumpError::ArithmeticOverflow {
-                    offset: byte_offset,
-                },
-            )?;
-            value = value.checked_add(component).ok_or(
-                PgDumpError::ArithmeticOverflow {
-                    offset: byte_offset,
-                },
-            )?;
         } else if byte != 0 {
             return Err(PgDumpError::ArchiveOffsetOutOfRange {
                 offset: byte_offset,
@@ -156,10 +158,8 @@ pub(crate) fn read_archive_string<R: Read>(
         return Ok(None);
     }
 
-    let length = usize::try_from(encoded_length).map_err(|_| {
-        PgDumpError::ArithmeticOverflow {
-            offset: length_offset,
-        }
+    let length = usize::try_from(encoded_length).map_err(|_| PgDumpError::ArithmeticOverflow {
+        offset: length_offset,
     })?;
     let length_u64 = u64::try_from(length).map_err(|_| PgDumpError::ArithmeticOverflow {
         offset: length_offset,
@@ -178,12 +178,12 @@ pub(crate) fn read_archive_string<R: Read>(
     }
 
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(length).map_err(|_| {
-        PgDumpError::ArchiveStringAllocationFailed {
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| PgDumpError::ArchiveStringAllocationFailed {
             length: length_u64,
             offset: length_offset,
-        }
-    })?;
+        })?;
     bytes.resize(length, 0);
     reader.read_exact(&mut bytes)?;
 
