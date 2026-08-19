@@ -19,13 +19,7 @@ const EXPECTED_COLUMNS: [&str; 5] = [
     "note",
     "empty_text",
 ];
-const REQUIRED_PURPOSES: [&str; 5] = [
-    "header",
-    "toc",
-    "copy-text",
-    "column-layout",
-    "find-first",
-];
+const REQUIRED_PURPOSES: [&str; 5] = ["header", "toc", "copy-text", "column-layout", "find-first"];
 
 #[derive(Debug, Deserialize)]
 struct FixtureManifest {
@@ -265,7 +259,10 @@ fn resolve_repository_file(root: &Path, relative: &str) -> Result<PathBuf, Strin
         return Err("path is empty".to_owned());
     }
     if relative.is_absolute() {
-        return Err(format!("absolute path is forbidden: {}", relative.display()));
+        return Err(format!(
+            "absolute path is forbidden: {}",
+            relative.display()
+        ));
     }
     if !relative
         .components()

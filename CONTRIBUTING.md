@@ -77,7 +77,7 @@ The fixture manifest is expected to record fields equivalent in purpose to:
 ```toml
 [[fixture]]
 name = "pg18-gzip-copy-basic"
-path = "tests/fixtures/pg18-gzip-copy-basic.dump"
+path = "tests/fixtures/archives/pg18-gzip-copy-basic.dump"
 archive_version = "1.16.0"
 generator = "pg_dump (PostgreSQL) 18.x"
 command = "pg_dump -Fc --compress=gzip:6 --file=..."
@@ -85,6 +85,8 @@ sha256 = "<recorded checksum>"
 purpose = ["header", "toc", "gzip", "copy-text"]
 expected_tables = ["public.orders"]
 ```
+
+The committed Alpha 1 inventory and exact regeneration process are documented in [tests/fixtures/README.md](tests/fixtures/README.md).
 
 Large benchmark data should normally be generated reproducibly rather than committed.
 
