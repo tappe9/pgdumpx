@@ -1,4 +1,6 @@
-use crate::{Compression, DumpId, PgDumpError, custom::data::CustomChunkReader, error::into_io_error};
+use crate::{
+    Compression, DumpId, PgDumpError, custom::data::CustomChunkReader, error::into_io_error,
+};
 use flate2::read::ZlibDecoder;
 use std::{
     fmt,
@@ -19,7 +21,7 @@ enum EntryBackend<'a, R> {
     Gzip(ZlibDecoder<CustomChunkReader<'a, R>>),
 }
 
-impl<'a, R> EntryDataReader<'a, R> {
+impl<'a, R: Read> EntryDataReader<'a, R> {
     pub(crate) fn new(
         dump_id: DumpId,
         compression: Compression,
