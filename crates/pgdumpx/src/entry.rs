@@ -152,22 +152,27 @@ impl<R: Read> Read for ZlibEntryDecoder<'_, R> {
                 }
             };
 
-            let consumed = self.decoder.total_in().checked_sub(before_in).ok_or_else(|| {
-                into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 })
-            })?;
-            let produced = self.decoder.total_out().checked_sub(before_out).ok_or_else(|| {
-                into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 })
-            })?;
+            let consumed = self
+                .decoder
+                .total_in()
+                .checked_sub(before_in)
+                .ok_or_else(|| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
+            let produced = self
+                .decoder
+                .total_out()
+                .checked_sub(before_out)
+                .ok_or_else(|| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
             let consumed = usize::try_from(consumed)
                 .map_err(|_| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
             let produced = usize::try_from(produced)
                 .map_err(|_| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
-            self.input_start = self.input_start.checked_add(consumed).ok_or_else(|| {
-                into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 })
-            })?;
-            written = written.checked_add(produced).ok_or_else(|| {
-                into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 })
-            })?;
+            self.input_start = self
+                .input_start
+                .checked_add(consumed)
+                .ok_or_else(|| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
+            written = written
+                .checked_add(produced)
+                .ok_or_else(|| into_io_error(PgDumpError::ArithmeticOverflow { offset: 0 }))?;
 
             if status == Status::StreamEnd {
                 self.stream_end = true;
