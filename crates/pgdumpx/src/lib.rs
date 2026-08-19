@@ -16,6 +16,8 @@ mod model;
 #[cfg(test)]
 mod archive_primitives_tests;
 #[cfg(test)]
+mod copy_tests;
+#[cfg(test)]
 mod metadata_open_tests;
 
 pub use archive::Archive;
