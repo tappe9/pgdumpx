@@ -31,7 +31,7 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
     ) -> Result<Self, PgDumpError> {
         let backend = match compression {
             Compression::None => EntryBackend::None(chunks),
-            Compression::Gzip => EntryBackend::Gzip(ZlibEntryDecoder::new(dump_id, chunks)),
+            Compression::Gzip => EntryBackend::Gzip(ZlibEntryDecoder::new(dump_id, chunks)?),
             Compression::Lz4 => {
                 return Err(PgDumpError::UnsupportedEntryCompression {
                     dump_id: dump_id.as_i32(),
@@ -79,7 +79,7 @@ struct ZlibEntryDecoder<'a, R> {
     dump_id: DumpId,
     source: CustomChunkReader<'a, R>,
     decoder: Decompress,
-    input: [u8; COMPRESSED_INPUT_BUFFER_BYTES],
+    input: Vec<u8>,
     input_start: usize,
     input_end: usize,
     source_eof: bool,
@@ -88,18 +88,27 @@ struct ZlibEntryDecoder<'a, R> {
 }
 
 impl<'a, R> ZlibEntryDecoder<'a, R> {
-    fn new(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Self {
-        Self {
+    fn new(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Result<Self, PgDumpError> {
+        let mut input = Vec::new();
+        input
+            .try_reserve_exact(COMPRESSED_INPUT_BUFFER_BYTES)
+            .map_err(|_| PgDumpError::EntryBufferAllocationFailed {
+                dump_id: dump_id.as_i32(),
+                requested: COMPRESSED_INPUT_BUFFER_BYTES as u64,
+            })?;
+        input.resize(COMPRESSED_INPUT_BUFFER_BYTES, 0);
+
+        Ok(Self {
             dump_id,
             source,
             decoder: Decompress::new(true),
-            input: [0; COMPRESSED_INPUT_BUFFER_BYTES],
+            input,
             input_start: 0,
             input_end: 0,
             source_eof: false,
             stream_end: false,
             pending_error: None,
-        }
+        })
     }
 
     fn decompression_error(&self, source: io::Error) -> io::Error {
