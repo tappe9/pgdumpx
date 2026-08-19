@@ -1,0 +1,19 @@
+[package]
+name = "pgdumpx-cli"
+description = "Command-line interface for pgdumpx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[[bin]]
+name = "pgdumpx"
+path = "src/main.rs"
+
+[dependencies]
+pgdumpx = { path = "../pgdumpx", version = "0.1.0" }
+
+[lints]
+workspace = true

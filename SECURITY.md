@@ -4,7 +4,7 @@ pgdumpx parses archive files that may be attacker controlled. Parser safety and 
 
 ## Supported versions
 
-pgdumpx is currently in the design/pre-release stage and has no supported published version yet. This section will be updated when releases begin.
+pgdumpx is currently in the pre-release implementation stage and has no supported published version yet. This section will be updated when releases begin.
 
 ## Reporting a vulnerability
 

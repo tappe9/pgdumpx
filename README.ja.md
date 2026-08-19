@@ -2,7 +2,7 @@
 
 **PostgreSQL Custom Formatをrestoreせず、byte-orientedなrowとして安全にscanするRustライブラリ / CLI。**
 
-> ステータス: 設計段階。crate / CLI はまだリリースされていません。
+> ステータス: 初期実装段階。Cargo workspaceとbaseline CIは作成済みですが、crate / CLIはまだリリースされていません。
 
 pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベースへrestoreせずに検査するread-onlyのRustライブラリ / CLIです。
 

@@ -2,7 +2,7 @@
 
 **A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
-> Status: design phase. No released crate or CLI exists yet.
+> Status: early implementation. The workspace and baseline CI exist, but no crate or CLI release is available yet.
 
 pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
