@@ -2,7 +2,7 @@
 
 This roadmap is directional. Milestones may change when format research, compatibility fixtures, fuzzing, and benchmark results reveal better boundaries.
 
-## v0.1 — Safe custom-archive reader
+## v0.1 — Safe, row-aware custom-archive reader
 
 Goal: deliver a useful Pure Rust reader for modern PostgreSQL custom-format (`-Fc`) archives, including streaming row access and first-match retrieval without restore.
 

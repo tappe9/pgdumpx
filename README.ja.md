@@ -1,27 +1,54 @@
 # pgdumpx
 
-**PostgreSQL dumpを高速・安全に読み取り、必要なデータだけを抽出するPure Rustライブラリ。**
+**PostgreSQL Custom Formatをrestoreせず、ストリーミングで行・field単位まで読み取るPure Rustライブラリ。**
 
 > ステータス: 設計段階。crate / CLI はまだリリースされていません。
 
 pgdumpxは、PostgreSQLのCustom Format (`pg_dump -Fc`) アーカイブを、データベースへrestoreせずに検査・抽出するための再利用可能なRustエンジンです。
 
-このプロジェクトは意図的に**read-only**です。`pg_dump`や`pg_restore`の代替を目指すのではなく、巨大dumpのメタデータ確認、必要なテーブルだけの選択的抽出、streaming読み取り、行単位のfiltering、安全なバイナリ解析に集中します。
+このプロジェクトは意図的に**read-only**です。`pg_dump`や`pg_restore`の代替を目指すのではなく、resource limitsを維持しながら必要なデータだけを選択的に検査することへ集中します。archive metadataを読み、対象のtable-data entryだけを開き、streaming decompressionし、PostgreSQL `COPY` textをrow / fieldとして解釈し、アプリケーション定義のpredicateが一致した時点でscanを停止できることを重視します。
+
+たとえば数GB〜数十GBのdumpから`public.orders`だけを選び、`order_number`列を解決して、条件に一致する最初の1行を、DBをrestoreせずテーブル全体をメモリへ載せることもなく取得できるAPIを目指します。
 
 [English README](README.md)
 
 ## 目標
 
+PostgreSQL Custom FormatのTOCとentry offsetを、row-aware inspectionの基盤として利用します。
+
+```text
+PostgreSQL custom archive
+        │
+        ▼
+header + TOC metadata
+        │
+        ▼
+select table-data entry + seek
+        │
+        ▼
+streaming decompression
+        │
+        ▼
+PostgreSQL COPY text parser
+        │
+        ├── borrowed Row / byte-oriented Field
+        ├── COPY column metadata / column lookup
+        └── streaming predicate / first-match retrieval
+```
+
+v0.1では次を重視します。
+
 - PostgreSQLサーバーを必要としない**Pure Rust core**
 - PostgreSQL Custom Format (`-Fc`) の**read-only parser**
-- `Read + Seek`を利用した**lazy / random table access**
+- `Read + Seek`を利用した**lazy entry access**
 - テーブル全体をメモリへ載せない**streaming decompression**
 - PostgreSQL `COPY` text形式を行・field単位で扱える**row-aware API**
+- UTF-8や行ごとのowned allocationを前提にしない**borrowed row / byte-oriented field API**
 - 列名を解決して最初の一致行を取得できる**column-aware first-match filtering**
 - machine-readableなtyped error
 - 悪意あるdumpに備えたresource limits
 - CLI / Python / Arrow等を後から載せられる小さなCore
-- 実測前に「高速」と断定せず、benchmarkで性能を証明する開発方針
+- 実測前に性能優位を断定せず、benchmarkで性能を証明する開発方針
 
 ## v0.1の対象
 
@@ -85,20 +112,12 @@ pgdumpx extract backup.dump public.orders
 
 CLIはCore parserの別consumerとして実装し、解析ロジックを重複させません。SQL風の`WHERE` parser/query languageはv0.1の対象外です。
 
-## 競合との位置づけ
+## 関連プロジェクト
 
-既存のRustライブラリ[`libpgdump`](https://github.com/gmr/libpgdump)はCustom/Directory/Tar形式のread/write、lazy custom reader等を既に備えています。
+- [`libpgdump`](https://github.com/gmr/libpgdump) — PostgreSQLのCustom / Directory / Tar dump形式をread/writeするRustライブラリ
+- [`pgdumplib`](https://github.com/gmr/pgdumplib) — PostgreSQL Custom Formatをread/writeするPythonライブラリ
 
-pgdumpxは機能範囲をあえて狭くし、次へ集中します。
-
-- read-only
-- Custom Format (`-Fc`) に集中
-- 巨大dumpのinspection / selective extraction
-- `COPY` textのrow-aware parsingとfirst-match filtering
-- resource limitsとfuzzingを含むmalformed-input hardening
-- 再現可能なbenchmarkに基づく性能改善
-
-比較対象より速いという主張は、benchmarkで確認できるまでは行いません。
+これらはPostgreSQL dumpを扱う隣接プロジェクトです。pgdumpxは、Custom Formatをread-only・resource-bounded・row-awareに検査するという狭い責務に集中します。
 
 ## ドキュメント
 

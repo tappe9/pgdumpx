@@ -1,26 +1,49 @@
 # pgdumpx
 
-**Fast, safe, read-only PostgreSQL dump inspection and extraction in Pure Rust.**
+**A streaming, row-aware reader for PostgreSQL custom-format dumps, written in Pure Rust.**
 
 > Status: design phase. No released crate or CLI exists yet.
 
 pgdumpx is a reusable Rust engine for inspecting and extracting data from large PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
-The project is intentionally **read-only**. It is not a replacement for `pg_dump` or `pg_restore`. Its focus is efficient archive inspection, selective extraction, streaming table access, row-aware filtering, and safe parsing of untrusted dump files.
+The project is intentionally **read-only**. It is not a replacement for `pg_dump` or `pg_restore`. Its focus is bounded, selective inspection: parse archive metadata, open only the table-data entry you need, stream decompression, interpret PostgreSQL `COPY` text as rows and fields, and stop a scan as soon as an application-defined predicate matches.
+
+For example, a caller should be able to inspect a multi-gigabyte archive, select `public.orders`, resolve the `order_number` column, and find the first matching row without restoring the database or buffering the complete table.
 
 [日本語 README](README.ja.md)
 
 ## Why pgdumpx?
 
-A PostgreSQL custom archive already contains a table of contents (TOC) and per-entry data offsets. For seekable inputs, pgdumpx aims to use that structure directly so callers can inspect metadata and open only the data entry they need instead of loading or restoring the entire dump.
+A PostgreSQL custom archive already contains a table of contents (TOC) and per-entry data offsets. pgdumpx uses that archive structure as the foundation for a row-aware inspection pipeline:
+
+```text
+PostgreSQL custom archive
+        │
+        ▼
+header + TOC metadata
+        │
+        ▼
+select table-data entry + seek
+        │
+        ▼
+streaming decompression
+        │
+        ▼
+PostgreSQL COPY text parser
+        │
+        ├── borrowed rows and byte-oriented fields
+        ├── COPY column metadata + name lookup
+        └── streaming predicates / first-match retrieval
+```
 
 The initial product direction emphasizes:
 
 - **Pure Rust core** with no PostgreSQL server requirement;
 - **read-only parsing** of PostgreSQL custom-format archives;
-- **lazy data access** using `Read + Seek`;
+- **lazy entry access** using `Read + Seek`;
 - **streaming decompression** without buffering an entire table;
 - **row-aware parsing** of PostgreSQL `COPY` text data;
+- **borrowed rows and byte-oriented fields** so parsing does not require UTF-8 or per-row ownership;
 - **column-aware first-match filtering** without restoring the dump;
 - **typed, location-aware errors**;
 - **resource limits** for attacker-controlled metadata and row sizes;
@@ -127,20 +150,12 @@ PostgreSQL custom archive
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the accepted initial architecture.
 
-## Positioning
+## Related projects
 
-[`libpgdump`](https://github.com/gmr/libpgdump) is an existing Rust library that supports reading and writing custom, directory, and tar PostgreSQL dump formats, including lazy custom-archive access.
+- [`libpgdump`](https://github.com/gmr/libpgdump) — a Rust library for reading and writing PostgreSQL custom, directory, and tar dump formats.
+- [`pgdumplib`](https://github.com/gmr/pgdumplib) — a Python library for reading and writing PostgreSQL custom-format dumps.
 
-pgdumpx deliberately takes a narrower direction:
-
-- read-only rather than read/write;
-- custom format only for the initial product direction;
-- large-file inspection and selective extraction as primary use cases;
-- row-aware `COPY` parsing and first-match filtering as core capabilities;
-- explicit parser resource budgets and malformed-input hardening;
-- performance work driven by repeatable benchmarks.
-
-This project should not claim to outperform `libpgdump`, `pg_restore`, or another implementation until benchmark data demonstrates it.
+These projects cover adjacent PostgreSQL dump use cases. pgdumpx keeps its own deliberately narrow contract around read-only, bounded, row-aware inspection of custom-format archives.
 
 ## Documentation
 
