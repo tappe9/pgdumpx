@@ -1,0 +1,24 @@
+name: Issue 5 fixture TDD
+
+on:
+  push:
+    branches: [feat/issue-5-official-fixtures]
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-contract:
+    name: Fixture contract (Red)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Verify fixture contract
+        run: cargo test -p pgdumpx --test fixture_manifest -- --nocapture
