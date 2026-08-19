@@ -68,7 +68,8 @@ fn table_rows_is_independent_of_arbitrary_short_archive_reads() {
 #[test]
 fn positional_rows_remain_available_when_column_metadata_is_unavailable() {
     let payload = b"\\377\t\n\\.\n";
-    let mut archive = Archive::open(Cursor::new(archive_with_table_data(Some(b""), payload))).unwrap();
+    let mut archive =
+        Archive::open(Cursor::new(archive_with_table_data(Some(b""), payload))).unwrap();
     let mut rows = archive.table_rows(b"public", b"data").unwrap();
 
     assert!(matches!(
@@ -170,13 +171,55 @@ fn collect_rows<R: Read>(rows: &mut pgdumpx::TableRowReader<'_, R>) -> Vec<Vec<O
 
 fn expected_rows() -> Vec<Vec<Option<Vec<u8>>>> {
     [
-        [Some(b"1".as_slice()), Some(b"EARLY-100"), Some(b"customer-a"), Some(b"plain"), Some(b"".as_slice())],
-        [Some(b"2".as_slice()), Some(b"SECOND-200"), Some(b"repeat"), Some(b"tab\tvalue"), Some(b"filled")],
-        [Some(b"3".as_slice()), Some(b"THIRD-300"), Some(b"customer-c"), Some(b"line1\nline2"), Some(b"filled")],
-        [Some(b"4".as_slice()), Some(b"MIDDLE-400"), Some(b"customer-d"), None, Some(b"filled")],
-        [Some(b"5".as_slice()), Some(b"FIFTH-500"), Some(b"customer-e"), Some(b"".as_slice()), Some(b"filled")],
-        [Some(b"6".as_slice()), Some(b"SIXTH-600"), Some(b"repeat"), Some(b"carriage\rreturn"), Some(b"filled")],
-        [Some(b"7".as_slice()), Some(b"LATE-700"), Some(b"customer-g"), Some(b"backslash\\value"), Some(b"filled")],
+        [
+            Some(b"1".as_slice()),
+            Some(b"EARLY-100"),
+            Some(b"customer-a"),
+            Some(b"plain"),
+            Some(b"".as_slice()),
+        ],
+        [
+            Some(b"2".as_slice()),
+            Some(b"SECOND-200"),
+            Some(b"repeat"),
+            Some(b"tab\tvalue"),
+            Some(b"filled"),
+        ],
+        [
+            Some(b"3".as_slice()),
+            Some(b"THIRD-300"),
+            Some(b"customer-c"),
+            Some(b"line1\nline2"),
+            Some(b"filled"),
+        ],
+        [
+            Some(b"4".as_slice()),
+            Some(b"MIDDLE-400"),
+            Some(b"customer-d"),
+            None,
+            Some(b"filled"),
+        ],
+        [
+            Some(b"5".as_slice()),
+            Some(b"FIFTH-500"),
+            Some(b"customer-e"),
+            Some(b"".as_slice()),
+            Some(b"filled"),
+        ],
+        [
+            Some(b"6".as_slice()),
+            Some(b"SIXTH-600"),
+            Some(b"repeat"),
+            Some(b"carriage\rreturn"),
+            Some(b"filled"),
+        ],
+        [
+            Some(b"7".as_slice()),
+            Some(b"LATE-700"),
+            Some(b"customer-g"),
+            Some(b"backslash\\value"),
+            Some(b"filled"),
+        ],
     ]
     .into_iter()
     .map(|row| {
