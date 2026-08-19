@@ -1,4 +1,4 @@
-use pgdumpx::{Archive, FieldRef, PgDumpError};
+use pgdumpx::{Archive, FieldRef, OwnedField, PgDumpError};
 use std::{
     cell::Cell,
     io::{self, Cursor, Read, Seek, SeekFrom},
@@ -154,6 +154,125 @@ fn integrated_table_rows_enforces_provisional_field_limit() {
     ));
 }
 
+#[test]
+fn find_first_returns_the_first_matching_owned_row_for_official_none_and_gzip() {
+    for fixture_name in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
+        let owned = {
+            let mut archive = Archive::open(Cursor::new(fixture(fixture_name))).unwrap();
+            let mut rows = archive.table_rows(b"public", b"orders").unwrap();
+            let customer_code = rows.column_index(b"customer_code").unwrap().unwrap();
+
+            rows.find_first(|row| {
+                row.field(customer_code) == Some(FieldRef::Bytes(b"repeat"))
+            })
+            .unwrap()
+            .expect("the repeated value must match")
+        };
+
+        assert_eq!(owned.len(), 5);
+        assert_eq!(
+            owned.field(0),
+            Some(&OwnedField::Bytes(b"2".to_vec())),
+            "the first of two matching rows must win for {fixture_name}"
+        );
+        assert_eq!(
+            owned.field(1),
+            Some(&OwnedField::Bytes(b"SECOND-200".to_vec()))
+        );
+        assert_eq!(
+            owned.field(2),
+            Some(&OwnedField::Bytes(b"repeat".to_vec()))
+        );
+        assert_eq!(owned.fields().len(), 5);
+    }
+}
+
+#[test]
+fn find_first_returns_none_for_no_match() {
+    let mut archive = Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
+    let mut rows = archive.table_rows(b"public", b"orders").unwrap();
+    let order_number = rows.column_index(b"order_number").unwrap().unwrap();
+
+    let found = rows
+        .find_first(|row| row.field(order_number) == Some(FieldRef::Bytes(b"NOT-PRESENT")))
+        .unwrap();
+
+    assert_eq!(found, None);
+}
+
+#[test]
+fn find_first_distinguishes_null_empty_and_non_utf8_fields() {
+    let null_row = {
+        let mut archive =
+            Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
+        let mut rows = archive.table_rows(b"public", b"orders").unwrap();
+        let note = rows.column_index(b"note").unwrap().unwrap();
+        rows.find_first(|row| row.field(note) == Some(FieldRef::Null))
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(null_row.field(0), Some(&OwnedField::Bytes(b"4".to_vec())));
+    assert_eq!(null_row.field(3), Some(&OwnedField::Null));
+
+    let empty_row = {
+        let mut archive =
+            Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
+        let mut rows = archive.table_rows(b"public", b"orders").unwrap();
+        let note = rows.column_index(b"note").unwrap().unwrap();
+        rows.find_first(|row| row.field(note) == Some(FieldRef::Bytes(b"")))
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(empty_row.field(0), Some(&OwnedField::Bytes(b"5".to_vec())));
+    assert_eq!(empty_row.field(3), Some(&OwnedField::Bytes(Vec::new())));
+
+    let non_utf8 = {
+        let payload = b"\\377\n\\.\n";
+        let bytes = archive_with_table_data(
+            Some(b"COPY public.data (value) FROM stdin;\n"),
+            payload,
+        );
+        let mut archive = Archive::open(Cursor::new(bytes)).unwrap();
+        let mut rows = archive.table_rows(b"public", b"data").unwrap();
+        let value = rows.column_index(b"value").unwrap().unwrap();
+        rows.find_first(|row| row.field(value) == Some(FieldRef::Bytes(&[0xff])))
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(non_utf8.field(0), Some(&OwnedField::Bytes(vec![0xff])));
+}
+
+#[test]
+fn find_first_stops_without_reading_the_remaining_table_data() {
+    let mut payload = b"match\n".to_vec();
+    for _ in 0..32_768 {
+        payload.extend_from_slice(b"tail\n");
+    }
+    payload.extend_from_slice(b"\\.\n");
+
+    let bytes = archive_with_table_data(
+        Some(b"COPY public.data (value) FROM stdin;\n"),
+        &payload,
+    );
+    let total_len = u64::try_from(bytes.len()).unwrap();
+    let bytes_read = Rc::new(Cell::new(0_u64));
+    let reader = ShortTrackingReader::new(bytes, Rc::clone(&bytes_read));
+    let mut archive = Archive::open(reader).unwrap();
+    let after_open = bytes_read.get();
+    let mut rows = archive.table_rows(b"public", b"data").unwrap();
+
+    let found = rows
+        .find_first(|row| row.field(0) == Some(FieldRef::Bytes(b"match")))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(found.field(0), Some(&OwnedField::Bytes(b"match".to_vec())));
+    assert!(bytes_read.get() > after_open);
+    assert!(
+        bytes_read.get() + 100_000 < total_len,
+        "the first match must return before the trailing table-data bytes are read"
+    );
+}
 fn collect_rows<R: Read>(rows: &mut pgdumpx::TableRowReader<'_, R>) -> Vec<Vec<Option<Vec<u8>>>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next_row().unwrap() {
