@@ -29,8 +29,7 @@ jobs:
 
       - name: Apply, format, and verify integration
         run: |
-          git apply --check .github/copy-metadata-impl.patch
-          git apply .github/copy-metadata-impl.patch
+          python .github/apply-copy-metadata.py
           cargo fmt
           cargo check --workspace --all-targets --all-features
           git config user.name "github-actions[bot]"
