@@ -4,7 +4,7 @@ use std::{
     ffi::OsString,
     fmt,
     fs::File,
-    io::{self, BufReader, Write},
+    io::{self, BufReader, BufWriter, Write},
     path::PathBuf,
     process::ExitCode,
 };
@@ -15,7 +15,7 @@ const USAGE: &str = "usage: pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>"
 
 fn main() -> ExitCode {
     let stdout = io::stdout();
-    let mut stdout = stdout.lock();
+    let mut stdout = BufWriter::new(stdout.lock());
 
     match run(env::args_os(), &mut stdout) {
         Ok(FindOutcome::Matched) => ExitCode::SUCCESS,
@@ -39,6 +39,7 @@ where
     };
 
     write_row(stdout, &row)
+        .and_then(|()| stdout.flush())
         .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
     Ok(FindOutcome::Matched)
 }
@@ -85,13 +86,20 @@ fn write_row<W: Write>(output: &mut W, row: &OwnedRow) -> io::Result<()> {
 }
 
 fn write_field_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()> {
-    for &byte in bytes {
+    let mut plain_start = 0;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if matches!(byte, 0x20..=0x7e) && byte != b'\\' {
+            continue;
+        }
+
+        if plain_start != index {
+            output.write_all(&bytes[plain_start..index])?;
+        }
         match byte {
             b'\\' => output.write_all(br"\\")?,
             b'\t' => output.write_all(br"\t")?,
             b'\n' => output.write_all(br"\n")?,
             b'\r' => output.write_all(br"\r")?,
-            0x20..=0x7e => output.write_all(&[byte])?,
             _ => {
                 let escaped = [
                     b'\\',
@@ -102,6 +110,11 @@ fn write_field_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()> {
                 output.write_all(&escaped)?;
             }
         }
+        plain_start = index + 1;
+    }
+
+    if plain_start != bytes.len() {
+        output.write_all(&bytes[plain_start..])?;
     }
     Ok(())
 }
