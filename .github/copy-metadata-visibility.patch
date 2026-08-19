@@ -1,0 +1,12 @@
+diff --git a/crates/pgdumpx/src/copy_metadata.rs b/crates/pgdumpx/src/copy_metadata.rs
+--- a/crates/pgdumpx/src/copy_metadata.rs
++++ b/crates/pgdumpx/src/copy_metadata.rs
+@@ -114,7 +114,7 @@ impl TableDataMetadata {
+     }
+ }
+ 
+-struct CopyColumnLayout {
++pub(crate) struct CopyColumnLayout {
+     columns: Vec<Column>,
+     by_name: HashMap<Vec<u8>, usize>,
+ }
