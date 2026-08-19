@@ -31,15 +31,48 @@ pgdumpx assumes every archive byte is untrusted.
 Security-sensitive properties include:
 
 - no out-of-bounds reads;
-- checked offset and size arithmetic;
+- checked offset, length, and counter arithmetic;
 - no parser panic caused by malformed archive structure;
 - no allocation proportional to an unvalidated declared size;
-- configurable metadata and row budgets;
+- configurable metadata and per-row budgets;
+- configurable total row-scan/decompression work budgets for applications that process hostile input;
 - validation of block type and dump ID after seeking to a stored offset;
+- validation of supported table-data representation before invoking the COPY row parser;
 - bounded streaming buffers;
-- explicit errors for unsupported archive versions and compression modes.
+- explicit errors for unsupported archive versions, compression modes, and logical table-data representations.
 
-Decompression bombs are also a resource threat. The project should provide application-appropriate output/row limits where feasible and document where the caller must bound total extracted output.
+## Resource exhaustion and decompression bombs
+
+Memory-bounded streaming alone does not make a scan computationally bounded. An input can contain a very large number of small rows or decompress to a large byte stream while staying below every individual row-size limit.
+
+pgdumpx therefore distinguishes two classes of limits:
+
+```text
+structural / per-item limits
+  - TOC entries
+  - metadata string bytes
+  - dependencies per entry
+  - row bytes
+  - fields per row
+
+total scan-work limits
+  - rows scanned
+  - decompressed bytes consumed by the row operation
+```
+
+Configured scan budgets are enforced incrementally on the normal streaming path and terminate with a typed resource-limit error when exceeded. They do not require pre-reading or buffering the complete entry.
+
+Applications processing trusted local backups may choose generous scan budgets. Applications processing untrusted or customer-supplied archives should configure limits appropriate to their service-level and resource constraints.
+
+Callers that use raw `EntryDataReader` extraction rather than row-aware operations remain responsible for bounding the total output they consume or write.
+
+## COPY representation boundary
+
+The v0.1 row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
+
+Unsupported representations must fail explicitly before row parsing where the necessary metadata is available.
+
+See `docs/COPY-TEXT.md` for the byte-level row contract.
 
 ## Fuzzing
 
@@ -49,5 +82,7 @@ The planned baseline invariants are:
 arbitrary archive bytes -> successful parse/extraction or typed error, never parser panic
 arbitrary COPY bytes    -> rows or typed error, never parser panic
 ```
+
+Fuzzing should include structural limits, row limits, malformed COPY escape boundaries, unsupported-representation transitions, and checked scan counters.
 
 Security-relevant regression inputs should remain in the permanent test corpus after fixes.
