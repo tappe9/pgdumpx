@@ -1,0 +1,12 @@
+diff --git a/crates/pgdumpx/src/copy.rs b/crates/pgdumpx/src/copy.rs
+--- a/crates/pgdumpx/src/copy.rs
++++ b/crates/pgdumpx/src/copy.rs
+@@ -151,7 +151,7 @@ impl<R: Read> CopyRowReader<R> {
+         self.field_spans.clear();
+ 
+         let row = self.next_row_number;
+-        let row_start = self.input.consumed();
++        let row_start = self.consumed_input_bytes();
+         let record_end = self.read_record(row)?;
+ 
+         if self.raw_row.is_empty() && record_end == RecordEnd::Eof {
