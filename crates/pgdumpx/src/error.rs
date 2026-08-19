@@ -136,6 +136,8 @@ pub enum PgDumpError {
         dump_id: i32,
         algorithm: &'static str,
     },
+    /// Memory for a bounded selected-entry buffer could not be reserved.
+    EntryBufferAllocationFailed { dump_id: i32, requested: u64 },
     /// A validated entry's compressed stream could not be decoded.
     DecompressionFailed {
         dump_id: i32,
@@ -355,6 +357,10 @@ impl fmt::Display for PgDumpError {
             Self::UnsupportedEntryCompression { dump_id, algorithm } => write!(
                 formatter,
                 "dump ID {dump_id} uses unsupported {algorithm} entry compression"
+            ),
+            Self::EntryBufferAllocationFailed { dump_id, requested } => write!(
+                formatter,
+                "could not reserve {requested} bytes for dump ID {dump_id} entry buffering"
             ),
             Self::DecompressionFailed {
                 dump_id,
