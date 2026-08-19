@@ -1,0 +1,29 @@
+name: Apply format patch
+
+on:
+  push:
+    branches:
+      - feat/first-end-to-end-find
+    paths:
+      - .github/issue14-format.patch
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Apply and publish patch
+        run: |
+          git apply --index .github/issue14-format.patch
+          git rm .github/issue14-format.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style: format Archive table row integration"
+          git push origin HEAD:feat/first-end-to-end-find
