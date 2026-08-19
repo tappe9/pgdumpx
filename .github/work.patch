@@ -2,16 +2,10 @@ diff --git a/crates/pgdumpx/src/table_rows_tests.rs b/crates/pgdumpx/src/table_r
 index c0b93af..8accf15 100644
 --- a/crates/pgdumpx/src/table_rows_tests.rs
 +++ b/crates/pgdumpx/src/table_rows_tests.rs
-@@ -1,4 +1,4 @@
+@@ -1 +1 @@
 -use crate::{Archive, FieldRef};
 +use crate::{Archive, FieldRef, OwnedField};
- use std::{fs::File, io::BufReader, path::PathBuf};
- 
- #[test]
-@@ -28,4 +28,31 @@ fn fixture_path(name: &str) -> PathBuf {
-         .join(name)
- }
- 
+@@ -30,0 +31,16 @@ fn fixture_path(name: &str) -> PathBuf {
 +#[test]
 +fn find_first_preserves_parser_consumed_byte_accounting_and_stops_at_match() {
 +    let first_physical_row = b"1\tEARLY-100\tcustomer-a\tplain\t\n";
@@ -28,7 +22,7 @@ index c0b93af..8accf15 100644
 +            })
 +            .unwrap()
 +            .unwrap();
-+
+@@ -31,0 +48,11 @@ fn fixture_path(name: &str) -> PathBuf {
 +        assert_eq!(
 +            found.field(0),
 +            Some(&OwnedField::Bytes(b"1".to_vec()))
@@ -44,16 +38,10 @@ diff --git a/crates/pgdumpx/tests/table_rows.rs b/crates/pgdumpx/tests/table_row
 index a26cb5d..2ae6909 100644
 --- a/crates/pgdumpx/tests/table_rows.rs
 +++ b/crates/pgdumpx/tests/table_rows.rs
-@@ -1,4 +1,4 @@
+@@ -1 +1 @@
 -use pgdumpx::{Archive, FieldRef, PgDumpError};
 +use pgdumpx::{Archive, FieldRef, OwnedField, PgDumpError};
- use std::{
-     cell::Cell,
-     io::{self, Cursor, Read, Seek, SeekFrom},
-@@ -154,6 +154,125 @@ fn integrated_table_rows_enforces_provisional_field_limit() {
-     ));
- }
- 
+@@ -156,0 +157,119 @@ fn integrated_table_rows_enforces_provisional_field_limit() {
 +#[test]
 +fn find_first_returns_the_first_matching_owned_row_for_official_none_and_gzip() {
 +    for fixture_name in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
@@ -173,6 +161,3 @@ index a26cb5d..2ae6909 100644
 +        "the first match must return before the trailing table-data bytes are read"
 +    );
 +}
- 
- fn collect_rows<R: Read>(rows: &mut pgdumpx::TableRowReader<'_, R>) -> Vec<Vec<Option<Vec<u8>>>> {
-     let mut result = Vec::new();
