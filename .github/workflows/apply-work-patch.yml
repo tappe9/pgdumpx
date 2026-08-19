@@ -6,6 +6,7 @@ on:
       - feat/first-end-to-end-find
     paths:
       - .github/work.patch
+      - .github/workflows/apply-work-patch.yml
 
 permissions:
   contents: write
