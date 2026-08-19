@@ -18,6 +18,10 @@ impl<R> ArchiveReader<R> {
     pub(crate) const fn offset(&self) -> u64 {
         self.offset
     }
+
+    pub(crate) fn into_inner(self) -> R {
+        self.inner
+    }
 }
 
 impl<R: Read> ArchiveReader<R> {

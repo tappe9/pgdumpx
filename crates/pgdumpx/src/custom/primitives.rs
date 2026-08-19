@@ -17,7 +17,7 @@ impl ArchiveIntegerSize {
         }
     }
 
-    const fn get(self) -> u8 {
+    pub(crate) const fn get(self) -> u8 {
         self.0
     }
 }
@@ -34,7 +34,7 @@ impl ArchiveOffsetSize {
         }
     }
 
-    const fn get(self) -> u8 {
+    pub(crate) const fn get(self) -> u8 {
         self.0
     }
 }

@@ -1,17 +1,25 @@
-//! A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.
+//! A bounded, byte-oriented metadata reader for PostgreSQL custom-format dumps.
 //!
-//! Archive-format behavior is introduced incrementally by the v0.1 implementation issues.
+//! The current v0.1 implementation opens exact archive version 1.16 metadata.
+//! Entry seeking, payload framing, decompression, and row parsing are added separately.
 
-// Issue #7 wires these crate-private primitives into the production header parser.
-#[allow(dead_code)]
+#![forbid(unsafe_code)]
+
+mod archive;
 mod custom;
 mod error;
-#[allow(dead_code)]
 mod io;
-#[allow(dead_code)]
 mod limits;
-
-pub use error::PgDumpError;
+mod model;
 
 #[cfg(test)]
 mod archive_primitives_tests;
+#[cfg(test)]
+mod metadata_open_tests;
+
+pub use archive::Archive;
+pub use error::PgDumpError;
+pub use model::{
+    ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
+    DumpId, Section, TableRef, TocEntry,
+};
