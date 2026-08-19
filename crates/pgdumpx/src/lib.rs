@@ -21,6 +21,8 @@ mod archive_primitives_tests;
 mod copy_tests;
 #[cfg(test)]
 mod metadata_open_tests;
+#[cfg(test)]
+mod table_rows_tests;
 
 pub use archive::Archive;
 pub use copy::{CopyRowReader, FieldRef, Row};
