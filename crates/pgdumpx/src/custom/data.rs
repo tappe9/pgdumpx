@@ -36,8 +36,8 @@ impl<'a, R> CustomChunkReader<'a, R> {
         R: Read,
     {
         let length_offset = self.reader.offset();
-        let length = read_archive_integer(&mut self.reader, self.integer_size).map_err(|error| {
-            match error {
+        let length = read_archive_integer(&mut self.reader, self.integer_size).map_err(
+            |error| match error {
                 PgDumpError::UnexpectedEof { .. } => {
                     into_io_error(PgDumpError::TruncatedDataChunkLength {
                         dump_id: self.dump_id.as_i32(),
@@ -45,8 +45,8 @@ impl<'a, R> CustomChunkReader<'a, R> {
                     })
                 }
                 other => into_io_error(other),
-            }
-        })?;
+            },
+        )?;
         if length < 0 {
             return Err(into_io_error(PgDumpError::InvalidDataChunkLength {
                 dump_id: self.dump_id.as_i32(),
