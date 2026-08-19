@@ -16,8 +16,7 @@ use std::{
 
 #[test]
 fn exact_read_succeeds_across_partial_reads_and_tracks_offset() {
-    let source = ChunkedReader::new(b"abcd", 2);
-    let mut reader = ArchiveReader::new(source);
+    let mut reader = ArchiveReader::new(ChunkedReader::new(b"abcd", 2));
     let mut output = [0_u8; 4];
 
     reader.read_exact(&mut output).unwrap();
@@ -27,7 +26,7 @@ fn exact_read_succeeds_across_partial_reads_and_tracks_offset() {
 }
 
 #[test]
-fn exact_read_reports_short_read_at_the_first_missing_byte() {
+fn exact_read_reports_short_read_at_first_missing_byte() {
     let mut reader = ArchiveReader::new(Cursor::new(b"ab"));
     let mut output = [0_u8; 4];
 
@@ -38,9 +37,9 @@ fn exact_read_reports_short_read_at_the_first_missing_byte() {
 }
 
 #[test]
-fn exact_read_rejects_counter_overflow_before_touching_the_source() {
-    let read_calls = Rc::new(Cell::new(0));
-    let source = CountingReader::new(b"x", Rc::clone(&read_calls));
+fn exact_read_rejects_counter_overflow_before_reading() {
+    let read_bytes = Rc::new(Cell::new(0));
+    let source = CountingReader::new(b"x", Rc::clone(&read_bytes));
     let mut reader = ArchiveReader::new_at(source, u64::MAX);
     let mut output = [0_u8; 1];
 
@@ -52,23 +51,26 @@ fn exact_read_rejects_counter_overflow_before_touching_the_source() {
             offset: u64::MAX
         }
     ));
-    assert_eq!(read_calls.get(), 0);
+    assert_eq!(read_bytes.get(), 0);
     assert_eq!(reader.offset(), u64::MAX);
 }
 
 #[test]
-fn io_errors_keep_offset_and_source_context() {
+fn io_errors_preserve_offset_and_source() {
     let mut reader = ArchiveReader::new(FailingReader);
     let mut output = [0_u8; 1];
 
     let error = reader.read_exact(&mut output).unwrap_err();
 
-    assert!(matches!(error, PgDumpError::Io { offset: 0, .. }));
-    assert_eq!(error.source().map(ToString::to_string).as_deref(), Some("boom"));
+    assert!(matches!(&error, PgDumpError::Io { offset: 0, .. }));
+    assert_eq!(
+        error.source().map(|source| source.to_string()).as_deref(),
+        Some("boom")
+    );
 }
 
 #[test]
-fn archive_integer_decodes_representative_and_boundary_values() {
+fn archive_integer_decodes_representative_values_and_boundaries() {
     for expected in [
         0_i64,
         1,
@@ -78,8 +80,7 @@ fn archive_integer_decodes_representative_and_boundary_values() {
         i64::from(i32::MAX),
         i64::from(i32::MIN),
     ] {
-        let encoded = encode_integer(expected, 4);
-        let mut reader = ArchiveReader::new(Cursor::new(encoded));
+        let mut reader = ArchiveReader::new(Cursor::new(encode_integer(expected, 4)));
 
         let actual = read_archive_integer(&mut reader, integer_size()).unwrap();
 
@@ -89,21 +90,26 @@ fn archive_integer_decodes_representative_and_boundary_values() {
 }
 
 #[test]
-fn archive_integer_treats_any_nonzero_sign_byte_as_negative() {
+fn archive_integer_treats_any_nonzero_sign_as_negative() {
     let mut encoded = encode_integer(7, 4);
     encoded[0] = 0xff;
     let mut reader = ArchiveReader::new(Cursor::new(encoded));
 
-    let value = read_archive_integer(&mut reader, integer_size()).unwrap();
+    assert_eq!(
+        read_archive_integer(&mut reader, integer_size()).unwrap(),
+        -7
+    );
 
-    assert_eq!(value, -7);
+    let mut negative_zero = encode_integer(0, 4);
+    negative_zero[0] = 1;
+    let mut reader = ArchiveReader::new(Cursor::new(negative_zero));
+    assert_eq!(read_archive_integer(&mut reader, integer_size()).unwrap(), 0);
 }
 
 #[test]
 fn archive_integer_rejects_unsupported_sizes() {
     for size in [0_u8, 5] {
         let error = ArchiveIntegerSize::new(size, 17).unwrap_err();
-
         assert!(matches!(
             error,
             PgDumpError::UnsupportedArchiveIntegerSize {
@@ -117,11 +123,8 @@ fn archive_integer_rejects_unsupported_sizes() {
 #[test]
 fn archive_integer_rejects_values_outside_i32() {
     for value in [i64::from(i32::MAX) + 1, i64::from(i32::MIN) - 1] {
-        let encoded = encode_integer(value, 4);
-        let mut reader = ArchiveReader::new(Cursor::new(encoded));
-
+        let mut reader = ArchiveReader::new(Cursor::new(encode_integer(value, 4)));
         let error = read_archive_integer(&mut reader, integer_size()).unwrap_err();
-
         assert!(matches!(
             error,
             PgDumpError::ArchiveIntegerOutOfRange { offset: 0 }
@@ -130,7 +133,7 @@ fn archive_integer_rejects_values_outside_i32() {
 }
 
 #[test]
-fn archive_integer_truncation_reports_the_missing_byte_offset() {
+fn archive_integer_truncation_is_typed() {
     let mut reader = ArchiveReader::new(Cursor::new([0_u8, 1, 2]));
 
     let error = read_archive_integer(&mut reader, integer_size()).unwrap_err();
@@ -148,12 +151,8 @@ fn archive_offset_preserves_not_set_set_and_no_data_states() {
     ];
 
     for (state, value, expected) in cases {
-        let encoded = encode_offset(state, 8, value);
-        let mut reader = ArchiveReader::new(Cursor::new(encoded));
-
-        let actual = read_archive_offset(&mut reader, size).unwrap();
-
-        assert_eq!(actual, expected);
+        let mut reader = ArchiveReader::new(Cursor::new(encode_offset(state, 8, value)));
+        assert_eq!(read_archive_offset(&mut reader, size).unwrap(), expected);
         assert_eq!(reader.offset(), 9);
     }
 }
@@ -171,7 +170,6 @@ fn archive_offset_rejects_invalid_size_and_state() {
     let size = ArchiveOffsetSize::new(8, 0).unwrap();
     let mut reader = ArchiveReader::new(Cursor::new(encode_offset(0, 8, 0)));
     let error = read_archive_offset(&mut reader, size).unwrap_err();
-
     assert!(matches!(
         error,
         PgDumpError::InvalidArchiveOffsetState {
@@ -184,17 +182,16 @@ fn archive_offset_rejects_invalid_size_and_state() {
 #[test]
 fn archive_offset_accepts_zero_extension_and_rejects_overflow() {
     let size = ArchiveOffsetSize::new(9, 0).unwrap();
-
-    let mut valid_reader = ArchiveReader::new(Cursor::new(encode_offset(2, 9, u64::MAX.into())));
+    let mut valid =
+        ArchiveReader::new(Cursor::new(encode_offset(2, 9, u128::from(u64::MAX))));
     assert_eq!(
-        read_archive_offset(&mut valid_reader, size).unwrap(),
+        read_archive_offset(&mut valid, size).unwrap(),
         ArchiveOffset::Position(u64::MAX)
     );
 
-    let mut invalid_reader =
+    let mut overflowing =
         ArchiveReader::new(Cursor::new(encode_offset(2, 9, 1_u128 << 64)));
-    let error = read_archive_offset(&mut invalid_reader, size).unwrap_err();
-
+    let error = read_archive_offset(&mut overflowing, size).unwrap_err();
     assert!(matches!(
         error,
         PgDumpError::ArchiveOffsetOutOfRange { offset: 9 }
@@ -212,10 +209,16 @@ fn archive_offset_truncation_is_typed() {
 }
 
 #[test]
-fn archive_string_decodes_null_empty_non_utf8_and_limit_boundaries() {
+fn archive_string_decodes_null_empty_non_utf8_and_exact_limit() {
     let cases = [
         (-7_i64, Vec::new(), ArchiveStringLimit::new(3), None),
         (0, Vec::new(), ArchiveStringLimit::new(0), Some(Vec::new())),
+        (
+            2,
+            b"ok".to_vec(),
+            ArchiveStringLimit::new(3),
+            Some(b"ok".to_vec()),
+        ),
         (
             3,
             vec![0xff, 0x00, 0xfe],
@@ -228,10 +231,10 @@ fn archive_string_decodes_null_empty_non_utf8_and_limit_boundaries() {
         let mut encoded = encode_integer(length, 4);
         encoded.extend_from_slice(&payload);
         let mut reader = ArchiveReader::new(Cursor::new(encoded));
-
-        let actual = read_archive_string(&mut reader, integer_size(), limit).unwrap();
-
-        assert_eq!(actual, expected);
+        assert_eq!(
+            read_archive_string(&mut reader, integer_size(), limit).unwrap(),
+            expected
+        );
     }
 }
 
