@@ -1,0 +1,314 @@
+diff --git a/crates/pgdumpx/src/archive.rs b/crates/pgdumpx/src/archive.rs
+index 91449be..53d549d 100644
+--- a/crates/pgdumpx/src/archive.rs
++++ b/crates/pgdumpx/src/archive.rs
+@@ -1,5 +1,6 @@
+ use crate::{
+-    ArchiveHeader, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef, TocEntry,
++    ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef,
++    TableRowReader, TocEntry,
+     copy_metadata::{TableDataMetadata, parse_table_data_metadata},
+     custom::{
+         data::{BLK_DATA, CustomChunkReader},
+@@ -59,61 +60,117 @@ impl<R: Read + Seek> Archive<R> {
+             return Ok(None);
+         };
+         let entry = &self.entries[index];
+-        let dump_id = entry.id().as_i32();
+-        let offset = match entry.data_location() {
+-            DataLocation::NoData => return Err(PgDumpError::EntryHasNoData { dump_id }),
+-            DataLocation::Unknown => {
+-                return Err(PgDumpError::EntryDataOffsetUnavailable { dump_id });
+-            }
+-            DataLocation::Offset(offset) => offset,
+-        };
++        open_entry_reader(
++            &mut self.reader,
++            self.header.compression(),
++            self.integer_size,
++            entry,
++        )
++        .map(Some)
++    }
+ 
+-        let encoded_dump_id_bytes = u64::from(self.integer_size.get())
+-            .checked_add(1)
+-            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+-        offset
+-            .checked_add(1)
+-            .and_then(|value| value.checked_add(encoded_dump_id_bytes))
+-            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+-
+-        let actual_position = self
+-            .reader
+-            .seek(SeekFrom::Start(offset))
+-            .map_err(|source| PgDumpError::Io { offset, source })?;
+-        if actual_position != offset {
+-            return Err(PgDumpError::EntrySeekPositionMismatch {
+-                dump_id,
+-                expected: offset,
+-                actual: actual_position,
+-            });
+-        }
++    /// Opens the related table-data entry as a lending COPY text row stream.
++    ///
++    /// Table lookup and representation validation use metadata parsed during
++    /// [`Archive::open`]. Unsupported row representations fail before the
++    /// selected payload is sought or parsed.
++    pub fn table_rows(
++        &mut self,
++        schema: &[u8],
++        name: &[u8],
++    ) -> Result<TableRowReader<'_, R>, PgDumpError> {
++        let table_id = self
++            .index
++            .table_id(schema, name)
++            .ok_or(PgDumpError::TableNotFound)?;
++        let data_id = self
++            .index
++            .data_id(table_id)
++            .ok_or(PgDumpError::TableDataEntryUnavailable {
++                table_id: table_id.as_i32(),
++            })?;
++        let metadata = self.index.table_data_metadata(data_id).ok_or(
++            PgDumpError::CopyColumnMetadataUnavailable {
++                dump_id: data_id.as_i32(),
++            },
++        )?;
++        metadata.validate_row_access(data_id)?;
+ 
+-        let mut reader = ArchiveReader::new_at(&mut self.reader, offset);
+-        let marker_offset = reader.offset();
+-        let block_type = reader.read_byte()?;
+-        if block_type != BLK_DATA {
+-            return Err(PgDumpError::UnexpectedDataBlockType {
+-                dump_id,
+-                expected: BLK_DATA,
+-                actual: block_type,
+-                offset: marker_offset,
+-            });
+-        }
++        let entry_index = self.index.entry_index(data_id).ok_or(
++            PgDumpError::TableDataEntryUnavailable {
++                table_id: table_id.as_i32(),
++            },
++        )?;
++        let entry = &self.entries[entry_index];
++        let entry_reader = open_entry_reader(
++            &mut self.reader,
++            self.header.compression(),
++            self.integer_size,
++            entry,
++        )?;
++        Ok(TableRowReader::new(data_id, metadata, entry_reader))
++    }
++}
+ 
+-        let dump_id_offset = reader.offset();
+-        let actual_dump_id = read_archive_integer(&mut reader, self.integer_size)?;
+-        if actual_dump_id != dump_id {
+-            return Err(PgDumpError::DataBlockDumpIdMismatch {
+-                expected: dump_id,
+-                actual: actual_dump_id,
+-                offset: dump_id_offset,
+-            });
++fn open_entry_reader<'a, R: Read + Seek>(
++    reader: &'a mut R,
++    compression: Compression,
++    integer_size: crate::custom::primitives::ArchiveIntegerSize,
++    entry: &TocEntry,
++) -> Result<EntryDataReader<'a, R>, PgDumpError> {
++    let id = entry.id();
++    let dump_id = id.as_i32();
++    let offset = match entry.data_location() {
++        DataLocation::NoData => return Err(PgDumpError::EntryHasNoData { dump_id }),
++        DataLocation::Unknown => {
++            return Err(PgDumpError::EntryDataOffsetUnavailable { dump_id });
+         }
++        DataLocation::Offset(offset) => offset,
++    };
++
++    let encoded_dump_id_bytes = u64::from(integer_size.get())
++        .checked_add(1)
++        .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
++    offset
++        .checked_add(1)
++        .and_then(|value| value.checked_add(encoded_dump_id_bytes))
++        .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
++
++    let actual_position = reader
++        .seek(SeekFrom::Start(offset))
++        .map_err(|source| PgDumpError::Io { offset, source })?;
++    if actual_position != offset {
++        return Err(PgDumpError::EntrySeekPositionMismatch {
++            dump_id,
++            expected: offset,
++            actual: actual_position,
++        });
++    }
+ 
+-        let chunks = CustomChunkReader::new(reader, self.integer_size, id);
+-        let entry_reader = EntryDataReader::new(id, self.header.compression(), chunks)?;
+-        Ok(Some(entry_reader))
++    let mut reader = ArchiveReader::new_at(reader, offset);
++    let marker_offset = reader.offset();
++    let block_type = reader.read_byte()?;
++    if block_type != BLK_DATA {
++        return Err(PgDumpError::UnexpectedDataBlockType {
++            dump_id,
++            expected: BLK_DATA,
++            actual: block_type,
++            offset: marker_offset,
++        });
+     }
++
++    let dump_id_offset = reader.offset();
++    let actual_dump_id = read_archive_integer(&mut reader, integer_size)?;
++    if actual_dump_id != dump_id {
++        return Err(PgDumpError::DataBlockDumpIdMismatch {
++            expected: dump_id,
++            actual: actual_dump_id,
++            offset: dump_id_offset,
++        });
++    }
++
++    let chunks = CustomChunkReader::new(reader, integer_size, id);
++    EntryDataReader::new(id, compression, chunks)
+ }
+ 
+ impl<R> Archive<R> {
+diff --git a/crates/pgdumpx/src/copy_metadata.rs b/crates/pgdumpx/src/copy_metadata.rs
+index ea10cbd..b7d05f9 100644
+--- a/crates/pgdumpx/src/copy_metadata.rs
++++ b/crates/pgdumpx/src/copy_metadata.rs
+@@ -53,6 +53,18 @@ pub(crate) enum TableDataMetadata {
+ }
+ 
+ impl TableDataMetadata {
++    pub(crate) fn validate_row_access(&self, dump_id: DumpId) -> Result<(), PgDumpError> {
++        match self {
++            Self::Unsupported(representation) => {
++                Err(PgDumpError::UnsupportedTableDataRepresentation {
++                    dump_id: dump_id.as_i32(),
++                    representation: *representation,
++                })
++            }
++            Self::Copy(_) | Self::Unavailable | Self::Malformed { .. } => Ok(()),
++        }
++    }
++
+     pub(crate) fn representation(
+         &self,
+         dump_id: DumpId,
+diff --git a/crates/pgdumpx/src/error.rs b/crates/pgdumpx/src/error.rs
+index c99fc09..29f0e2c 100644
+--- a/crates/pgdumpx/src/error.rs
++++ b/crates/pgdumpx/src/error.rs
+@@ -93,6 +93,8 @@ pub enum PgDumpError {
+         first_data_id: i32,
+         second_data_id: i32,
+     },
++    /// No `TABLE` entry matches the requested byte-oriented identity.
++    TableNotFound,
+     /// The selected table has no related `TABLE DATA` TOC entry.
+     TableDataEntryUnavailable { table_id: i32 },
+     /// A `TABLE DATA` entry has no usable COPY statement metadata.
+@@ -354,6 +356,7 @@ impl fmt::Display for PgDumpError {
+                 formatter,
+                 "TABLE dump ID {table_id} is claimed by TABLE DATA dump IDs {first_data_id} and {second_data_id}"
+             ),
++            Self::TableNotFound => write!(formatter, "requested table was not found"),
+             Self::TableDataEntryUnavailable { table_id } => write!(
+                 formatter,
+                 "TABLE dump ID {table_id} has no related TABLE DATA entry"
+--- a/crates/pgdumpx/src/lib.rs
++++ b/crates/pgdumpx/src/lib.rs
+@@ -14,6 +14,7 @@
+ mod io;
+ mod limits;
+ mod model;
++mod table_rows;
+ 
+ #[cfg(test)]
+ mod archive_primitives_tests;
+@@ -33,3 +34,4 @@
+     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
+     DumpId, Section, TableRef, TocEntry,
+ };
++pub use table_rows::TableRowReader;
+diff --git a/crates/pgdumpx/src/table_rows.rs b/crates/pgdumpx/src/table_rows.rs
+new file mode 100644
+index 0000000..6dcee13
+--- /dev/null
++++ b/crates/pgdumpx/src/table_rows.rs
+@@ -0,0 +1,70 @@
++use crate::{
++    Column, CopyRowReader, DumpId, EntryDataReader, PgDumpError, Row,
++    copy_metadata::TableDataMetadata,
++};
++use std::io::Read;
++
++/// A lending stream of COPY text rows for one selected table-data entry.
++///
++/// The reader composes validated archive seeking, custom chunk framing,
++/// streaming decompression, and COPY text parsing without buffering the
++/// complete entry or table data.
++pub struct TableRowReader<'a, R> {
++    data_id: DumpId,
++    metadata: &'a TableDataMetadata,
++    rows: CopyRowReader<EntryDataReader<'a, R>>,
++}
++
++impl<'a, R: Read> TableRowReader<'a, R> {
++    pub(crate) fn new(
++        data_id: DumpId,
++        metadata: &'a TableDataMetadata,
++        entry: EntryDataReader<'a, R>,
++    ) -> Self {
++        Self {
++            data_id,
++            metadata,
++            rows: CopyRowReader::new(entry),
++        }
++    }
++
++    /// Returns COPY columns in the exact positional order used by parsed rows.
++    ///
++    /// Positional row iteration may remain available when column metadata is
++    /// unavailable or malformed; in that case this method returns the
++    /// corresponding typed metadata error.
++    pub fn columns(&self) -> Result<&[Column], PgDumpError> {
++        self.metadata.columns(self.data_id)
++    }
++
++    /// Resolves a byte-oriented COPY column name to its zero-based field index.
++    pub fn column_index(&self, name: &[u8]) -> Result<Option<usize>, PgDumpError> {
++        self.metadata.column_index(self.data_id, name)
++    }
++
++    /// Parses and lends the next logical row from the selected table-data entry.
++    ///
++    /// A returned row borrows reusable parser storage and remains valid only
++    /// until the next mutable operation on this reader.
++    ///
++    /// ```compile_fail
++    /// use pgdumpx::{PgDumpError, TableRowReader};
++    /// use std::io::Read;
++    ///
++    /// fn cannot_hold_two_rows<R: Read>(
++    ///     rows: &mut TableRowReader<'_, R>,
++    /// ) -> Result<(), PgDumpError> {
++    ///     let first = rows.next_row()?.unwrap();
++    ///     let _second = rows.next_row()?;
++    ///     println!("{first:?}");
++    ///     Ok(())
++    /// }
++    /// ```
++    pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError> {
++        self.rows.next_row()
++    }
++
++    pub(crate) const fn consumed_input_bytes(&self) -> u64 {
++        self.rows.consumed_input_bytes()
++    }
++}
