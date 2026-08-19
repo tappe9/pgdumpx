@@ -31,6 +31,37 @@ impl<R: Read> ArchiveReader<R> {
         Ok(byte[0])
     }
 
+    pub(crate) fn read_some(&mut self, output: &mut [u8]) -> Result<usize, PgDumpError> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+
+        loop {
+            match self.inner.read(output) {
+                Ok(read) => {
+                    let read_u64 =
+                        u64::try_from(read).map_err(|_| PgDumpError::ArithmeticOverflow {
+                            offset: self.offset,
+                        })?;
+                    self.offset = self.offset.checked_add(read_u64).ok_or(
+                        PgDumpError::ArithmeticOverflow {
+                            offset: self.offset,
+                        },
+                    )?;
+                    return Ok(read);
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(0),
+                Err(source) => {
+                    return Err(PgDumpError::Io {
+                        offset: self.offset,
+                        source,
+                    });
+                }
+            }
+        }
+    }
+
     pub(crate) fn read_exact(&mut self, mut output: &mut [u8]) -> Result<(), PgDumpError> {
         let requested =
             u64::try_from(output.len()).map_err(|_| PgDumpError::ArithmeticOverflow {
@@ -43,36 +74,15 @@ impl<R: Read> ArchiveReader<R> {
             })?;
 
         while !output.is_empty() {
-            match self.inner.read(output) {
-                Ok(0) => {
+            match self.read_some(output)? {
+                0 => {
                     return Err(PgDumpError::UnexpectedEof {
                         offset: self.offset,
                     });
                 }
-                Ok(read) => {
-                    let read_u64 =
-                        u64::try_from(read).map_err(|_| PgDumpError::ArithmeticOverflow {
-                            offset: self.offset,
-                        })?;
-                    self.offset = self.offset.checked_add(read_u64).ok_or(
-                        PgDumpError::ArithmeticOverflow {
-                            offset: self.offset,
-                        },
-                    )?;
+                read => {
                     let (_, remaining) = output.split_at_mut(read);
                     output = remaining;
-                }
-                Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(error) if error.kind() == ErrorKind::UnexpectedEof => {
-                    return Err(PgDumpError::UnexpectedEof {
-                        offset: self.offset,
-                    });
-                }
-                Err(source) => {
-                    return Err(PgDumpError::Io {
-                        offset: self.offset,
-                        source,
-                    });
                 }
             }
         }
