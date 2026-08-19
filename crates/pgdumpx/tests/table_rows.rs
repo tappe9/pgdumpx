@@ -162,11 +162,9 @@ fn find_first_returns_the_first_matching_owned_row_for_official_none_and_gzip() 
             let mut rows = archive.table_rows(b"public", b"orders").unwrap();
             let customer_code = rows.column_index(b"customer_code").unwrap().unwrap();
 
-            rows.find_first(|row| {
-                row.field(customer_code) == Some(FieldRef::Bytes(b"repeat"))
-            })
-            .unwrap()
-            .expect("the repeated value must match")
+            rows.find_first(|row| row.field(customer_code) == Some(FieldRef::Bytes(b"repeat")))
+                .unwrap()
+                .expect("the repeated value must match")
         };
 
         assert_eq!(owned.len(), 5);
@@ -179,10 +177,7 @@ fn find_first_returns_the_first_matching_owned_row_for_official_none_and_gzip() 
             owned.field(1),
             Some(&OwnedField::Bytes(b"SECOND-200".to_vec()))
         );
-        assert_eq!(
-            owned.field(2),
-            Some(&OwnedField::Bytes(b"repeat".to_vec()))
-        );
+        assert_eq!(owned.field(2), Some(&OwnedField::Bytes(b"repeat".to_vec())));
         assert_eq!(owned.fields().len(), 5);
     }
 }
@@ -203,8 +198,7 @@ fn find_first_returns_none_for_no_match() {
 #[test]
 fn find_first_distinguishes_null_empty_and_non_utf8_fields() {
     let null_row = {
-        let mut archive =
-            Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
+        let mut archive = Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
         let mut rows = archive.table_rows(b"public", b"orders").unwrap();
         let note = rows.column_index(b"note").unwrap().unwrap();
         rows.find_first(|row| row.field(note) == Some(FieldRef::Null))
@@ -215,8 +209,7 @@ fn find_first_distinguishes_null_empty_and_non_utf8_fields() {
     assert_eq!(null_row.field(3), Some(&OwnedField::Null));
 
     let empty_row = {
-        let mut archive =
-            Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
+        let mut archive = Archive::open(Cursor::new(fixture("pg18-none-copy-basic.dump"))).unwrap();
         let mut rows = archive.table_rows(b"public", b"orders").unwrap();
         let note = rows.column_index(b"note").unwrap().unwrap();
         rows.find_first(|row| row.field(note) == Some(FieldRef::Bytes(b"")))
@@ -228,10 +221,8 @@ fn find_first_distinguishes_null_empty_and_non_utf8_fields() {
 
     let non_utf8 = {
         let payload = b"\\377\n\\.\n";
-        let bytes = archive_with_table_data(
-            Some(b"COPY public.data (value) FROM stdin;\n"),
-            payload,
-        );
+        let bytes =
+            archive_with_table_data(Some(b"COPY public.data (value) FROM stdin;\n"), payload);
         let mut archive = Archive::open(Cursor::new(bytes)).unwrap();
         let mut rows = archive.table_rows(b"public", b"data").unwrap();
         let value = rows.column_index(b"value").unwrap().unwrap();
@@ -250,10 +241,7 @@ fn find_first_stops_without_reading_the_remaining_table_data() {
     }
     payload.extend_from_slice(b"\\.\n");
 
-    let bytes = archive_with_table_data(
-        Some(b"COPY public.data (value) FROM stdin;\n"),
-        &payload,
-    );
+    let bytes = archive_with_table_data(Some(b"COPY public.data (value) FROM stdin;\n"), &payload);
     let total_len = u64::try_from(bytes.len()).unwrap();
     let bytes_read = Rc::new(Cell::new(0_u64));
     let reader = ShortTrackingReader::new(bytes, Rc::clone(&bytes_read));

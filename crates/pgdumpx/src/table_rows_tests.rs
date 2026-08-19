@@ -38,15 +38,10 @@ fn find_first_preserves_parser_consumed_byte_accounting_and_stops_at_match() {
         let order_number = rows.column_index(b"order_number").unwrap().unwrap();
 
         let found = rows
-            .find_first(|row| {
-                row.field(order_number) == Some(FieldRef::Bytes(b"EARLY-100"))
-            })
+            .find_first(|row| row.field(order_number) == Some(FieldRef::Bytes(b"EARLY-100")))
             .unwrap()
             .unwrap();
-        assert_eq!(
-            found.field(0),
-            Some(&OwnedField::Bytes(b"1".to_vec()))
-        );
+        assert_eq!(found.field(0), Some(&OwnedField::Bytes(b"1".to_vec())));
         assert_eq!(
             rows.consumed_input_bytes(),
             u64::try_from(first_physical_row.len()).unwrap(),
