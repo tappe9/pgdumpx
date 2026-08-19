@@ -6,7 +6,7 @@
 
 pgdumpx is a reusable Rust engine for inspecting and extracting data from large PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
-The project is intentionally **read-only**. It is not a replacement for `pg_dump` or `pg_restore`. Its focus is efficient archive inspection, selective extraction, streaming table access, and safe parsing of untrusted dump files.
+The project is intentionally **read-only**. It is not a replacement for `pg_dump` or `pg_restore`. Its focus is efficient archive inspection, selective extraction, streaming table access, row-aware filtering, and safe parsing of untrusted dump files.
 
 [日本語 README](README.ja.md)
 
@@ -21,6 +21,7 @@ The initial product direction emphasizes:
 - **lazy data access** using `Read + Seek`;
 - **streaming decompression** without buffering an entire table;
 - **row-aware parsing** of PostgreSQL `COPY` text data;
+- **column-aware first-match filtering** without restoring the dump;
 - **typed, location-aware errors**;
 - **resource limits** for attacker-controlled metadata and row sizes;
 - a small core suitable for future CLI, Python, Arrow, and other bindings;
@@ -28,13 +29,13 @@ The initial product direction emphasizes:
 
 ## Initial scope
 
-v0.1 targets PostgreSQL custom-format archives:
+v0.1 targets PostgreSQL custom-format archives only:
 
 ```bash
 pg_dump -Fc mydb > backup.dump
 ```
 
-The initial compatibility target is archive format versions **1.14 through 1.16**. Support for older archive versions and other `pg_dump` formats is intentionally deferred.
+The initial compatibility target is archive format versions **1.14 through 1.16**. Support for older archive versions and other `pg_dump` formats is intentionally deferred and is not required for the project to be useful.
 
 Planned compression support:
 
@@ -48,7 +49,7 @@ Planned compression support:
 The public API is still a design contract, not an implemented interface. The current direction is:
 
 ```rust
-use pgdumpx::Archive;
+use pgdumpx::{Archive, FieldRef};
 
 let file = std::fs::File::open("backup.dump")?;
 let mut archive = Archive::open(file)?;
@@ -59,11 +60,26 @@ for entry in archive.entries() {
     println!("{} {:?} {}", entry.id(), entry.kind(), entry.name());
 }
 
-let mut rows = archive.table_rows("public", "orders")?;
+let mut rows = archive.table_rows(b"public", b"orders")?;
 while let Some(row) = rows.next_row()? {
     println!("{:?}", row);
 }
 ```
+
+A primary v0.1 use case is finding the first matching row without restoring the archive:
+
+```rust
+let mut rows = archive.table_rows(b"public", b"orders")?;
+let order_number = rows
+    .column_index(b"order_number")
+    .ok_or(/* application error */)?;
+
+let row = rows.find_first(|row| {
+    row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
+})?;
+```
+
+`find_first` is a **streaming scan**, not a database index lookup. The custom archive lets pgdumpx seek directly to the selected table-data entry, but it does not contain a row-level index. The reader therefore decompresses and parses rows in order until the predicate matches, then stops immediately. Worst-case work is proportional to the selected table's data size.
 
 The final API may change before the first release. See [docs/API-DESIGN.md](docs/API-DESIGN.md).
 
@@ -77,7 +93,7 @@ pgdumpx list backup.dump
 pgdumpx extract backup.dump public.orders
 ```
 
-CLI work begins only after the parser core is usable and tested.
+CLI work begins only after the parser core is usable and tested. A SQL-like query language is not part of v0.1.
 
 ## Architecture
 
@@ -105,8 +121,8 @@ PostgreSQL custom archive
                  ▼
           COPY text parser
                  │
-                 ▼
-                Row
+                 ├── row iteration
+                 └── first-match filtering
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the accepted initial architecture.
@@ -118,9 +134,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the accepted initial architecture.
 pgdumpx deliberately takes a narrower direction:
 
 - read-only rather than read/write;
-- custom format first rather than all formats;
-- large-file inspection and extraction as the primary use case;
-- row-aware `COPY` parsing as a core capability;
+- custom format only for the initial product direction;
+- large-file inspection and selective extraction as primary use cases;
+- row-aware `COPY` parsing and first-match filtering as core capabilities;
 - explicit parser resource budgets and malformed-input hardening;
 - performance work driven by repeatable benchmarks.
 

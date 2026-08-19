@@ -24,15 +24,19 @@ Given a TOC entry with a usable data offset, callers must be able to seek direct
 
 For supported table-data entries using PostgreSQL COPY text representation, callers must be able to iterate rows and fields without loading the complete table.
 
-### G-004 — Safe untrusted-input handling
+### G-004 — First-match row retrieval
+
+Given a table and a row predicate, callers must be able to scan the selected table's streamed COPY rows and return the first matching row without restoring the archive or buffering the complete table.
+
+### G-005 — Safe untrusted-input handling
 
 Malformed archive or COPY data must produce a typed error rather than unchecked memory access, arithmetic wraparound, or parser panic.
 
-### G-005 — Reusable core
+### G-006 — Reusable core
 
-Archive behavior must not depend on terminal output, Python, Arrow, a PostgreSQL connection, or CLI-specific types.
+Archive behavior must not depend on terminal output, Python, Arrow, a PostgreSQL connection, SQL execution, or a SQL query parser.
 
-### G-006 — Measurable performance
+### G-007 — Measurable performance
 
 The project must include repeatable benchmarks before making comparative performance claims.
 
@@ -47,6 +51,8 @@ v0.1 will not:
 - support Directory (`-Fd`) or Tar (`-Ft`) formats;
 - support arbitrary historical archive versions older than 1.14;
 - guarantee Binary COPY decoding;
+- provide a SQL `WHERE` parser or general SQL expression engine;
+- provide a persistent row-level index or guarantee constant-time row lookup;
 - expose Arrow, Polars, Parquet, or Python APIs from the core crate;
 - promise parallel extraction;
 - promise compatibility with malformed archives accepted accidentally by a particular PostgreSQL release.
@@ -105,6 +111,8 @@ Version-conditional fields must be handled explicitly.
 
 The archive must support efficient lookup by dump ID and practical table/table-data lookup by `(schema, name)` without rescanning payload data.
 
+These indexes are entry-level. v0.1 does not require an index mapping field values to individual rows.
+
 ### FR-008 — Preserve raw metadata bytes where text encoding is not guaranteed
 
 The lowest-level parser must not require arbitrary archive strings or table data to be valid UTF-8 merely for the archive to be structurally readable.
@@ -161,6 +169,56 @@ The core row API must allow fields to be consumed as bytes. String conversion is
 
 Callers must be able to enumerate header and TOC information without touching entry payloads.
 
+### FR-017 — COPY column layout
+
+For supported pg_dump-generated table-data entries, pgdumpx must derive the COPY column layout from the entry's recorded COPY statement when the required metadata is available.
+
+The row reader must expose column names as bytes and provide efficient name-to-index lookup.
+
+If table rows are positionally readable but the supported column layout cannot be derived, positional row iteration may remain available, while column-aware lookup/filtering must fail explicitly with a typed error rather than guessing field names.
+
+### FR-018 — First-match predicate scan
+
+The row reader must provide an operation equivalent in purpose to:
+
+```rust
+pub fn find_first<F>(
+    &mut self,
+    predicate: F,
+) -> Result<Option<OwnedRow>, PgDumpError>
+where
+    F: FnMut(&Row<'_>) -> bool;
+```
+
+Semantics:
+
+- rows are evaluated in archive/COPY order;
+- the first row whose predicate returns `true` is returned;
+- scanning stops immediately after the first match is fully parsed;
+- if no row matches, the result is `Ok(None)` after the selected table-data stream is exhausted;
+- the operation must use the same streaming, decompression, parsing, and resource-limit path as normal row iteration;
+- the operation must not allocate or buffer the complete table.
+
+### FR-019 — Owned first-match result
+
+A successful first-match operation must return an owned row representation whose fields remain valid after the streaming row reader advances or is dropped.
+
+The owned result remains byte-oriented and is bounded by the same `max_row_bytes` and `max_fields_per_row` limits as the borrowed row representation.
+
+### FR-020 — Explicit row-search performance semantics
+
+The public documentation must state that custom archives provide table-data entry offsets, not row-level indexes.
+
+Therefore first-match lookup is a sequential scan within the selected table:
+
+- selecting the table-data entry uses parsed TOC/index metadata;
+- row matching requires streaming decompression and row parsing from the beginning of that entry;
+- a match may terminate early;
+- a missing match or late match may require reading the complete selected table-data entry;
+- worst-case work is proportional to the selected table's data size.
+
+The project must not describe this API as database-index lookup or imply constant-time row access.
+
 ## 5. CLI requirements
 
 ### CLI-001 — Inspect
@@ -191,6 +249,8 @@ Stream the selected table's decompressed COPY text data to stdout by default. St
 
 I/O, format, decompression, COPY, or integrity errors must result in a non-zero exit code and diagnostics on stderr.
 
+A CLI query language is not required for v0.1; first-match filtering is initially a core Rust API capability.
+
 ## 6. Error requirements
 
 The public error type must be typed, implement `std::error::Error`, and be `#[non_exhaustive]` before v1.0.
@@ -211,6 +271,8 @@ Expected categories include:
 - unsupported compression;
 - decompression failure;
 - malformed COPY row/escape;
+- malformed or unavailable COPY column metadata;
+- unknown requested column where a convenience API requires one;
 - resource limit exceeded;
 - arithmetic overflow;
 - UTF-8 conversion failure for explicit string accessors.
@@ -225,7 +287,7 @@ Normal archive opening must not allocate a buffer proportional to the complete a
 
 ### SAFE-002 — No whole-table allocation for streaming reads
 
-`EntryDataReader` and row iteration must not require a complete data entry in memory.
+`EntryDataReader`, row iteration, and first-match filtering must not require a complete data entry in memory.
 
 ### SAFE-003 — Checked arithmetic
 
@@ -253,7 +315,11 @@ The initial implementation uses no project-authored `unsafe`. Introducing it req
 
 ### SAFE-009 — Decompression resource awareness
 
-The API and documentation must make clear which limits bound individual rows/metadata and where callers must bound total extracted output to defend against decompression bombs.
+The API and documentation must make clear which limits bound individual rows/metadata and where callers must bound total extracted output or scan work to defend against decompression bombs.
+
+### SAFE-010 — First-match result allocation
+
+Creating an `OwnedRow` for a match must copy only the matched row and must remain bounded by the configured row and field limits.
 
 ## 8. Compatibility requirements
 
@@ -294,6 +360,17 @@ The test suite should cover at least:
 - non-UTF-8 field bytes;
 - row-size and field-count limits;
 - malformed COPY escapes;
+- supported COPY column-list parsing;
+- byte-oriented column-name lookup;
+- column metadata unavailable/malformed behavior;
+- first-row first-match;
+- middle/late first-match;
+- no-match result;
+- multiple matching rows returning the first only;
+- early stop after the first match using an instrumented reader;
+- owned matched row surviving reader drop;
+- non-UTF-8 predicate values;
+- first-match behavior under row/field resource limits;
 - arbitrary-input no-panic fuzzing for metadata and COPY parsing;
 - fixture comparison with `pg_restore` where practical.
 
@@ -306,6 +383,7 @@ v0.1 must include a benchmark harness capable of measuring:
 - selected-entry extraction throughput;
 - peak memory for extraction;
 - COPY parsing throughput;
+- first-match scan with matches near the beginning, middle, end, and absent;
 - compression-specific throughput.
 
 Performance optimizations must preserve tests and safety invariants.
@@ -318,6 +396,10 @@ v0.1 is ready when:
 - metadata inspection does not read all payloads;
 - a selected table-data entry can be streamed and decompressed;
 - supported COPY text data can be iterated as rows/fields;
+- supported COPY column metadata can be resolved for column-aware access;
+- a caller can return the first row matching a Rust predicate without buffering the table;
+- the returned first-match row is owned and remains valid after reader teardown;
+- first-match documentation explicitly states sequential-scan performance semantics;
 - resource budgets are enforced with typed errors;
 - malformed parser input has broad boundary/fuzz coverage;
 - CLI inspect/list/extract consume the same public library API;

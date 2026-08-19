@@ -117,7 +117,7 @@ Fields relevant to modern archives include object identity and restore metadata 
 
 For custom format, the extra TOC data contains the entry's data-offset state and stored offset.
 
-pgdumpx parses enough of this metadata to inspect entries, relate table and table-data entries, and safely seek to data blocks. It does not attempt to reproduce pg_restore dependency scheduling in v0.1.
+pgdumpx parses enough of this metadata to inspect entries, relate table and table-data entries, derive supported COPY column layouts, and safely seek to data blocks. It does not attempt to reproduce pg_restore dependency scheduling in v0.1.
 
 ## 7. Custom data blocks
 
@@ -165,6 +165,8 @@ stream framed data
 
 PostgreSQL also contains fallback behavior for cases where seeking/data positions are unavailable. pgdumpx v0.1 is optimized around a seekable source and valid recorded offsets; a general sequential fallback is deferred.
 
+The stored offset identifies an archive **data entry**, not an individual logical row inside decompressed table data.
+
 ## 10. Compression
 
 Modern PostgreSQL archives may use:
@@ -178,18 +180,62 @@ Archive 1.15 introduced explicit compression-algorithm information in the header
 
 Compression dependencies are implementation details; pgdumpx should expose only a stable `Compression` enum.
 
-## 11. Table data and COPY
+## 11. Table data, COPY, and columns
 
 The bytes obtained after custom framing and decompression for a table-data entry are generally the data stream associated with the entry's `COPY ... FROM stdin` command for normal pg_dump output.
+
+The TOC also records the COPY statement for table-data entries. For supported pg_dump-generated statements, pgdumpx uses this metadata to derive the ordered column list used by the row stream.
 
 COPY text parsing is a separate format layer. Archive framing must not make assumptions such as:
 
 - one chunk equals one row;
 - all data is UTF-8;
 - backslash has no special meaning;
-- `\N` is an ordinary two-byte string.
+- `\N` is an ordinary two-byte string;
+- a table-data entry contains a row-level value index.
+
+If column metadata cannot be safely derived from a supported TOC entry, pgdumpx must not guess names. Positional row parsing may still be possible while column-aware helpers return an explicit error.
 
 The COPY parser requirements live in `REQUIREMENTS.md` and API shape in `API-DESIGN.md`.
+
+### 11.1 Row-search implications
+
+Custom Format's TOC enables efficient selection of the **table-data entry**, but the archive format does not provide pgdumpx with a required mapping such as:
+
+```text
+(order_number = 123456) -> compressed row position
+```
+
+Therefore v0.1 first-match filtering has the following data path:
+
+```text
+TOC table lookup
+      │
+      ▼
+seek directly to selected TABLE DATA entry
+      │
+      ▼
+stream custom chunks
+      │
+      ▼
+decompress from entry start
+      │
+      ▼
+parse COPY rows sequentially
+      │
+      ├── no match -> continue
+      └── match    -> return and stop
+```
+
+This distinction matters for performance claims:
+
+- table selection is metadata-driven;
+- row search is stream-driven;
+- a first-row match can terminate early;
+- a late or absent match may require processing the full selected table-data stream;
+- worst-case row-search work is proportional to selected table data size.
+
+A future persistent/sidecar index would be a pgdumpx-specific acceleration structure, not something implied by the base Custom Format. Compressed entries also mean a logical row position cannot automatically be treated as an independently seekable compressed-file offset.
 
 ## 12. Large objects
 
@@ -210,6 +256,8 @@ archive version | PostgreSQL generator | compression | fixture purpose
 
 Exact PostgreSQL release versions and commands must be recorded with each committed fixture rather than inferred later.
 
+Column-aware fixtures should also preserve the generated TOC COPY statement and verify that its column order matches extracted COPY fields.
+
 ## 14. Upstream-change checklist
 
 When PostgreSQL introduces archive version 1.17 or later:
@@ -219,6 +267,7 @@ When PostgreSQL introduces archive version 1.17 or later:
 3. diff `WriteToc` / `ReadToc`;
 4. diff custom format extra TOC and data block logic;
 5. diff compression representation;
-6. generate a new official fixture;
-7. add compatibility tests;
-8. only then expand pgdumpx's supported-version range.
+6. verify COPY-statement metadata behavior used for column layout;
+7. generate a new official fixture;
+8. add compatibility tests;
+9. only then expand pgdumpx's supported-version range.

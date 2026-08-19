@@ -2,17 +2,19 @@
 
 Status: **Accepted direction for v0.1 implementation**
 
-This document defines the intended public Rust API shape. Exact names may be refined during TDD, but changes to the core ownership, safety, and streaming contracts should be deliberate.
+This document defines the intended public Rust API shape. Exact names may be refined during TDD, but changes to the core ownership, safety, streaming, and row-search contracts should be deliberate.
 
 ## 1. Design principles
 
 The public API should:
 
-- model a read-only archive;
+- model a read-only PostgreSQL custom archive;
 - make metadata inspection cheap after open;
 - keep payload access lazy;
 - expose streaming `Read` where raw entry bytes are useful;
 - expose row-aware COPY access without forcing UTF-8;
+- support column-aware first-match filtering without a SQL parser;
+- make the sequential-scan cost of row lookup explicit;
 - keep the source owned by the archive so seeks are coordinated safely;
 - use typed IDs and enums rather than stringly typed control flow;
 - expose typed errors and resource limits;
@@ -79,7 +81,7 @@ pub struct ArchiveVersion {
 }
 ```
 
-`ArchiveFormat` must reject non-custom input in v0.1 rather than exposing a fake supported variant.
+`ArchiveFormat` must reject non-custom input in v0.1 rather than exposing fake supported variants.
 
 ## 5. Archive strings
 
@@ -116,7 +118,7 @@ pub struct TocEntry {
     pub owner: ArchiveString,
     pub dependencies: Vec<DumpId>,
     pub data_location: DataLocation,
-    // additional supported metadata fields
+    // additional supported metadata fields, including COPY metadata
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,14 +178,17 @@ The mutable borrow of `Archive` intentionally prevents two readers from independ
 
 ## 10. COPY rows
 
+The high-performance streaming row model remains borrowed:
+
 ```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldRef<'a> {
     Null,
     Bytes(&'a [u8]),
 }
 
 pub struct Row<'a> {
-    // borrowed from the row reader's current buffer
+    // borrowed from the row reader's current reusable buffer
 }
 
 impl Row<'_> {
@@ -208,11 +213,36 @@ impl<R: Read> CopyRowReader<R> {
 
 `Row` is valid only until the next mutable operation on the row reader. This enables reuse of the row buffer and avoids per-row ownership allocation.
 
-A later owned-row convenience type may be added separately.
+## 11. Owned rows
 
-## 11. Table row convenience
+v0.1 also needs an owned representation for a matching row that must survive reader advancement or teardown:
 
-The archive may expose a convenience method equivalent in purpose to:
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnedField {
+    Null,
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedRow {
+    fields: Vec<OwnedField>,
+}
+
+impl OwnedRow {
+    pub fn len(&self) -> usize;
+    pub fn field(&self, index: usize) -> Option<&OwnedField>;
+    pub fn fields(&self) -> &[OwnedField];
+}
+```
+
+The conversion from the current borrowed row to `OwnedRow` copies only that row. It is bounded by the same configured row-size and field-count limits used during parsing.
+
+Normal iteration should continue to use borrowed `Row`; `OwnedRow` is not a reason to allocate every row.
+
+## 12. Table row convenience and column metadata
+
+The archive exposes a table-row reader equivalent in purpose to:
 
 ```rust
 pub fn table_rows(
@@ -232,9 +262,88 @@ EntryDataReader
 CopyRowReader
 ```
 
-This composition must not duplicate archive parsing logic.
+and owns/references the parsed column layout for that table-data entry.
 
-## 12. Compression model
+Representative metadata API:
+
+```rust
+impl<R: Read> TableRowReader<'_, R> {
+    pub fn columns(&self) -> &[Column];
+    pub fn column_index(&self, name: &[u8]) -> Option<usize>;
+    pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    pub name: ArchiveString,
+}
+```
+
+The implementation should derive the supported pg_dump-generated column list from the TOC entry's recorded COPY statement. Name lookup should be prepared once rather than reparsing the COPY statement for every row.
+
+If the data stream can be read positionally but column metadata is unavailable or unsupported, `next_row()` may remain usable while column-aware operations fail explicitly rather than inventing names.
+
+## 13. First-match filtering
+
+A primary v0.1 API is first-match filtering over the selected table stream:
+
+```rust
+impl<R: Read> TableRowReader<'_, R> {
+    pub fn find_first<F>(
+        &mut self,
+        predicate: F,
+    ) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool;
+}
+```
+
+Example:
+
+```rust
+let mut rows = archive.table_rows(b"public", b"orders")?;
+let order_number = rows
+    .column_index(b"order_number")
+    .ok_or(/* application error */)?;
+
+let row = rows.find_first(|row| {
+    row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
+})?;
+```
+
+Semantics:
+
+- scan rows in COPY order from the beginning of the selected data entry;
+- call the predicate once for each parsed row;
+- when it returns `true`, copy that current row into `OwnedRow` and stop;
+- return `Ok(None)` if the stream ends without a match;
+- reuse the same row buffer for non-matching rows;
+- do not buffer the complete table;
+- preserve byte-oriented fields so non-UTF-8 values can be matched.
+
+The closure API deliberately avoids a SQL parser. Callers may implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
+
+A small equality convenience helper may be added later if it is demonstrably useful, but v0.1 does not require a condition DSL.
+
+## 14. Row-search performance contract
+
+`find_first` is **not** an indexed database lookup.
+
+The custom archive's TOC lets pgdumpx select and seek to the table-data entry efficiently, but there is no required row-level value index inside that entry. Consequently:
+
+```text
+TOC lookup                ~= metadata lookup
+seek to table-data entry  = direct seek when offset is recorded
+find row inside table     = sequential decompression + COPY scan
+```
+
+A match near the start can terminate quickly. A late or absent match may require processing the complete selected table-data entry. Worst-case work is proportional to selected table data size.
+
+The public documentation must not imply `O(1)`/`O(log n)` row lookup or database-index semantics.
+
+A future sidecar index or restart-point design, if pursued, requires a separate architecture decision because compressed streams cannot generally be treated as arbitrary row-seekable byte arrays.
+
+## 15. Compression model
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +359,7 @@ The enum describes the archive, not a dependency-specific decoder type.
 
 Unsupported or invalid compression identifiers are errors.
 
-## 13. Error API
+## 16. Error API
 
 Representative direction:
 
@@ -269,6 +378,8 @@ pub enum PgDumpError {
     UnsupportedCompression { code: i32 },
     Decompression { algorithm: Compression },
     MalformedCopy { row: u64, byte_offset: u64 },
+    CopyColumnMetadataUnavailable { dump_id: DumpId },
+    MalformedCopyStatement { dump_id: DumpId },
     ResourceLimitExceeded { resource: ResourceLimit, limit: usize },
     ArithmeticOverflow { offset: Option<u64> },
     InvalidUtf8,
@@ -277,7 +388,9 @@ pub enum PgDumpError {
 
 Exact fields should evolve from test requirements, but callers must not need to parse `Display` strings to determine error category.
 
-## 14. Serialization
+`column_index()` itself may return `Option<usize>` for a missing requested name when column metadata is valid. Failure to derive the column layout is a different condition and should remain distinguishable.
+
+## 17. Serialization
 
 Serde support is not required for the parser to function.
 
@@ -291,13 +404,13 @@ serde = ["dep:serde"]
 
 The CLI may use a presentation DTO instead of freezing every internal metadata field as a JSON compatibility promise.
 
-## 15. Threading and parallel access
+## 18. Threading and parallel access
 
 `Archive<R>` itself does not promise concurrent reads from one seekable source.
 
 Future parallel extraction should use APIs that can produce independent sources, for example reopening a file path or accepting a source factory. This avoids mutex-protected seek thrashing and preserves simple borrowing semantics.
 
-## 16. Versioning policy
+## 19. Versioning policy
 
 Before v1.0:
 
@@ -307,7 +420,7 @@ Before v1.0:
 - archive compatibility is version-explicit;
 - accepted policy changes are recorded through ADRs.
 
-## 17. Deferred APIs
+## 20. Deferred APIs
 
 Intentionally deferred:
 
@@ -315,6 +428,8 @@ Intentionally deferred:
 archive writing
 non-seekable sequential archive reader
 parallel extraction API
+SQL WHERE / condition DSL
+persistent or sidecar row indexes
 binary COPY decoding
 Arrow/Polars/Parquet conversion
 Python bindings
