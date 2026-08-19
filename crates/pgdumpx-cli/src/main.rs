@@ -38,7 +38,8 @@ where
         return Ok(FindOutcome::NoMatch);
     };
 
-    write_row(stdout, &row).map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+    write_row(stdout, &row)
+        .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
     Ok(FindOutcome::Matched)
 }
 
