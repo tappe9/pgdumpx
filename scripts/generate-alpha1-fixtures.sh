@@ -17,6 +17,7 @@ readonly NONE_CONTAINER_PATH="/tmp/${NONE_NAME}.dump"
 readonly GZIP_CONTAINER_PATH="/tmp/${GZIP_NAME}.dump"
 readonly NONE_ARCHIVE="${ARCHIVE_DIR}/${NONE_NAME}.dump"
 readonly GZIP_ARCHIVE="${ARCHIVE_DIR}/${GZIP_NAME}.dump"
+readonly RESTORED_DATA_CONTAINER_PATH="/tmp/orders-data.sql"
 readonly WORK_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -133,9 +134,10 @@ done
 docker exec "${CONTAINER}" \
     pg_restore \
     --data-only \
-    --table=public.orders \
-    "${NONE_CONTAINER_PATH}" \
-    > "${WORK_DIR}/orders-data.sql"
+    --file="${RESTORED_DATA_CONTAINER_PATH}" \
+    "${NONE_CONTAINER_PATH}"
+docker cp "${CONTAINER}:${RESTORED_DATA_CONTAINER_PATH}" \
+    "${WORK_DIR}/orders-data.sql" >/dev/null
 
 python3 - "${WORK_DIR}/orders-data.sql" <<'PY'
 from pathlib import Path
@@ -207,7 +209,7 @@ NONE_SHA256="$(sha256sum "${NONE_ARCHIVE}" | awk '{print $1}')"
 GZIP_SHA256="$(sha256sum "${GZIP_ARCHIVE}" | awk '{print $1}')"
 readonly NONE_SHA256 GZIP_SHA256
 
-GENERATOR_VERSION="${GENERATOR_VERSION}" \
+FIXTURE_GENERATOR_VERSION="${GENERATOR_VERSION}" \
 GENERATOR_IMAGE="${IMAGE_TAG}" \
 GENERATOR_IMAGE_DIGEST="${IMAGE_DIGEST}" \
 GENERATOR_PLATFORM="${PLATFORM}" \
@@ -233,7 +235,7 @@ def string_array(values: list[str]) -> str:
 common = {
     "source": "tests/fixtures/source/alpha1-copy-basic.sql",
     "archive_version": "1.16.0",
-    "generator": os.environ["GENERATOR_VERSION"],
+    "generator": os.environ["FIXTURE_GENERATOR_VERSION"],
     "generator_image": os.environ["GENERATOR_IMAGE"],
     "generator_image_digest": os.environ["GENERATOR_IMAGE_DIGEST"],
     "generator_platform": os.environ["GENERATOR_PLATFORM"],
