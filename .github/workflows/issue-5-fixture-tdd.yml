@@ -36,10 +36,18 @@ jobs:
           old = 'GENERATOR_VERSION="${GENERATOR_VERSION}" \\\n'
           if old not in script:
               raise SystemExit("expected generator-version environment assignment was not found")
-          script_path.write_text(
-              script.replace(old, "export GENERATOR_VERSION\n", 1),
-              encoding="utf-8",
-          )
+          script = script.replace(old, "export GENERATOR_VERSION\n", 1)
+
+          lines = script.splitlines()
+          table_line = "--table=public.orders \\"
+          archive_line = '"${NONE_CONTAINER_PATH}" \\'
+          for index, line in enumerate(lines[:-1]):
+              if line.strip() == table_line and lines[index + 1].strip() == archive_line:
+                  lines.insert(index + 1, "    --file=- \\")
+                  break
+          else:
+              raise SystemExit("pg_restore data-output command was not found")
+          script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           contributing_path = Path("CONTRIBUTING.md")
           contributing = contributing_path.read_text(encoding="utf-8")
