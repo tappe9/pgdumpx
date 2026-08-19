@@ -1,0 +1,30 @@
+name: Apply Issue 16 implementation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/issue16-green.patch
+      - .github/workflows/apply-issue16-green.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Apply implementation
+        run: |
+          git apply --index --verbose .github/issue16-green.patch
+          git rm .github/issue16-green.patch .github/workflows/apply-issue16-green.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: add pgdumpx find command"
+          git push origin HEAD:feat/first-end-to-end-find
