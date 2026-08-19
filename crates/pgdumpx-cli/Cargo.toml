@@ -11,6 +11,7 @@ readme.workspace = true
 [[bin]]
 name = "pgdumpx"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 pgdumpx = { path = "../pgdumpx", version = "0.1.0" }
