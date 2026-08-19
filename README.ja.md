@@ -173,7 +173,15 @@ CLIはlibraryのbounded raw-extraction pathを利用します。limit到達時�
 
 最初の一致rowを取得する狭いequality commandです。SQL風`WHERE` parserや汎用condition DSLは導入しません。
 
-v0.1のschema、table、column、value argumentはUTF-8です。Rust APIはbyte-orientedのままであり、archive内のnon-UTF-8 fieldも表現できます。CLIで任意bytesを指定するmodeは将来別途設計します。
+v0.1の形式は次のとおりです。
+
+```text
+pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+```
+
+`<SCHEMA.TABLE>`はASCIIの`.`をちょうど1個含み、schema / tableの両componentをnon-emptyとします。SQL identifierのquote / escapeは未対応です。schema、table、column、value argumentはUTF-8で、Rust APIはbyte-orientedのままです。
+
+一致時はstdoutへ**正規化したCOPY text 1 record**だけを出力します。fieldはCOPY column順のASCII tab区切りで、record末尾はLFです。NULLは`\N`、empty bytesはempty fieldです。backslash / tab / LF / CRは`\\` / `\t` / `\n` / `\r`、その他のnon-printableまたはnon-ASCII byteは`\377`のような3桁octal escapeで出力します。lossy UTF-8変換を行わず、stdoutをdeterministicかつASCII-safeに保ちます。no matchでは何も出力せず、diagnosticはstderrだけへ出力します。
 
 stable exit behavior:
 

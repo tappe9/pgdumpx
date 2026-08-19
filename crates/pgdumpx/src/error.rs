@@ -93,6 +93,8 @@ pub enum PgDumpError {
         first_data_id: i32,
         second_data_id: i32,
     },
+    /// No `TABLE` entry matches the requested byte-oriented identity.
+    TableNotFound,
     /// The selected table has no related `TABLE DATA` TOC entry.
     TableDataEntryUnavailable { table_id: i32 },
     /// A `TABLE DATA` entry has no usable COPY statement metadata.
@@ -354,6 +356,7 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "TABLE dump ID {table_id} is claimed by TABLE DATA dump IDs {first_data_id} and {second_data_id}"
             ),
+            Self::TableNotFound => write!(formatter, "requested table was not found"),
             Self::TableDataEntryUnavailable { table_id } => write!(
                 formatter,
                 "TABLE dump ID {table_id} has no related TABLE DATA entry"

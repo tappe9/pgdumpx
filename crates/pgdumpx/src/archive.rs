@@ -1,5 +1,6 @@
 use crate::{
-    ArchiveHeader, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef, TocEntry,
+    ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef,
+    TableRowReader, TocEntry,
     copy_metadata::{TableDataMetadata, parse_table_data_metadata},
     custom::{
         data::{BLK_DATA, CustomChunkReader},
@@ -59,61 +60,118 @@ impl<R: Read + Seek> Archive<R> {
             return Ok(None);
         };
         let entry = &self.entries[index];
-        let dump_id = entry.id().as_i32();
-        let offset = match entry.data_location() {
-            DataLocation::NoData => return Err(PgDumpError::EntryHasNoData { dump_id }),
-            DataLocation::Unknown => {
-                return Err(PgDumpError::EntryDataOffsetUnavailable { dump_id });
-            }
-            DataLocation::Offset(offset) => offset,
-        };
-
-        let encoded_dump_id_bytes = u64::from(self.integer_size.get())
-            .checked_add(1)
-            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
-        offset
-            .checked_add(1)
-            .and_then(|value| value.checked_add(encoded_dump_id_bytes))
-            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
-
-        let actual_position = self
-            .reader
-            .seek(SeekFrom::Start(offset))
-            .map_err(|source| PgDumpError::Io { offset, source })?;
-        if actual_position != offset {
-            return Err(PgDumpError::EntrySeekPositionMismatch {
-                dump_id,
-                expected: offset,
-                actual: actual_position,
-            });
-        }
-
-        let mut reader = ArchiveReader::new_at(&mut self.reader, offset);
-        let marker_offset = reader.offset();
-        let block_type = reader.read_byte()?;
-        if block_type != BLK_DATA {
-            return Err(PgDumpError::UnexpectedDataBlockType {
-                dump_id,
-                expected: BLK_DATA,
-                actual: block_type,
-                offset: marker_offset,
-            });
-        }
-
-        let dump_id_offset = reader.offset();
-        let actual_dump_id = read_archive_integer(&mut reader, self.integer_size)?;
-        if actual_dump_id != dump_id {
-            return Err(PgDumpError::DataBlockDumpIdMismatch {
-                expected: dump_id,
-                actual: actual_dump_id,
-                offset: dump_id_offset,
-            });
-        }
-
-        let chunks = CustomChunkReader::new(reader, self.integer_size, id);
-        let entry_reader = EntryDataReader::new(id, self.header.compression(), chunks)?;
-        Ok(Some(entry_reader))
+        open_entry_reader(
+            &mut self.reader,
+            self.header.compression(),
+            self.integer_size,
+            entry,
+        )
+        .map(Some)
     }
+
+    /// Opens the related table-data entry as a lending COPY text row stream.
+    ///
+    /// Table lookup and representation validation use metadata parsed during
+    /// [`Archive::open`]. Unsupported row representations fail before the
+    /// selected payload is sought or parsed.
+    pub fn table_rows(
+        &mut self,
+        schema: &[u8],
+        name: &[u8],
+    ) -> Result<TableRowReader<'_, R>, PgDumpError> {
+        let table_id = self
+            .index
+            .table_id(schema, name)
+            .ok_or(PgDumpError::TableNotFound)?;
+        let data_id =
+            self.index
+                .data_id(table_id)
+                .ok_or(PgDumpError::TableDataEntryUnavailable {
+                    table_id: table_id.as_i32(),
+                })?;
+        let metadata = self.index.table_data_metadata(data_id).ok_or(
+            PgDumpError::CopyColumnMetadataUnavailable {
+                dump_id: data_id.as_i32(),
+            },
+        )?;
+        metadata.validate_row_access(data_id)?;
+
+        let entry_index =
+            self.index
+                .entry_index(data_id)
+                .ok_or(PgDumpError::TableDataEntryUnavailable {
+                    table_id: table_id.as_i32(),
+                })?;
+        let entry = &self.entries[entry_index];
+        let entry_reader = open_entry_reader(
+            &mut self.reader,
+            self.header.compression(),
+            self.integer_size,
+            entry,
+        )?;
+        Ok(TableRowReader::new(data_id, metadata, entry_reader))
+    }
+}
+
+fn open_entry_reader<'a, R: Read + Seek>(
+    reader: &'a mut R,
+    compression: Compression,
+    integer_size: crate::custom::primitives::ArchiveIntegerSize,
+    entry: &TocEntry,
+) -> Result<EntryDataReader<'a, R>, PgDumpError> {
+    let id = entry.id();
+    let dump_id = id.as_i32();
+    let offset = match entry.data_location() {
+        DataLocation::NoData => return Err(PgDumpError::EntryHasNoData { dump_id }),
+        DataLocation::Unknown => {
+            return Err(PgDumpError::EntryDataOffsetUnavailable { dump_id });
+        }
+        DataLocation::Offset(offset) => offset,
+    };
+
+    let encoded_dump_id_bytes = u64::from(integer_size.get())
+        .checked_add(1)
+        .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+    offset
+        .checked_add(1)
+        .and_then(|value| value.checked_add(encoded_dump_id_bytes))
+        .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+
+    let actual_position = reader
+        .seek(SeekFrom::Start(offset))
+        .map_err(|source| PgDumpError::Io { offset, source })?;
+    if actual_position != offset {
+        return Err(PgDumpError::EntrySeekPositionMismatch {
+            dump_id,
+            expected: offset,
+            actual: actual_position,
+        });
+    }
+
+    let mut reader = ArchiveReader::new_at(reader, offset);
+    let marker_offset = reader.offset();
+    let block_type = reader.read_byte()?;
+    if block_type != BLK_DATA {
+        return Err(PgDumpError::UnexpectedDataBlockType {
+            dump_id,
+            expected: BLK_DATA,
+            actual: block_type,
+            offset: marker_offset,
+        });
+    }
+
+    let dump_id_offset = reader.offset();
+    let actual_dump_id = read_archive_integer(&mut reader, integer_size)?;
+    if actual_dump_id != dump_id {
+        return Err(PgDumpError::DataBlockDumpIdMismatch {
+            expected: dump_id,
+            actual: actual_dump_id,
+            offset: dump_id_offset,
+        });
+    }
+
+    let chunks = CustomChunkReader::new(reader, integer_size, id);
+    EntryDataReader::new(id, compression, chunks)
 }
 
 impl<R> Archive<R> {

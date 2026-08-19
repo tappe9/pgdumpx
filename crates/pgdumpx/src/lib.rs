@@ -14,6 +14,7 @@ mod error;
 mod io;
 mod limits;
 mod model;
+mod table_rows;
 
 #[cfg(test)]
 mod archive_primitives_tests;
@@ -21,9 +22,11 @@ mod archive_primitives_tests;
 mod copy_tests;
 #[cfg(test)]
 mod metadata_open_tests;
+#[cfg(test)]
+mod table_rows_tests;
 
 pub use archive::Archive;
-pub use copy::{CopyRowReader, FieldRef, Row};
+pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
@@ -31,3 +34,4 @@ pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
 };
+pub use table_rows::TableRowReader;
