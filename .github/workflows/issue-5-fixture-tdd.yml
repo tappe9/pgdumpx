@@ -1,14 +1,115 @@
 name: Issue 5 fixture TDD
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [feat/issue-5-official-fixtures]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  paused:
-    name: Paused during Green setup
+  generate-and-verify:
+    name: Generate official fixtures and verify Green
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: never
     steps:
-      - run: echo "Fixture generation is enabled after the Green inputs are committed."
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Prepare the Green tree
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          script_path = Path("scripts/generate-alpha1-fixtures.sh")
+          script = script_path.read_text(encoding="utf-8")
+          old = 'GENERATOR_VERSION="${GENERATOR_VERSION}" \\\n'
+          if old not in script:
+              raise SystemExit("expected generator-version environment assignment was not found")
+          script_path.write_text(
+              script.replace(old, "export GENERATOR_VERSION\n", 1),
+              encoding="utf-8",
+          )
+
+          contributing_path = Path("CONTRIBUTING.md")
+          contributing = contributing_path.read_text(encoding="utf-8")
+          contributing = contributing.replace(
+              'path = "tests/fixtures/pg18-gzip-copy-basic.dump"',
+              'path = "tests/fixtures/archives/pg18-gzip-copy-basic.dump"',
+              1,
+          )
+          link = (
+              "The committed Alpha 1 inventory and exact regeneration process are documented "
+              "in [tests/fixtures/README.md](tests/fixtures/README.md).\n\n"
+          )
+          anchor = "Large benchmark data should normally be generated reproducibly rather than committed."
+          if link not in contributing:
+              if anchor not in contributing:
+                  raise SystemExit("fixture-policy documentation anchor was not found")
+              contributing = contributing.replace(anchor, link + anchor, 1)
+          contributing_path.write_text(contributing, encoding="utf-8")
+
+          Path(".issue-5-red-evidence.md").unlink(missing_ok=True)
+          Path(".issue-5-green-failure.md").unlink(missing_ok=True)
+          PY
+          chmod +x scripts/generate-alpha1-fixtures.sh
+
+      - name: Generate fixtures and run all quality gates
+        shell: bash
+        run: |
+          set +e
+          bash -Eeuo pipefail <<'VERIFY' 2>&1 | tee /tmp/issue-5-green.log
+          bash scripts/generate-alpha1-fixtures.sh
+          cargo test -p pgdumpx --test fixture_manifest
+          cargo fmt --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+          rustup toolchain install 1.85.0 --profile minimal
+          cargo +1.85.0 check --workspace --all-targets --all-features
+          cargo tree --workspace --edges normal
+          cargo tree -p pgdumpx --edges dev
+          git diff --check
+          VERIFY
+          verification_status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ "${verification_status}" -ne 0 ]]; then
+            {
+              echo "# Issue #5 Green failure evidence"
+              echo
+              echo "Source commit: \`${GITHUB_SHA}\`"
+              echo
+              echo '```text'
+              cat /tmp/issue-5-green.log
+              echo '```'
+            } > .issue-5-green-failure.md
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .issue-5-green-failure.md
+            git commit -m "test: record fixture Green failure"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+            exit "${verification_status}"
+          fi
+
+      - name: Commit generated official fixtures
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .issue-5-green-failure.md
+          git add -A
+          git diff --cached --check
+          git commit -m "feat: add official PostgreSQL 1.16 fixtures"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
