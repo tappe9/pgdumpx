@@ -1,6 +1,4 @@
-use pgdumpx::{
-    Archive, ArchiveVersion, Compression, DataLocation, PgDumpError, Section,
-};
+use pgdumpx::{Archive, ArchiveVersion, Compression, DataLocation, PgDumpError, Section};
 use std::{
     cell::Cell,
     io::{self, Cursor, Read, Seek, SeekFrom},
@@ -29,7 +27,10 @@ fn opens_official_none_fixture_through_the_public_production_path() {
     assert_eq!(archive.header().integer_size(), 4);
     assert_eq!(archive.header().offset_size(), 8);
     assert_eq!(archive.header().compression(), Compression::None);
-    assert_eq!(archive.header().database_name().as_bytes(), b"pgdumpx_fixture");
+    assert_eq!(
+        archive.header().database_name().as_bytes(),
+        b"pgdumpx_fixture"
+    );
     assert_eq!(
         archive.header().server_version().as_bytes(),
         b"18.4 (Debian 18.4-1.pgdg12+1)"
@@ -38,7 +39,10 @@ fn opens_official_none_fixture_through_the_public_production_path() {
         archive.header().dump_version().as_bytes(),
         b"18.4 (Debian 18.4-1.pgdg12+1)"
     );
-    assert_eq!(archive.header().database_name().to_str().unwrap(), "pgdumpx_fixture");
+    assert_eq!(
+        archive.header().database_name().to_str().unwrap(),
+        "pgdumpx_fixture"
+    );
 
     let created_at = archive.header().created_at();
     assert_eq!(created_at.second(), 15);
@@ -123,11 +127,19 @@ fn indexes_same_table_name_in_different_schemas() {
     let archive = Archive::open(Cursor::new(build_archive(&entries))).unwrap();
 
     assert_eq!(
-        archive.table(b"alpha", b"orders").unwrap().table_entry_id().as_i32(),
+        archive
+            .table(b"alpha", b"orders")
+            .unwrap()
+            .table_entry_id()
+            .as_i32(),
         1
     );
     assert_eq!(
-        archive.table(b"beta", b"orders").unwrap().table_entry_id().as_i32(),
+        archive
+            .table(b"beta", b"orders")
+            .unwrap()
+            .table_entry_id()
+            .as_i32(),
         2
     );
 }
@@ -210,8 +222,7 @@ fn rejects_versions_outside_the_exact_1_16_0_scope() {
 
 #[test]
 fn rejects_non_custom_format_and_unknown_compression() {
-    let wrong_format = Archive::open(Cursor::new(header_with([1, 16, 0], 3, 0)))
-        .unwrap_err();
+    let wrong_format = Archive::open(Cursor::new(header_with([1, 16, 0], 3, 0))).unwrap_err();
     assert!(matches!(
         wrong_format,
         PgDumpError::UnexpectedArchiveFormat {
@@ -220,8 +231,7 @@ fn rejects_non_custom_format_and_unknown_compression() {
         }
     ));
 
-    let compression = Archive::open(Cursor::new(header_with([1, 16, 0], 1, 9)))
-        .unwrap_err();
+    let compression = Archive::open(Cursor::new(header_with([1, 16, 0], 1, 9))).unwrap_err();
     assert!(matches!(
         compression,
         PgDumpError::UnsupportedCompressionAlgorithm {
@@ -235,10 +245,7 @@ fn rejects_non_custom_format_and_unknown_compression() {
 fn rejects_impossible_dump_ids_and_malformed_dependencies() {
     let impossible = vec![EntrySpec::metadata(0, b"bad")];
     let error = Archive::open(Cursor::new(build_archive(&impossible))).unwrap_err();
-    assert!(matches!(
-        error,
-        PgDumpError::InvalidDumpId { value: 0, .. }
-    ));
+    assert!(matches!(error, PgDumpError::InvalidDumpId { value: 0, .. }));
 
     let malformed = vec![EntrySpec::table_data(
         2,
@@ -262,10 +269,7 @@ fn rejects_duplicate_dump_ids() {
     ];
     let error = Archive::open(Cursor::new(build_archive(&entries))).unwrap_err();
 
-    assert!(matches!(
-        error,
-        PgDumpError::DuplicateDumpId { dump_id: 1 }
-    ));
+    assert!(matches!(error, PgDumpError::DuplicateDumpId { dump_id: 1 }));
 }
 
 #[test]
