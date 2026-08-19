@@ -277,10 +277,7 @@ fn archive_with_block(
     write_int(&mut bytes, 3);
     write_string(&mut bytes, None);
     write_string(&mut bytes, None);
-    write_string(
-        &mut bytes,
-        Some(b"COPY public.data (value) FROM stdin;\n"),
-    );
+    write_string(&mut bytes, Some(b"COPY public.data (value) FROM stdin;\n"));
     write_string(&mut bytes, Some(b"public"));
     write_string(&mut bytes, None);
     write_string(&mut bytes, None);
