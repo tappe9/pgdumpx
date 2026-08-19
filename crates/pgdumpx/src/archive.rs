@@ -83,12 +83,12 @@ impl<R: Read + Seek> Archive<R> {
             .index
             .table_id(schema, name)
             .ok_or(PgDumpError::TableNotFound)?;
-        let data_id = self
-            .index
-            .data_id(table_id)
-            .ok_or(PgDumpError::TableDataEntryUnavailable {
-                table_id: table_id.as_i32(),
-            })?;
+        let data_id =
+            self.index
+                .data_id(table_id)
+                .ok_or(PgDumpError::TableDataEntryUnavailable {
+                    table_id: table_id.as_i32(),
+                })?;
         let metadata = self.index.table_data_metadata(data_id).ok_or(
             PgDumpError::CopyColumnMetadataUnavailable {
                 dump_id: data_id.as_i32(),
@@ -96,11 +96,12 @@ impl<R: Read + Seek> Archive<R> {
         )?;
         metadata.validate_row_access(data_id)?;
 
-        let entry_index = self.index.entry_index(data_id).ok_or(
-            PgDumpError::TableDataEntryUnavailable {
-                table_id: table_id.as_i32(),
-            },
-        )?;
+        let entry_index =
+            self.index
+                .entry_index(data_id)
+                .ok_or(PgDumpError::TableDataEntryUnavailable {
+                    table_id: table_id.as_i32(),
+                })?;
         let entry = &self.entries[entry_index];
         let entry_reader = open_entry_reader(
             &mut self.reader,
