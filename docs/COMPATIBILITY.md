@@ -1,10 +1,10 @@
 # pgdumpx Compatibility Matrix
 
-Status: **Design target; implementation verification has not started**
+Status: **Archive 1.16 metadata opening implemented; payload compatibility verification remains in progress**
 
 This document separates intended v0.1 compatibility from compatibility that has actually been demonstrated by fixtures and tests.
 
-Until the parser is implemented, entries below describe **targets**, not release claims.
+The public production path currently verifies archive 1.16 header metadata, the complete known 1.16 TOC layout, custom data-location metadata, and metadata-only lookup indexes. Selected-entry seeking, chunk framing, decompression, and row comparison remain separate implementation stages, so metadata-opening evidence is not yet a full compression or row-access compatibility claim.
 
 ## Archive format versions
 
@@ -12,7 +12,7 @@ Until the parser is implemented, entries below describe **targets**, not release
 |---|---:|---:|---|
 | 1.14 | Yes | Not yet | Pre-1.15 compression representation must be handled explicitly. |
 | 1.15 | Yes | Not yet | Explicit compression-algorithm metadata is part of the supported header model. |
-| 1.16 | Yes | Not yet | First end-to-end implementation target and current initial upper boundary. |
+| 1.16 | Yes | Metadata open | Official PostgreSQL 18.4 none/gzip fixtures open through `Archive::open`; payload streaming is not yet verified. |
 | < 1.14 | No | N/A | Deferred until real demand justifies the compatibility work. |
 | > 1.16 | No | N/A | Must fail explicitly until upstream format changes are reviewed and fixtures are added. |
 
@@ -22,12 +22,14 @@ Archive format version and PostgreSQL server release are related but are not int
 
 | Compression | v0.1 target | Fixture-verified | Streaming requirement | Delivery order |
 |---|---:|---:|---:|---|
-| none | Yes | Not yet | Yes | First vertical slice |
-| gzip | Yes | Not yet | Yes | First vertical slice |
+| none | Yes | Metadata open | Yes | First vertical slice |
+| gzip | Yes | Metadata open | Yes | First vertical slice |
 | LZ4 | Yes | Not yet | Yes | Compatibility expansion |
 | Zstandard | Yes | Not yet | Yes | Compatibility expansion |
 
-A compression algorithm is only marked verified after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library.
+For none and gzip, the committed official fixtures verify that archive 1.16 compression metadata is decoded through the public metadata-opening path. This does not yet verify selected-entry streaming or decompression. LZ4 and Zstandard algorithm IDs are covered at the header-parser boundary, but require official fixtures and production decoder paths before compatibility is claimed.
+
+A compression algorithm is only marked fully verified after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library.
 
 Version-specific compression representation must be tested independently from the decompressor implementation.
 
@@ -67,25 +69,13 @@ A compatibility cell should move from “Not yet” to a concrete verified state
 6. decompressed bytes/rows are compared with `pg_restore` output where practical;
 7. the case runs in CI or in a reproducible compatibility job.
 
+A “Metadata open” cell records evidence for steps 1–4 and CI coverage for that metadata path. It deliberately does not imply steps 5–6.
+
 The repository should avoid broad claims such as “supports PostgreSQL X–Y” when the actual evidence is narrower than that statement.
 
 ## Fixture provenance manifest
 
-Every valid-format fixture must have a machine-readable provenance record. The initial repository convention should use a manifest equivalent in purpose to:
-
-```toml
-[[fixture]]
-name = "pg18-gzip-copy-basic"
-path = "tests/fixtures/pg18-gzip-copy-basic.dump"
-archive_version = "1.16.0"
-generator = "pg_dump (PostgreSQL) 18.x"
-command = "pg_dump -Fc --compress=gzip:6 --file=..."
-sha256 = "<recorded checksum>"
-purpose = ["header", "toc", "gzip", "copy-text", "column-layout"]
-expected_tables = ["public.orders"]
-```
-
-The exact file layout may evolve during implementation, but every fixture record must preserve enough information to regenerate or independently verify the artifact.
+Every valid-format fixture must have a machine-readable provenance record. The repository uses `tests/fixtures/manifest.toml` to record the generator, command, archive version, checksum, and expected contents for each committed official fixture.
 
 Rules:
 
@@ -95,15 +85,23 @@ Rules:
 - large benchmark datasets should be generated reproducibly rather than committed by default;
 - fixture updates that change a checksum must explain why the generator input or command changed.
 
-## Planned fixture inventory
+## Current and planned fixture inventory
 
-The first end-to-end corpus should cover:
+The current metadata-opening corpus covers:
 
 ```text
 archive version 1.16
   - none
   - gzip
   - one table with multiple columns
+  - complete header and TOC metadata
+  - table/table-data dump-ID relationships
+```
+
+The remaining first end-to-end corpus should cover:
+
+```text
+archive version 1.16
   - COPY NULL, empty values, escapes, and non-UTF-8 field bytes
   - supported column metadata
   - early/middle/late/no-match search positions
