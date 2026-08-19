@@ -105,13 +105,21 @@ Avoid mixing unrelated refactors with format-semantic changes.
 
 ## Validation
 
-The exact CI commands will be finalized when the Cargo workspace is created. The intended baseline quality gates are:
+The workspace uses Rust 2024 edition. `rust-toolchain.toml` selects the current stable toolchain with `rustfmt` and `clippy`; the minimum supported Rust version is 1.85.0.
+
+Run the same baseline quality gates used by CI before opening a pull request:
 
 ```bash
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+```
+
+Verify the declared MSRV separately:
+
+```bash
+cargo +1.85.0 check --workspace --all-targets --all-features
 ```
 
 Parser changes should additionally run relevant fixture, differential, fuzz/regression, and benchmark checks as they become available.
