@@ -8,15 +8,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  format-artifact:
-    name: Export rustfmt output
+  format-commit:
+    name: Commit rustfmt output
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout feature branch
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
@@ -24,17 +27,16 @@ jobs:
           toolchain: stable
           components: rustfmt
 
-      - name: Format sources
-        run: cargo fmt
-
-      - name: Upload formatted sources
-        uses: actions/upload-artifact@v4
-        with:
-          name: formatted-copy-sources
-          path: |
-            crates/pgdumpx/src/copy.rs
-            crates/pgdumpx/src/error.rs
-          if-no-files-found: error
+      - name: Format and commit sources
+        run: |
+          cargo fmt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/pgdumpx/src/copy.rs crates/pgdumpx/src/error.rs
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format COPY parser"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
 
   quality:
     name: Quality gates
