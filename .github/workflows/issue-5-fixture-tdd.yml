@@ -5,12 +5,14 @@ on:
     branches: [feat/issue-5-official-fixtures]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   fixture-contract:
-    name: Fixture contract (Red)
+    name: Capture fixture contract Red
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: never
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -20,5 +22,36 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Verify fixture contract
-        run: cargo test -p pgdumpx --test fixture_manifest -- --nocapture
+      - name: Run and verify the expected Red
+        shell: bash
+        run: |
+          set +e
+          cargo test -p pgdumpx --test fixture_manifest -- --nocapture 2>&1 | tee /tmp/fixture-red.log
+          test_status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ "${test_status}" -eq 0 ]]; then
+            echo "fixture contract unexpectedly passed before fixtures were added" >&2
+            exit 1
+          fi
+
+          grep -F "fixture manifest not found or unreadable" /tmp/fixture-red.log
+
+          {
+            echo "# Issue #5 TDD Red evidence"
+            echo
+            echo "Command: \`cargo test -p pgdumpx --test fixture_manifest -- --nocapture\`"
+            echo
+            echo '```text'
+            cat /tmp/fixture-red.log
+            echo '```'
+          } > .issue-5-red-evidence.md
+
+      - name: Record Red evidence on the feature branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock .issue-5-red-evidence.md
+          git commit -m "test: record fixture contract red evidence"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
