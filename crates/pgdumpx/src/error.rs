@@ -188,10 +188,16 @@ impl fmt::Display for PgDumpError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { offset, source } => {
-                write!(formatter, "I/O error at archive byte offset {offset}: {source}")
+                write!(
+                    formatter,
+                    "I/O error at archive byte offset {offset}: {source}"
+                )
             }
             Self::UnexpectedEof { offset } => {
-                write!(formatter, "unexpected end of archive at byte offset {offset}")
+                write!(
+                    formatter,
+                    "unexpected end of archive at byte offset {offset}"
+                )
             }
             Self::InvalidArchiveMagic { offset } => {
                 write!(formatter, "invalid archive magic at byte offset {offset}")
@@ -451,10 +457,16 @@ impl fmt::Display for PgDumpError {
                 "COPY consumed-byte counter overflow in row {row}: {consumed} + {increment}"
             ),
             Self::CopyRowNumberOverflow { row } => {
-                write!(formatter, "COPY row-number counter overflow after row {row}")
+                write!(
+                    formatter,
+                    "COPY row-number counter overflow after row {row}"
+                )
             }
             Self::ArithmeticOverflow { offset } => {
-                write!(formatter, "arithmetic overflow at archive byte offset {offset}")
+                write!(
+                    formatter,
+                    "arithmetic overflow at archive byte offset {offset}"
+                )
             }
         }
     }

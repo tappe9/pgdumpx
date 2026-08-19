@@ -60,18 +60,12 @@ impl Row<'_> {
 
     /// Returns one field by zero-based index.
     pub fn field(&self, index: usize) -> Option<FieldRef<'_>> {
-        self.fields
-            .get(index)
-            .map(|span| span.resolve(self.bytes))
+        self.fields.get(index).map(|span| span.resolve(self.bytes))
     }
 
     /// Iterates over all borrowed fields in column order.
-    pub fn fields(
-        &self,
-    ) -> impl ExactSizeIterator<Item = FieldRef<'_>> + FusedIterator + '_ {
-        self.fields
-            .iter()
-            .map(move |span| span.resolve(self.bytes))
+    pub fn fields(&self) -> impl ExactSizeIterator<Item = FieldRef<'_>> + FusedIterator + '_ {
+        self.fields.iter().map(move |span| span.resolve(self.bytes))
     }
 }
 
@@ -175,12 +169,8 @@ impl<R: Read> CopyRowReader<R> {
             });
         }
 
-        let field_count = inspect_field_layout(
-            &self.raw_row,
-            self.limits.max_fields,
-            row,
-            row_start,
-        )?;
+        let field_count =
+            inspect_field_layout(&self.raw_row, self.limits.max_fields, row, row_start)?;
         self.prepare_decoded_storage(row, field_count)?;
         decode_fields(
             &self.raw_row,
@@ -246,13 +236,13 @@ impl<R: Read> CopyRowReader<R> {
     }
 
     fn push_raw_byte(&mut self, row: u64, byte: u8) -> Result<(), PgDumpError> {
-        let actual_usize = self
-            .raw_row
-            .len()
-            .checked_add(1)
-            .ok_or(PgDumpError::ArithmeticOverflow {
-                offset: self.input.consumed(),
-            })?;
+        let actual_usize =
+            self.raw_row
+                .len()
+                .checked_add(1)
+                .ok_or(PgDumpError::ArithmeticOverflow {
+                    offset: self.input.consumed(),
+                })?;
         let actual = u64::try_from(actual_usize).map_err(|_| PgDumpError::ArithmeticOverflow {
             offset: self.input.consumed(),
         })?;
@@ -273,28 +263,25 @@ impl<R: Read> CopyRowReader<R> {
                 self.raw_row.capacity().saturating_mul(2)
             };
             let target = proposed.max(actual_usize).min(max_capacity);
-            let additional = target.checked_sub(self.raw_row.len()).ok_or(
-                PgDumpError::ArithmeticOverflow {
-                    offset: self.input.consumed(),
-                },
-            )?;
-            self.raw_row
-                .try_reserve_exact(additional)
-                .map_err(|_| PgDumpError::CopyRowAllocationFailed {
+            let additional =
+                target
+                    .checked_sub(self.raw_row.len())
+                    .ok_or(PgDumpError::ArithmeticOverflow {
+                        offset: self.input.consumed(),
+                    })?;
+            self.raw_row.try_reserve_exact(additional).map_err(|_| {
+                PgDumpError::CopyRowAllocationFailed {
                     row,
                     requested: u64::try_from(target).unwrap_or(u64::MAX),
-                })?;
+                }
+            })?;
         }
 
         self.raw_row.push(byte);
         Ok(())
     }
 
-    fn prepare_decoded_storage(
-        &mut self,
-        row: u64,
-        field_count: u64,
-    ) -> Result<(), PgDumpError> {
+    fn prepare_decoded_storage(&mut self, row: u64, field_count: u64) -> Result<(), PgDumpError> {
         if self.logical_bytes.capacity() < self.raw_row.len() {
             self.logical_bytes
                 .try_reserve_exact(self.raw_row.len())
@@ -304,12 +291,11 @@ impl<R: Read> CopyRowReader<R> {
                 })?;
         }
 
-        let field_count = usize::try_from(field_count).map_err(|_| {
-            PgDumpError::CopyFieldAllocationFailed {
+        let field_count =
+            usize::try_from(field_count).map_err(|_| PgDumpError::CopyFieldAllocationFailed {
                 row,
                 requested: field_count,
-            }
-        })?;
+            })?;
         if self.field_spans.capacity() < field_count {
             self.field_spans
                 .try_reserve_exact(field_count)
@@ -543,9 +529,8 @@ fn decode_field(
 }
 
 fn byte_offset(start: u64, index: usize) -> Result<u64, PgDumpError> {
-    let index = u64::try_from(index).map_err(|_| PgDumpError::ArithmeticOverflow {
-        offset: start,
-    })?;
+    let index =
+        u64::try_from(index).map_err(|_| PgDumpError::ArithmeticOverflow { offset: start })?;
     start
         .checked_add(index)
         .ok_or(PgDumpError::ArithmeticOverflow { offset: start })
