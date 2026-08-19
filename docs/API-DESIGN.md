@@ -2,7 +2,7 @@
 
 Status: **Accepted direction for v0.1 implementation**
 
-This document defines the intended public Rust API shape. Exact names may be refined during TDD, but changes to the core ownership, safety, streaming, and row-search contracts should be deliberate.
+This document defines the intended public Rust API shape. Exact names may be refined during TDD, but changes to the core ownership, safety, streaming, row-search, and resource-budget contracts should be deliberate.
 
 ## 1. Design principles
 
@@ -14,7 +14,10 @@ The public API should:
 - expose streaming `Read` where raw entry bytes are useful;
 - expose row-aware COPY access without forcing UTF-8;
 - support column-aware first-match filtering without a SQL parser;
+- distinguish a missing requested column from unavailable/malformed column metadata;
 - make the sequential-scan cost of row lookup explicit;
+- provide a caller-visible way to bound total scan/decompression work;
+- reject unsupported table-data representations explicitly rather than guessing COPY input;
 - keep the source owned by the archive so seeks are coordinated safely;
 - use typed IDs and enums rather than stringly typed control flow;
 - expose typed errors and resource limits;
@@ -38,7 +41,7 @@ impl<R: Read + Seek> Archive<R> {
 
 A path convenience constructor may be implemented for `Archive<BufReader<File>>`, but the reusable API is reader-based.
 
-## 3. Limits
+## 3. Structural limits
 
 ```rust
 #[derive(Debug, Clone)]
@@ -53,9 +56,35 @@ pub struct Limits {
 
 `Default` provides compatibility-oriented finite limits. Applications processing hostile input should be able to select stricter limits.
 
-An explicitly unbounded mode should not be the default merely for convenience.
+An explicitly unbounded structural mode should not be the default merely for convenience.
 
-## 4. Archive header
+These limits protect individual parser allocations and metadata cardinalities. They do not by themselves bound the total CPU/decompression work of scanning millions of otherwise-small rows.
+
+## 4. Scan work limits
+
+Long-running row operations accept operation-level work budgets equivalent in purpose to:
+
+```rust
+#[derive(Debug, Clone)]
+pub struct ScanLimits {
+    pub max_rows: Option<u64>,
+    pub max_decompressed_bytes: Option<u64>,
+}
+```
+
+Exact names, constructors, and default values may evolve from TDD and real fixture sizes.
+
+The design requirement is more important than the exact shape:
+
+- callers can bound total rows scanned;
+- callers can bound total decompressed bytes consumed by a row operation;
+- counters use checked arithmetic;
+- exceeding a configured budget returns a typed error;
+- accounting stays on the streaming path and never requires pre-reading the complete entry.
+
+A trusted local-file convenience path may use generous defaults, while tools that process externally supplied dumps can select strict budgets.
+
+## 5. Archive header
 
 Representative model:
 
@@ -83,7 +112,7 @@ pub struct ArchiveVersion {
 
 `ArchiveFormat` must reject non-custom input in v0.1 rather than exposing fake supported variants.
 
-## 5. Archive strings
+## 6. Archive strings
 
 Archive metadata strings should not require valid UTF-8 at the lowest level.
 
@@ -101,7 +130,7 @@ impl ArchiveString {
 
 If compatibility evidence shows PostgreSQL guarantees a stronger encoding for a particular field, an ergonomic accessor may expose that fact without weakening the general parser.
 
-## 6. Dump IDs and TOC entries
+## 7. Dump IDs and TOC entries
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,7 +160,7 @@ pub enum DataLocation {
 
 The public model should preserve the upstream distinction between no data, position not recorded, and a valid stored offset.
 
-## 7. Metadata access
+## 8. Metadata access
 
 ```rust
 impl<R: Read + Seek> Archive<R> {
@@ -144,7 +173,7 @@ impl<R: Read + Seek> Archive<R> {
 
 A UTF-8 convenience overload may be provided, but byte-oriented lookup should remain possible.
 
-## 8. Table reference
+## 9. Table reference
 
 ```rust
 pub struct TableRef<'a> {
@@ -161,7 +190,7 @@ impl TableRef<'_> {
 
 The type is a metadata handle only. It does not borrow entry payload bytes.
 
-## 9. Raw entry data
+## 10. Raw entry data
 
 ```rust
 impl<R: Read + Seek> Archive<R> {
@@ -176,7 +205,9 @@ impl<R: Read + Seek> Archive<R> {
 
 The mutable borrow of `Archive` intentionally prevents two readers from independently seeking the same underlying source at once. Future parallel file APIs should use separately opened/cloneable sources instead of weakening this invariant.
 
-## 10. COPY rows
+Raw entry access is intentionally lower-level than row-aware access. A readable table-data entry may still be available through this API even if its logical representation is unsupported by the COPY row parser.
+
+## 11. COPY rows
 
 The high-performance streaming row model remains borrowed:
 
@@ -198,6 +229,8 @@ impl Row<'_> {
 }
 ```
 
+`FieldRef::Bytes` contains the **logical field bytes after PostgreSQL COPY text escape decoding**. It does not expose the escaped on-wire spelling.
+
 A row-reader direction:
 
 ```rust
@@ -213,7 +246,9 @@ impl<R: Read> CopyRowReader<R> {
 
 `Row` is valid only until the next mutable operation on the row reader. This enables reuse of the row buffer and avoids per-row ownership allocation.
 
-## 11. Owned rows
+The detailed COPY parser contract is defined in `COPY-TEXT.md`.
+
+## 12. Owned rows
 
 v0.1 also needs an owned representation for a matching row that must survive reader advancement or teardown:
 
@@ -240,7 +275,7 @@ The conversion from the current borrowed row to `OwnedRow` copies only that row.
 
 Normal iteration should continue to use borrowed `Row`; `OwnedRow` is not a reason to allocate every row.
 
-## 12. Table row convenience and column metadata
+## 13. Table row convenience and column metadata
 
 The archive exposes a table-row reader equivalent in purpose to:
 
@@ -259,6 +294,8 @@ entry seek + block validation
         ↓
 EntryDataReader
         ↓
+representation validation
+        ↓
 CopyRowReader
 ```
 
@@ -268,8 +305,13 @@ Representative metadata API:
 
 ```rust
 impl<R: Read> TableRowReader<'_, R> {
-    pub fn columns(&self) -> &[Column];
-    pub fn column_index(&self, name: &[u8]) -> Option<usize>;
+    pub fn columns(&self) -> Result<&[Column], PgDumpError>;
+
+    pub fn column_index(
+        &self,
+        name: &[u8],
+    ) -> Result<Option<usize>, PgDumpError>;
+
     pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError>;
 }
 
@@ -279,11 +321,39 @@ pub struct Column {
 }
 ```
 
+This intentionally distinguishes three states:
+
+```text
+Ok(Some(index))  metadata valid, column found
+Ok(None)         metadata valid, requested column absent
+Err(...)         supported column layout unavailable/malformed
+```
+
 The implementation should derive the supported pg_dump-generated column list from the TOC entry's recorded COPY statement. Name lookup should be prepared once rather than reparsing the COPY statement for every row.
 
 If the data stream can be read positionally but column metadata is unavailable or unsupported, `next_row()` may remain usable while column-aware operations fail explicitly rather than inventing names.
 
-## 13. First-match filtering
+## 14. Supported table-data representation
+
+The row-aware API targets normal pg_dump-generated COPY text table data.
+
+Before constructing a `TableRowReader`, pgdumpx should validate that available TOC/table-data metadata is consistent with the supported COPY path.
+
+INSERT-based dump modes such as:
+
+```text
+--inserts
+--column-inserts
+--rows-per-insert (when producing INSERT table data)
+```
+
+are not sent through `CopyRowReader` in v0.1. They return a typed unsupported-representation error from row-aware APIs.
+
+Binary COPY decoding is also deferred.
+
+This distinction keeps low-level archive readability separate from logical row-parser support.
+
+## 15. First-match filtering
 
 A primary v0.1 API is first-match filtering over the selected table stream:
 
@@ -295,15 +365,25 @@ impl<R: Read> TableRowReader<'_, R> {
     ) -> Result<Option<OwnedRow>, PgDumpError>
     where
         F: FnMut(&Row<'_>) -> bool;
+
+    pub fn find_first_with_limits<F>(
+        &mut self,
+        scan_limits: ScanLimits,
+        predicate: F,
+    ) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool;
 }
 ```
+
+The exact split between convenience/default methods may change during implementation. The required contract is that callers have a first-class way to supply scan limits to the same streaming search path.
 
 Example:
 
 ```rust
 let mut rows = archive.table_rows(b"public", b"orders")?;
 let order_number = rows
-    .column_index(b"order_number")
+    .column_index(b"order_number")?
     .ok_or(/* application error */)?;
 
 let row = rows.find_first(|row| {
@@ -319,13 +399,14 @@ Semantics:
 - return `Ok(None)` if the stream ends without a match;
 - reuse the same row buffer for non-matching rows;
 - do not buffer the complete table;
-- preserve byte-oriented fields so non-UTF-8 values can be matched.
+- preserve byte-oriented fields so non-UTF-8 values can be matched;
+- enforce configured row and total-work limits on the same streaming path.
 
 The closure API deliberately avoids a SQL parser. Callers may implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
 
-A small equality convenience helper may be added later if it is demonstrably useful, but v0.1 does not require a condition DSL.
+A small equality convenience helper may be added if it is demonstrably useful, but v0.1 does not require a condition DSL.
 
-## 14. Row-search performance contract
+## 16. Row-search performance contract
 
 `find_first` is **not** an indexed database lookup.
 
@@ -337,13 +418,13 @@ seek to table-data entry  = direct seek when offset is recorded
 find row inside table     = sequential decompression + COPY scan
 ```
 
-A match near the start can terminate quickly. A late or absent match may require processing the complete selected table-data entry. Worst-case work is proportional to selected table data size.
+A match near the start can terminate quickly. A late or absent match may require processing the complete selected table-data entry unless a configured scan budget stops the operation first. Worst-case unrestricted work is proportional to selected table data size.
 
 The public documentation must not imply `O(1)`/`O(log n)` row lookup or database-index semantics.
 
 A future sidecar index or restart-point design, if pursued, requires a separate architecture decision because compressed streams cannot generally be treated as arbitrary row-seekable byte arrays.
 
-## 15. Compression model
+## 17. Compression model
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,7 +440,7 @@ The enum describes the archive, not a dependency-specific decoder type.
 
 Unsupported or invalid compression identifiers are errors.
 
-## 16. Error API
+## 18. Error API
 
 Representative direction:
 
@@ -380,7 +461,8 @@ pub enum PgDumpError {
     MalformedCopy { row: u64, byte_offset: u64 },
     CopyColumnMetadataUnavailable { dump_id: DumpId },
     MalformedCopyStatement { dump_id: DumpId },
-    ResourceLimitExceeded { resource: ResourceLimit, limit: usize },
+    UnsupportedTableDataRepresentation { dump_id: DumpId },
+    ResourceLimitExceeded { resource: ResourceLimit, limit: u64 },
     ArithmeticOverflow { offset: Option<u64> },
     InvalidUtf8,
 }
@@ -388,9 +470,11 @@ pub enum PgDumpError {
 
 Exact fields should evolve from test requirements, but callers must not need to parse `Display` strings to determine error category.
 
-`column_index()` itself may return `Option<usize>` for a missing requested name when column metadata is valid. Failure to derive the column layout is a different condition and should remain distinguishable.
+`column_index()` returns `Ok(None)` for a missing requested name only when column metadata itself is valid. Failure to derive the column layout is a distinct error.
 
-## 17. Serialization
+Scan-budget exhaustion should identify which budget was exceeded and, where practical, the amount of work already consumed.
+
+## 19. Serialization
 
 Serde support is not required for the parser to function.
 
@@ -404,13 +488,13 @@ serde = ["dep:serde"]
 
 The CLI may use a presentation DTO instead of freezing every internal metadata field as a JSON compatibility promise.
 
-## 18. Threading and parallel access
+## 20. Threading and parallel access
 
 `Archive<R>` itself does not promise concurrent reads from one seekable source.
 
 Future parallel extraction should use APIs that can produce independent sources, for example reopening a file path or accepting a source factory. This avoids mutex-protected seek thrashing and preserves simple borrowing semantics.
 
-## 19. Versioning policy
+## 21. Versioning policy
 
 Before v1.0:
 
@@ -418,9 +502,10 @@ Before v1.0:
 - breaking changes must be intentional and documented once releases begin;
 - private parser internals remain private;
 - archive compatibility is version-explicit;
+- verified compatibility is recorded separately from design targets;
 - accepted policy changes are recorded through ADRs.
 
-## 20. Deferred APIs
+## 22. Deferred APIs
 
 Intentionally deferred:
 
@@ -430,7 +515,8 @@ non-seekable sequential archive reader
 parallel extraction API
 SQL WHERE / condition DSL
 persistent or sidecar row indexes
-binary COPY decoding
+Binary COPY decoding
+INSERT statement row parser
 Arrow/Polars/Parquet conversion
 Python bindings
 recovery from corrupt archives
