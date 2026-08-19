@@ -173,7 +173,15 @@ The command uses the library's bounded raw-extraction path. Limit exhaustion is 
 
 `find` is a narrow first-match equality command. It is not a SQL parser and does not introduce a general `WHERE` language.
 
-v0.1 command-line schema, table, column, and value arguments are UTF-8. The Rust API remains byte-oriented and can represent non-UTF-8 archive values. A future byte-literal CLI input mode would require a separate design.
+The v0.1 form is exactly:
+
+```text
+pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+```
+
+`<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting and escaping are not supported. Schema, table, column, and value arguments are UTF-8; the Rust API remains byte-oriented.
+
+A match writes exactly one **normalized COPY text record** to stdout. Fields remain in COPY column order, are separated by ASCII tabs, and the record ends with LF. NULL is `\N`; an empty byte field is an empty field. Backslash, tab, LF, and CR are emitted as `\\`, `\t`, `\n`, and `\r`; other non-printable or non-ASCII bytes use three-digit octal escapes such as `\377`. This keeps stdout deterministic and ASCII-safe without lossy UTF-8 conversion. No match produces no output, and diagnostics are written only to stderr.
 
 Stable exit behavior:
 
