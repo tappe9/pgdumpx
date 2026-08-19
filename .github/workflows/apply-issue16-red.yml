@@ -1,0 +1,30 @@
+name: Apply Issue 16 Red patch
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/issue16-red.patch
+      - .github/workflows/apply-issue16-red.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Apply Red tests and docs
+        run: |
+          git apply --index --verbose .github/issue16-red.patch
+          git rm .github/issue16-red.patch .github/workflows/apply-issue16-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test: define pgdumpx find CLI acceptance"
+          git push origin HEAD:feat/first-end-to-end-find
