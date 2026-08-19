@@ -71,12 +71,12 @@ impl OwnedRow {
 
     pub(crate) fn try_from_borrowed(row: &Row<'_>) -> Result<Self, PgDumpError> {
         let mut fields = Vec::new();
-        fields
-            .try_reserve_exact(row.len())
-            .map_err(|_| PgDumpError::CopyFieldAllocationFailed {
+        fields.try_reserve_exact(row.len()).map_err(|_| {
+            PgDumpError::CopyFieldAllocationFailed {
                 row: row.number,
                 requested: u64::try_from(row.len()).unwrap_or(u64::MAX),
-            })?;
+            }
+        })?;
 
         for field in row.fields() {
             let owned = match field {
