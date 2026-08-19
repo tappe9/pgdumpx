@@ -29,8 +29,15 @@ jobs:
 
       - name: Apply repair and commit
         run: |
-          git apply --check .github/copy-metadata-visibility.patch
-          git apply .github/copy-metadata-visibility.patch
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("crates/pgdumpx/src/copy_metadata.rs")
+          text = path.read_text()
+          old = "struct CopyColumnLayout {"
+          new = "pub(crate) struct CopyColumnLayout {"
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, new, 1))
+          PY
           cargo fmt
           cargo check --workspace --all-targets --all-features
           git config user.name "github-actions[bot]"
