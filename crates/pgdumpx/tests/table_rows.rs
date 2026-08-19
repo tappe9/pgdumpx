@@ -280,7 +280,6 @@ fn write_table_entry(bytes: &mut Vec<u8>) {
     write_string(bytes, Some(b"postgres"));
     write_string(bytes, Some(b"false"));
     write_string(bytes, None);
-    write_string(bytes, None);
     bytes.push(NO_DATA);
     bytes.extend_from_slice(&[0; 8]);
 }
