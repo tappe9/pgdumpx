@@ -1,19 +1,26 @@
 use crate::{
-    ArchiveHeader, DumpId, PgDumpError, TableRef, TocEntry,
-    custom::{header::read_header, toc::read_toc},
+    ArchiveHeader, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef, TocEntry,
+    copy_metadata::{TableDataMetadata, parse_table_data_metadata},
+    custom::{
+        data::{BLK_DATA, CustomChunkReader},
+        header::read_header,
+        primitives::read_archive_integer,
+        toc::read_toc,
+    },
     io::archive_reader::ArchiveReader,
     limits::ALPHA1_METADATA_LIMITS,
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
-    io::{Read, Seek},
+    io::{Read, Seek, SeekFrom},
 };
 
 /// A read-only PostgreSQL custom-format archive with parsed metadata.
 #[derive(Debug)]
 pub struct Archive<R> {
-    _reader: R,
+    reader: R,
     header: ArchiveHeader,
+    integer_size: crate::custom::primitives::ArchiveIntegerSize,
     entries: Vec<TocEntry>,
     index: ArchiveIndex,
 }
@@ -32,11 +39,80 @@ impl<R: Read + Seek> Archive<R> {
         let index = ArchiveIndex::build(&entries)?;
 
         Ok(Self {
-            _reader: reader.into_inner(),
+            reader: reader.into_inner(),
             header: parsed_header.header,
+            integer_size: parsed_header.integer_size,
             entries,
             index,
         })
+    }
+
+    /// Seeks to and opens one validated TOC entry as a streaming decompressed reader.
+    ///
+    /// The recorded data offset, custom block type, and dump ID are validated before
+    /// any payload bytes are exposed. `Ok(None)` means the dump ID is not present.
+    pub fn entry_reader(
+        &mut self,
+        id: DumpId,
+    ) -> Result<Option<EntryDataReader<'_, R>>, PgDumpError> {
+        let Some(index) = self.index.entry_index(id) else {
+            return Ok(None);
+        };
+        let entry = &self.entries[index];
+        let dump_id = entry.id().as_i32();
+        let offset = match entry.data_location() {
+            DataLocation::NoData => return Err(PgDumpError::EntryHasNoData { dump_id }),
+            DataLocation::Unknown => {
+                return Err(PgDumpError::EntryDataOffsetUnavailable { dump_id });
+            }
+            DataLocation::Offset(offset) => offset,
+        };
+
+        let encoded_dump_id_bytes = u64::from(self.integer_size.get())
+            .checked_add(1)
+            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+        offset
+            .checked_add(1)
+            .and_then(|value| value.checked_add(encoded_dump_id_bytes))
+            .ok_or(PgDumpError::InvalidDataOffset { dump_id, offset })?;
+
+        let actual_position = self
+            .reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|source| PgDumpError::Io { offset, source })?;
+        if actual_position != offset {
+            return Err(PgDumpError::EntrySeekPositionMismatch {
+                dump_id,
+                expected: offset,
+                actual: actual_position,
+            });
+        }
+
+        let mut reader = ArchiveReader::new_at(&mut self.reader, offset);
+        let marker_offset = reader.offset();
+        let block_type = reader.read_byte()?;
+        if block_type != BLK_DATA {
+            return Err(PgDumpError::UnexpectedDataBlockType {
+                dump_id,
+                expected: BLK_DATA,
+                actual: block_type,
+                offset: marker_offset,
+            });
+        }
+
+        let dump_id_offset = reader.offset();
+        let actual_dump_id = read_archive_integer(&mut reader, self.integer_size)?;
+        if actual_dump_id != dump_id {
+            return Err(PgDumpError::DataBlockDumpIdMismatch {
+                expected: dump_id,
+                actual: actual_dump_id,
+                offset: dump_id_offset,
+            });
+        }
+
+        let chunks = CustomChunkReader::new(reader, self.integer_size, id);
+        let entry_reader = EntryDataReader::new(id, self.header.compression(), chunks)?;
+        Ok(Some(entry_reader))
     }
 }
 
@@ -62,11 +138,10 @@ impl<R> Archive<R> {
     pub fn table(&self, schema: &[u8], name: &[u8]) -> Option<TableRef<'_>> {
         let table_id = self.index.table_id(schema, name)?;
         let table = self.entry(table_id)?;
-        let data = self
-            .index
-            .data_id(table_id)
-            .and_then(|data_id| self.entry(data_id));
-        Some(TableRef::new(table, data))
+        let data_id = self.index.data_id(table_id);
+        let data = data_id.and_then(|id| self.entry(id));
+        let data_metadata = data_id.and_then(|id| self.index.table_data_metadata(id));
+        Some(TableRef::new(table, data, data_metadata))
     }
 }
 
@@ -75,6 +150,7 @@ struct ArchiveIndex {
     by_dump_id: HashMap<DumpId, usize>,
     tables_by_schema: HashMap<Vec<u8>, HashMap<Vec<u8>, DumpId>>,
     table_data_by_table: HashMap<DumpId, DumpId>,
+    table_data_metadata: HashMap<DumpId, TableDataMetadata>,
 }
 
 impl ArchiveIndex {
@@ -121,7 +197,17 @@ impl ArchiveIndex {
             "table-data relationship index",
         )?;
 
+        let mut table_data_metadata = HashMap::new();
+        reserve_map(
+            &mut table_data_metadata,
+            entries.len(),
+            "table-data metadata index",
+        )?;
+
         for data in entries.iter().filter(|entry| entry.is_table_data()) {
+            let metadata = parse_table_data_metadata(data.id(), data.copy_statement_bytes())?;
+            table_data_metadata.insert(data.id(), metadata);
+
             let mut table_id = None;
             for dependency in data.dependencies() {
                 let Some(index) = by_dump_id.get(dependency).copied() else {
@@ -169,6 +255,7 @@ impl ArchiveIndex {
             by_dump_id,
             tables_by_schema,
             table_data_by_table,
+            table_data_metadata,
         })
     }
 
@@ -185,6 +272,10 @@ impl ArchiveIndex {
 
     fn data_id(&self, table_id: DumpId) -> Option<DumpId> {
         self.table_data_by_table.get(&table_id).copied()
+    }
+
+    fn table_data_metadata(&self, data_id: DumpId) -> Option<&TableDataMetadata> {
+        self.table_data_metadata.get(&data_id)
     }
 }
 

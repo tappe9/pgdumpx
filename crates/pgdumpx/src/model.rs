@@ -1,3 +1,7 @@
+use crate::{
+    copy_metadata::{Column, TableDataMetadata, TableDataRepresentation},
+    error::PgDumpError,
+};
 use std::str::Utf8Error;
 
 /// The archive format version stored in a PostgreSQL custom archive header.
@@ -268,7 +272,7 @@ pub struct TocEntry {
     section: Section,
     _definition: Option<ArchiveString>,
     _drop_statement: Option<ArchiveString>,
-    _copy_statement: Option<ArchiveString>,
+    copy_statement: Option<ArchiveString>,
     namespace: Option<ArchiveString>,
     _tablespace: Option<ArchiveString>,
     _table_access_method: Option<ArchiveString>,
@@ -311,7 +315,7 @@ impl TocEntry {
             section,
             _definition: definition,
             _drop_statement: drop_statement,
-            _copy_statement: copy_statement,
+            copy_statement,
             namespace,
             _tablespace: tablespace,
             _table_access_method: table_access_method,
@@ -381,6 +385,10 @@ impl TocEntry {
         self.description.as_bytes() == b"TABLE DATA"
     }
 
+    pub(crate) fn copy_statement_bytes(&self) -> Option<&[u8]> {
+        self.copy_statement.as_ref().map(ArchiveString::as_bytes)
+    }
+
     pub(crate) fn catalog_table_oid_bytes(&self) -> &[u8] {
         self.catalog_table_oid.as_bytes()
     }
@@ -395,11 +403,20 @@ impl TocEntry {
 pub struct TableRef<'a> {
     table: &'a TocEntry,
     data: Option<&'a TocEntry>,
+    data_metadata: Option<&'a TableDataMetadata>,
 }
 
 impl<'a> TableRef<'a> {
-    pub(crate) const fn new(table: &'a TocEntry, data: Option<&'a TocEntry>) -> Self {
-        Self { table, data }
+    pub(crate) const fn new(
+        table: &'a TocEntry,
+        data: Option<&'a TocEntry>,
+        data_metadata: Option<&'a TableDataMetadata>,
+    ) -> Self {
+        Self {
+            table,
+            data,
+            data_metadata,
+        }
     }
 
     /// Returns the table namespace bytes.
@@ -420,5 +437,39 @@ impl<'a> TableRef<'a> {
     /// Returns the dump ID of the related `TABLE DATA` entry, when present.
     pub fn data_entry_id(&self) -> Option<DumpId> {
         self.data.map(TocEntry::id)
+    }
+
+    /// Returns the table-data representation derived from stored TOC metadata.
+    pub fn data_representation(&self) -> Result<TableDataRepresentation, PgDumpError> {
+        let (data, metadata) = self.require_data_metadata()?;
+        metadata.representation(data.id())
+    }
+
+    /// Returns COPY columns in the exact row-field order stored by `pg_dump`.
+    ///
+    /// Missing metadata, malformed COPY statements, and unsupported table-data
+    /// representations are reported distinctly. Raw entry access remains
+    /// available through [`crate::Archive::entry_reader`].
+    pub fn columns(&self) -> Result<&[Column], PgDumpError> {
+        let (data, metadata) = self.require_data_metadata()?;
+        metadata.columns(data.id())
+    }
+
+    /// Resolves a byte-oriented COPY column name to its zero-based field index.
+    pub fn column_index(&self, name: &[u8]) -> Result<Option<usize>, PgDumpError> {
+        let (data, metadata) = self.require_data_metadata()?;
+        metadata.column_index(data.id(), name)
+    }
+
+    fn require_data_metadata(&self) -> Result<(&TocEntry, &TableDataMetadata), PgDumpError> {
+        let data = self.data.ok_or(PgDumpError::TableDataEntryUnavailable {
+            table_id: self.table.id().as_i32(),
+        })?;
+        let metadata = self
+            .data_metadata
+            .ok_or(PgDumpError::CopyColumnMetadataUnavailable {
+                dump_id: data.id().as_i32(),
+            })?;
+        Ok((data, metadata))
     }
 }

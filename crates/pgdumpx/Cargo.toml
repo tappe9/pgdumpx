@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
