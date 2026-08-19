@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
 
@@ -17,7 +17,7 @@ fn official_fixture_normalizes_logical_line_and_carriage_returns() {
     );
 }
 
-fn run_find(path: &PathBuf, value: &str) -> Output {
+fn run_find(path: &Path, value: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_pgdumpx"))
         .arg("find")
         .arg(path)
