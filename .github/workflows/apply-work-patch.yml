@@ -1,0 +1,29 @@
+name: Apply work patch
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/work.patch
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Apply patch
+        run: |
+          git apply --index --verbose .github/work.patch
+          git rm .github/work.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test: define find_first and OwnedRow acceptance"
+          git push origin HEAD:feat/first-end-to-end-find
