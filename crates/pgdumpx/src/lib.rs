@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod archive;
+mod copy;
 mod custom;
 mod entry;
 mod error;
@@ -21,6 +22,7 @@ mod copy_tests;
 mod metadata_open_tests;
 
 pub use archive::Archive;
+pub use copy::{CopyRowReader, FieldRef, Row};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
 pub use model::{

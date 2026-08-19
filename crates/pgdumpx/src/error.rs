@@ -4,7 +4,7 @@ use std::{error::Error, fmt, io};
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PgDumpError {
-    /// An underlying I/O operation failed.
+    /// An underlying archive I/O operation failed.
     Io { offset: u64, source: io::Error },
     /// The archive ended before the requested bytes were available.
     UnexpectedEof { offset: u64 },
@@ -144,6 +144,42 @@ pub enum PgDumpError {
         algorithm: &'static str,
         source: io::Error,
     },
+    /// An underlying decompressed COPY stream I/O operation failed.
+    CopyIo {
+        row: u64,
+        consumed: u64,
+        source: io::Error,
+    },
+    /// A physical COPY row ends with an incomplete backslash escape.
+    MalformedCopyEscape { row: u64, byte_offset: u64 },
+    /// A COPY end marker is truncated, embedded in a row, or not alone on its line.
+    MalformedCopyTerminator { row: u64, byte_offset: u64 },
+    /// One physical COPY row exceeds the provisional finite row-byte bound.
+    CopyRowByteLimitExceeded {
+        row: u64,
+        limit: u64,
+        actual: u64,
+        byte_offset: u64,
+    },
+    /// One COPY row exceeds the provisional finite field-count bound.
+    CopyFieldCountLimitExceeded {
+        row: u64,
+        limit: u64,
+        actual: u64,
+        byte_offset: u64,
+    },
+    /// Memory for bounded current-row byte storage could not be reserved.
+    CopyRowAllocationFailed { row: u64, requested: u64 },
+    /// Memory for bounded current-row field metadata could not be reserved.
+    CopyFieldAllocationFailed { row: u64, requested: u64 },
+    /// Checked parser-consumed COPY byte accounting overflowed.
+    CopyConsumedByteCountOverflow {
+        row: u64,
+        consumed: u64,
+        increment: u64,
+    },
+    /// Checked COPY row-number accounting overflowed.
+    CopyRowNumberOverflow { row: u64 },
     /// Checked arithmetic or conversion overflowed.
     ArithmeticOverflow { offset: u64 },
 }
@@ -152,16 +188,10 @@ impl fmt::Display for PgDumpError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { offset, source } => {
-                write!(
-                    formatter,
-                    "I/O error at archive byte offset {offset}: {source}"
-                )
+                write!(formatter, "I/O error at archive byte offset {offset}: {source}")
             }
             Self::UnexpectedEof { offset } => {
-                write!(
-                    formatter,
-                    "unexpected end of archive at byte offset {offset}"
-                )
+                write!(formatter, "unexpected end of archive at byte offset {offset}")
             }
             Self::InvalidArchiveMagic { offset } => {
                 write!(formatter, "invalid archive magic at byte offset {offset}")
@@ -370,11 +400,61 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "could not decompress dump ID {dump_id} with {algorithm}: {source}"
             ),
+            Self::CopyIo {
+                row,
+                consumed,
+                source,
+            } => write!(
+                formatter,
+                "I/O error while parsing COPY row {row} after consuming {consumed} bytes: {source}"
+            ),
+            Self::MalformedCopyEscape { row, byte_offset } => write!(
+                formatter,
+                "incomplete COPY escape in row {row} at decompressed byte offset {byte_offset}"
+            ),
+            Self::MalformedCopyTerminator { row, byte_offset } => write!(
+                formatter,
+                "malformed COPY end marker in row {row} at decompressed byte offset {byte_offset}"
+            ),
+            Self::CopyRowByteLimitExceeded {
+                row,
+                limit,
+                actual,
+                byte_offset,
+            } => write!(
+                formatter,
+                "COPY row {row} reached {actual} physical bytes at offset {byte_offset}, exceeding limit {limit}"
+            ),
+            Self::CopyFieldCountLimitExceeded {
+                row,
+                limit,
+                actual,
+                byte_offset,
+            } => write!(
+                formatter,
+                "COPY row {row} reached {actual} fields at offset {byte_offset}, exceeding limit {limit}"
+            ),
+            Self::CopyRowAllocationFailed { row, requested } => write!(
+                formatter,
+                "could not reserve {requested} bytes for COPY row {row}"
+            ),
+            Self::CopyFieldAllocationFailed { row, requested } => write!(
+                formatter,
+                "could not reserve {requested} field descriptors for COPY row {row}"
+            ),
+            Self::CopyConsumedByteCountOverflow {
+                row,
+                consumed,
+                increment,
+            } => write!(
+                formatter,
+                "COPY consumed-byte counter overflow in row {row}: {consumed} + {increment}"
+            ),
+            Self::CopyRowNumberOverflow { row } => {
+                write!(formatter, "COPY row-number counter overflow after row {row}")
+            }
             Self::ArithmeticOverflow { offset } => {
-                write!(
-                    formatter,
-                    "arithmetic overflow at archive byte offset {offset}"
-                )
+                write!(formatter, "arithmetic overflow at archive byte offset {offset}")
             }
         }
     }
@@ -383,7 +463,9 @@ impl fmt::Display for PgDumpError {
 impl Error for PgDumpError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Io { source, .. } | Self::DecompressionFailed { source, .. } => Some(source),
+            Self::Io { source, .. }
+            | Self::DecompressionFailed { source, .. }
+            | Self::CopyIo { source, .. } => Some(source),
             _ => None,
         }
     }
