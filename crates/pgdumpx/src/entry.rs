@@ -54,7 +54,7 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
     }
 }
 
-impl<R> fmt::Debug for EntryDataReader<'_, R> {
+impl<R: Read> fmt::Debug for EntryDataReader<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("EntryDataReader")
