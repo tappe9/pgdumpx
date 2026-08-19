@@ -21,6 +21,8 @@ The architecture prioritizes, in order:
 
 pgdumpx **reads** PostgreSQL custom-format dump archives. It does not create, modify, restore, or execute their SQL.
 
+The project's primary specialization is the composition of selective custom-archive access with bounded, byte-oriented, row-aware PostgreSQL `COPY` processing. TOC lookup, seeking, and streaming decompression are the foundation for that higher-level inspection workflow rather than standalone product claims.
+
 ```text
 seekable pg_dump -Fc archive
           │
@@ -159,7 +161,7 @@ This matches the primary use case: local files and other seekable byte sources.
 Why `Read + Seek` first:
 
 - custom archives record data positions when generated on seekable output;
-- selective extraction is the core differentiator;
+- selective entry access is a foundation for the row-aware inspection workflow;
 - arbitrary non-seekable streaming requires sequential block discovery and different state management;
 - adding a separate sequential-reader API later is safer than weakening the file-backed API now.
 
@@ -455,7 +457,7 @@ Benchmarks should measure at least:
 - compression-specific throughput;
 - peak RSS during extraction/search.
 
-Comparisons with `pg_restore` and `libpgdump` are encouraged, but README claims must be based on reproducible results.
+Comparative benchmarks against relevant PostgreSQL tools and libraries may be included when they answer a concrete performance question, but README claims must be based on reproducible results.
 
 ## 19. Accepted ADRs
 
