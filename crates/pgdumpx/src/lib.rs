@@ -26,7 +26,7 @@ mod metadata_open_tests;
 mod table_rows_tests;
 
 pub use archive::Archive;
-pub use copy::{CopyRowReader, FieldRef, Row};
+pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;

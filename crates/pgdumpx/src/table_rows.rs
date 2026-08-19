@@ -1,5 +1,5 @@
 use crate::{
-    Column, CopyRowReader, DumpId, EntryDataReader, PgDumpError, Row,
+    Column, CopyRowReader, DumpId, EntryDataReader, OwnedRow, PgDumpError, Row,
     copy_metadata::TableDataMetadata,
 };
 use std::io::Read;
@@ -62,6 +62,23 @@ impl<'a, R: Read> TableRowReader<'a, R> {
     /// ```
     pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError> {
         self.rows.next_row()
+    }
+
+    /// Returns the first row for which `predicate` evaluates to `true`.
+    ///
+    /// Non-matching rows continue to borrow reusable parser storage. Only the
+    /// matched row is copied into an [`OwnedRow`], and the stream is not read
+    /// after that match.
+    pub fn find_first<F>(&mut self, mut predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool,
+    {
+        while let Some(row) = self.rows.next_row()? {
+            if predicate(&row) {
+                return OwnedRow::try_from_borrowed(&row).map(Some);
+            }
+        }
+        Ok(None)
     }
 
     #[cfg(test)]

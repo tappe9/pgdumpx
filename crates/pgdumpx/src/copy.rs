@@ -37,12 +37,76 @@ pub enum FieldRef<'a> {
     Bytes(&'a [u8]),
 }
 
+/// An owned logical field copied from one matched COPY text row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OwnedField {
+    /// A PostgreSQL COPY NULL value.
+    Null,
+    /// Logical field bytes after PostgreSQL COPY backslash decoding.
+    Bytes(Vec<u8>),
+}
+
+/// One owned COPY text row that can outlive its streaming reader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedRow {
+    fields: Vec<OwnedField>,
+}
+
+#[allow(clippy::len_without_is_empty)]
+impl OwnedRow {
+    /// Returns the number of fields in this row.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Returns one owned field by zero-based index.
+    pub fn field(&self, index: usize) -> Option<&OwnedField> {
+        self.fields.get(index)
+    }
+
+    /// Returns all owned fields in column order.
+    pub fn fields(&self) -> &[OwnedField] {
+        &self.fields
+    }
+
+    pub(crate) fn try_from_borrowed(row: &Row<'_>) -> Result<Self, PgDumpError> {
+        let mut fields = Vec::new();
+        fields
+            .try_reserve_exact(row.len())
+            .map_err(|_| PgDumpError::CopyFieldAllocationFailed {
+                row: row.number,
+                requested: u64::try_from(row.len()).unwrap_or(u64::MAX),
+            })?;
+
+        for field in row.fields() {
+            let owned = match field {
+                FieldRef::Null => OwnedField::Null,
+                FieldRef::Bytes(bytes) => {
+                    let mut owned = Vec::new();
+                    owned.try_reserve_exact(bytes.len()).map_err(|_| {
+                        PgDumpError::CopyRowAllocationFailed {
+                            row: row.number,
+                            requested: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                        }
+                    })?;
+                    owned.extend_from_slice(bytes);
+                    OwnedField::Bytes(owned)
+                }
+            };
+            fields.push(owned);
+        }
+
+        Ok(Self { fields })
+    }
+}
+
 /// A borrowed COPY text row backed by reusable parser storage.
 ///
 /// The row remains valid until the originating [`CopyRowReader`] is mutably
 /// borrowed again. This lending shape intentionally does not implement
 /// [`Iterator`].
 pub struct Row<'a> {
+    number: u64,
     bytes: &'a [u8],
     fields: &'a [FieldSpan],
 }
@@ -189,6 +253,7 @@ impl<R: Read> CopyRowReader<R> {
         }
 
         Ok(Some(Row {
+            number: row,
             bytes: &self.logical_bytes,
             fields: &self.field_spans,
         }))
