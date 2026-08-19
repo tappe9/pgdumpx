@@ -14,6 +14,7 @@ mod error;
 mod io;
 mod limits;
 mod model;
+mod table_rows;
 
 #[cfg(test)]
 mod archive_primitives_tests;
@@ -33,3 +34,4 @@ pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
 };
+pub use table_rows::TableRowReader;

@@ -53,6 +53,18 @@ pub(crate) enum TableDataMetadata {
 }
 
 impl TableDataMetadata {
+    pub(crate) fn validate_row_access(&self, dump_id: DumpId) -> Result<(), PgDumpError> {
+        match self {
+            Self::Unsupported(representation) => {
+                Err(PgDumpError::UnsupportedTableDataRepresentation {
+                    dump_id: dump_id.as_i32(),
+                    representation: *representation,
+                })
+            }
+            Self::Copy(_) | Self::Unavailable | Self::Malformed { .. } => Ok(()),
+        }
+    }
+
     pub(crate) fn representation(
         &self,
         dump_id: DumpId,
