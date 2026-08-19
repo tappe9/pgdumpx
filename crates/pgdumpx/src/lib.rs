@@ -14,4 +14,4 @@ mod limits;
 pub use error::PgDumpError;
 
 #[cfg(test)]
-mod issue6_tests;
+mod archive_primitives_tests;
