@@ -1,20 +1,24 @@
 # pgdumpx
 
-**PostgreSQL Custom Formatをrestoreせず、ストリーミングで行・field単位まで読み取るPure Rustライブラリ。**
+**PostgreSQL Custom Formatをrestoreせず、byte-orientedなrowとして安全にscanするRustライブラリ / CLI。**
 
 > ステータス: 設計段階。crate / CLI はまだリリースされていません。
 
-pgdumpxは、PostgreSQLのCustom Format (`pg_dump -Fc`) アーカイブを、データベースへrestoreせずに検査・抽出するための再利用可能なRustエンジンです。
+pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベースへrestoreせずに検査するread-onlyのRustライブラリ / CLIです。
 
-このプロジェクトは意図的に**read-only**です。`pg_dump`や`pg_restore`の代替を目指すのではなく、resource limitsを維持しながら必要なデータだけを選択的に検査することへ集中します。archive metadataを読み、対象のtable-data entryだけを開き、streaming decompressionし、PostgreSQL `COPY` textをrow / fieldとして解釈し、アプリケーション定義のpredicateが一致した時点でscanを停止できることを重視します。
+価値の中心は、単にarchive entryを開くことではありません。TOCから対象table-data entryを選択し、offsetへseekし、streaming decompressionし、PostgreSQL `COPY` textをlogicalなrow / fieldとしてparseし、predicateに一致した最初のrowで処理を停止できる一連の経路を提供することです。
 
-たとえば数GB〜数十GBのdumpから`public.orders`だけを選び、`order_number`列を解決して、条件に一致する最初の1行を、DBをrestoreせずテーブル全体をメモリへ載せることもなく取得できるAPIを目指します。
+代表的な目標は次です。
+
+> 数GB〜数十GBの`-Fc` backupから、PostgreSQLを起動せず、対象テーブル全体をメモリへ載せずに、特定の受注・ユーザーなど1件を探す。
 
 [English README](README.md)
 
-## 目標
+## pgdumpxが解決すること
 
-PostgreSQL Custom FormatのTOCとentry offsetを、row-aware inspectionの基盤として利用します。
+PostgreSQL Custom FormatにはTOCとentry単位のdata positionがあります。そのため対象**entry**へ選択的にアクセスできますが、列値からrow位置を引くrow-level indexは含まれていません。
+
+pgdumpxはarchive layerとrow layerを、resource-boundedな1本のinspection pathとして構成します。
 
 ```text
 PostgreSQL custom archive
@@ -23,7 +27,7 @@ PostgreSQL custom archive
 header + TOC metadata
         │
         ▼
-select table-data entry + seek
+select table-data entry + validated seek
         │
         ▼
 streaming decompression
@@ -33,59 +37,69 @@ PostgreSQL COPY text parser
         │
         ├── borrowed Row / byte-oriented Field
         ├── COPY column metadata / column lookup
-        └── streaming predicate / first-match retrieval
+        ├── structural / scan-work limits
+        └── predicate evaluation / first-match retrieval
 ```
 
 v0.1では次を重視します。
 
-- PostgreSQLサーバーを必要としない**Pure Rust core**
 - PostgreSQL Custom Format (`-Fc`) の**read-only parser**
-- `Read + Seek`を利用した**lazy entry access**
-- テーブル全体をメモリへ載せない**streaming decompression**
-- PostgreSQL `COPY` text形式を行・field単位で扱える**row-aware API**
-- UTF-8や行ごとのowned allocationを前提にしない**borrowed row / byte-oriented field API**
-- 列名を解決して最初の一致行を取得できる**column-aware first-match filtering**
-- machine-readableなtyped error
-- 1行単位だけでなくscan全体の処理量も制御できるresource limits
-- CLI / Python / Arrow等を後から載せられる小さなCore
-- 実測前に性能優位を断定せず、benchmarkで性能を証明する開発方針
+- 実行時にPostgreSQL server、`libpq`、`pg_restore`を必要としない構成
+- `Read + Seek`による**lazy entry access**
+- テーブル全体を保持しない**streaming decompression**
+- 通常のpg_dump `COPY` textをrow / fieldとして扱うAPI
+- UTF-8やrowごとのowned allocationを前提にしない**borrowed row / byte-oriented field API**
+- SQL parserを導入しない**column-aware first-match filtering**
+- location contextを持つtyped error
+- structural、row scan、raw extractionを分けたresource limits
+- CLIや将来のlanguage/data integrationから再利用できる小さなCore
+- fixtureで裏付けた互換性と、benchmarkで裏付けた性能主張
+
+`Pure Rust`という言葉を、全transitive dependencyに対する包括的な保証としては使用しません。default buildはPostgreSQL runtime componentから独立させ、compression backendやnative build上の制約は個別に文書化します。詳細は[ADR 0007](docs/adr/0007-standalone-row-scanner-and-vertical-slices.md)を参照してください。
 
 ## 想定ユースケース
 
-pgdumpxは、PostgreSQL dumpをrestore専用ファイルではなく、offline data sourceとして扱いたい場面を対象にします。
+PostgreSQL dumpをrestore専用ファイルではなく、offline data sourceとして扱いたい場面を対象にします。
 
-- PostgreSQLサーバーを立ち上げずに本番backupの内容を調査する
+- PostgreSQL serverを起動せずに本番backupを調査する
 - 巨大なCustom Format dumpから特定の受注・ユーザーなど1件を探す
-- 数GB〜数十GBのarchiveから必要な1テーブルだけを抽出する
-- backup verification、障害調査、support/forensics向けツールを作る
-- 外部から受領したdumpを明示的なparser / scan budgetの下で解析する
-- 選択したtable streamを下流でCSV、Arrow、Parquet等へ変換する
+- 数GB〜数十GBのarchiveから1つのtable-data streamだけを抽出する
+- backup verification、障害調査、support / forensics向けツールを作る
+- 顧客や外部から受領したdumpを明示的なparser / work budgetの下で解析する
+- 選択したrow streamをCSV、JSON Lines、Arrow、Parquet等へ変換する
 - Rust coreを共通基盤としてCLIや将来のPython bindingを構築する
-
-代表的な目標は、**巨大な`pg_dump -Fc` backupから、PostgreSQLをrestoreせず、対象テーブル全体をメモリへ載せずに1レコードを探すこと**です。
 
 ## v0.1の対象
 
-v0.1は次の形式だけに集中します。
+v0.1はPostgreSQL Custom Formatだけに集中します。
 
 ```bash
 pg_dump -Fc mydb > backup.dump
 ```
 
-Archive Format Version **1.14〜1.16**を初期対象とします。古いversionやDirectory/Tar Formatへの対応はpgdumpxの必須目標ではなく、需要があれば将来検討します。
-
-圧縮はv0.1で次を扱う計画です。
+最終的なv0.1 targetはArchive Format Version **1.14〜1.16**と、次のcompressionです。
 
 - none
 - gzip
 - LZ4
 - Zstandard
 
-row-aware APIがv0.1で対象にするのは、通常のpg_dumpが生成するPostgreSQL `COPY` text形式のtable dataです。`--inserts`、`--column-inserts`、`--rows-per-insert`によるINSERT形式のtable dataは、v0.1ではrow parserへ流さず、明示的なunsupported representation errorにします。Binary COPYも対象外です。
+実装はまずArchive 1.16 + none/gzipで`find`まで通る細いend-to-end sliceを完成させ、その後に互換性を広げます。詳細は[ROADMAP.md](ROADMAP.md)を参照してください。
 
-「設計上の対象」と「fixture/testで実証済みの互換性」は[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)で分けて管理します。実装前の現時点では、互換性表はrelease済みの保証ではなくtargetです。
+row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQL `COPY` text形式のtable dataです。次はv0.1 row parserの対象外です。
 
-## 想定API
+- `--inserts`
+- `--column-inserts`
+- `--rows-per-insert`によるINSERT output
+- Binary COPY
+
+unsupported representationはCOPY textとして推測せず、row APIからtyped errorで失敗させます。archive entry自体が読める場合はraw extractionを利用できる可能性があります。
+
+「設計上のtarget」と「fixture/testで実証済みの互換性」は[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)で分けて管理します。実装前の現時点では、互換性表はrelease済みの保証ではありません。
+
+## 想定Rust API
+
+public APIはまだ設計契約であり、実装済みinterfaceではありません。
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -93,8 +107,10 @@ use pgdumpx::{Archive, FieldRef};
 let file = std::fs::File::open("backup.dump")?;
 let mut archive = Archive::open(file)?;
 
+println!("archive version: {:?}", archive.header().version());
+
 for entry in archive.entries() {
-    println!("{} {:?} {}", entry.id(), entry.kind(), entry.name());
+    println!("{entry:?}");
 }
 
 let mut rows = archive.table_rows(b"public", b"orders")?;
@@ -103,7 +119,9 @@ while let Some(row) = rows.next_row()? {
 }
 ```
 
-v0.1では、restoreせずに条件一致する最初の1行を取得する使い方も正式に対象とします。
+`next_row(&mut self)`を通常の`Iterator`にしないのは意図的です。borrowed `Row`は再利用可能な内部bufferを参照し、次のmutable operationまでだけ有効です。
+
+最初に一致する1行を取得する使い方をv0.1のprimary use caseとします。
 
 ```rust
 let mut rows = archive.table_rows(b"public", b"orders")?;
@@ -116,15 +134,27 @@ let row = rows.find_first(|row| {
 })?;
 ```
 
-`column_index()`は、column metadataが正常で列が見つかった場合を`Ok(Some(index))`、metadataは正常だが列が存在しない場合を`Ok(None)`、COPY column layout自体を安全に導出できない場合を`Err(...)`として区別します。
+`column_index()`は次を区別します。
 
-`find_first`はDBのindex lookupではなく**streaming scan**です。Custom FormatのTOCによって対象テーブルのdata entryへ直接seekできますが、dump内には行単位のindexはありません。そのため対象テーブルを先頭から展開・parseし、一致した時点で即終了します。最悪時の処理量は対象テーブルのdata sizeに比例します。
+```text
+Ok(Some(index))  metadataが正常でcolumnが見つかった
+Ok(None)         metadataは正常だがrequested columnが存在しない
+Err(...)         column layoutを利用できない、またはmalformed
+```
 
-1行ごとの`max_row_bytes`等に加え、長時間scanには最大scan行数や最大decompressed bytesのようなoperation-level budgetを与えられる設計にします。bounded-memoryであってもCPU/decompression workまで暗黙に無制限にはしません。
+`find_first`はDBのindex lookupではなく**streaming sequential scan**です。TOCによって対象table-data entryへ直接seekできますが、entry内のrowは先頭からdecompress / parseします。早い位置で一致すれば即終了できますが、late matchやno matchでは、configured budgetが停止させない限り対象entry全体を処理する可能性があります。
 
-APIは実装前の設計契約であり、初回releaseまで変更される可能性があります。詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。
+APIでは次を別のlimitとして扱います。
+
+- structural / per-item limits
+- row scan全体のwork limits
+- raw entry extractionのdecompressed-byte limit
+
+詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。
 
 ## 想定CLI
+
+CLIはpublic Rust APIのconsumerであり、別のparser実装にはしません。また、Core完成後に付け足すのではなく、早期のend-to-end acceptance pathとして実装します。
 
 ```bash
 pgdumpx inspect backup.dump
@@ -133,36 +163,96 @@ pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
 ```
 
-`find`は、pgdumpxのrow-awareな価値をCLIから確認できる最小のfirst-match equality commandです。v0.1でSQL風の`WHERE` parserや汎用condition DSLを導入するものではありません。
+### `extract`
 
-CLIはCore parserの別consumerとして実装し、解析ロジックを重複させません。
+選択したentryの**decompressed table-data body**をbinary-safeなbytesとしてstdoutへ出力します。schema DDL、`COPY` statement wrapper、restore可能な完全SQLは追加しません。
+
+CLIはlibraryのbounded raw-extraction pathを利用します。limit到達時はerrorとし、出力を黙ってtruncateしません。
+
+### `find`
+
+最初の一致rowを取得する狭いequality commandです。SQL風`WHERE` parserや汎用condition DSLは導入しません。
+
+v0.1のschema、table、column、value argumentはUTF-8です。Rust APIはbyte-orientedのままであり、archive内のnon-UTF-8 fieldも表現できます。CLIで任意bytesを指定するmodeは将来別途設計します。
+
+stable exit behavior:
+
+```text
+0  match found
+1  no matching row
+2+ usage / I/O / format / integrity / decompression / COPY / encoding / resource error
+```
+
+## Architecture
+
+archive openではmetadataとTOC indexだけを構築し、payloadはlazyに読みます。
+
+```text
+Archive<R: Read + Seek>
+        │
+        ├── header + TOC parser
+        ├── ArchiveIndex
+        └── on-demand validated seek
+                  │
+                  ▼
+          EntryDataReader
+                  │
+          streaming decompression
+                  │
+                  ▼
+          COPY text row reader
+                  │
+                  ├── row iteration
+                  └── first-match filtering
+```
+
+byte-oriented metadata、integrity check、resource accounting、row-parser errorを1つのmodelで扱えるよう、狭いstandalone read pathを実装します。関連dump libraryはresearch referenceやdifferential test comparatorとして利用できます。
+
+詳細は[ARCHITECTURE.md](ARCHITECTURE.md)を参照してください。
 
 ## COPY text contract
 
-byte-oriented APIの`FieldRef::Bytes`は、archive上のescaped spellingではなく、**PostgreSQL COPY textのescape decode後のlogical field bytes**を表します。`\N`は`FieldRef::Null`、空の非NULL fieldは長さ0のbytesとして扱います。
+`FieldRef::Bytes`はarchive上のescaped spellingではなく、**PostgreSQL COPY text escape decode後のlogical field bytes**を表します。`\N`は`FieldRef::Null`、空の非NULL fieldは長さ0のbytesです。
 
-row framing、escape、column metadata、unsupported table-data representation、resource limitsの詳細は[docs/COPY-TEXT.md](docs/COPY-TEXT.md)で定義します。
+row framing、escape、column metadata、unsupported representation、resource limitsは[docs/COPY-TEXT.md](docs/COPY-TEXT.md)で定義します。
+
+## Evidence policy
+
+互換性と性能は、実装意図ではなくevidenceが必要なclaimです。
+
+valid archive fixtureには次を記録します。
+
+- official `pg_dump` generator version
+- exact generation command
+- archive-format version / compression
+- checksum
+- fixture purpose / expected objects
+
+benchmarkにはfixture、command、hardware、compression、match position、measurement methodを記録します。再現可能な結果が出るまではREADMEへ性能優位を記載しません。
 
 ## 関連プロジェクト
 
-- [`libpgdump`](https://github.com/gmr/libpgdump) — PostgreSQLのCustom / Directory / Tar dump形式をread/writeするRustライブラリ
+- [`libpgdump`](https://github.com/gmr/libpgdump) — PostgreSQL Custom / Directory / Tar dump形式をread/writeするRustライブラリ
 - [`pgdumplib`](https://github.com/gmr/pgdumplib) — PostgreSQL Custom Formatをread/writeするPythonライブラリ
 
-これらはPostgreSQL dumpを扱う隣接プロジェクトです。pgdumpxは、Custom Formatをread-only・resource-bounded・row-awareに検査するという狭い責務に集中します。
+これらはPostgreSQL dumpを扱う隣接プロジェクトです。pgdumpxは、Custom Formatをread-only・resource-bounded・byte-orientedなrowとして検査する狭い責務に集中します。
 
-## ドキュメント
+## ドキュメントmap
 
-- [要件](docs/REQUIREMENTS.md)
-- [アーキテクチャ](ARCHITECTURE.md)
-- [Public API設計](docs/API-DESIGN.md)
-- [Custom Format調査ノート](docs/PG-DUMP-CUSTOM-FORMAT.md)
-- [COPY text parser contract](docs/COPY-TEXT.md)
-- [互換性マトリクス](docs/COMPATIBILITY.md)
-- [ロードマップ](ROADMAP.md)
-- [ADR](docs/adr/)
-- [コントリビューション](CONTRIBUTING.md)
-- [セキュリティポリシー](SECURITY.md)
+重複とdriftを減らすため、各documentのprimary responsibilityを分けます。
+
+- [README](README.md) / [日本語 README](README.ja.md) — product value、status、example、high-level scope
+- [Requirements](docs/REQUIREMENTS.md) — normativeなv0.1 behavior / acceptance criteria
+- [Architecture](ARCHITECTURE.md) — internal boundary / data flow
+- [Public API design](docs/API-DESIGN.md) — Rust APIとexact semantics
+- [Custom archive format notes](docs/PG-DUMP-CUSTOM-FORMAT.md) — upstream由来のarchive behavior
+- [COPY text contract](docs/COPY-TEXT.md) — row / field byte semantics
+- [Compatibility matrix](docs/COMPATIBILITY.md) — targetとfixture-verified support
+- [Roadmap](ROADMAP.md) — delivery order
+- [ADR](docs/adr/) — accepted / superseded decision
+- [Contributing](CONTRIBUTING.md) — contribution / document update policy
+- [Security policy](SECURITY.md) — vulnerability reporting / resource threat model
 
 ## ライセンス
 
-`MIT OR Apache-2.0` のデュアルライセンスです。
+`MIT OR Apache-2.0`のデュアルライセンスです。

@@ -2,22 +2,29 @@
 
 Thank you for considering a contribution.
 
-pgdumpx is a pre-1.0 parser and extraction project. Correctness, safety, bounded memory behavior, and evidence-backed performance matter more than feature count.
+pgdumpx is a pre-1.0 parser and extraction project. Correctness, safety, bounded memory/work behavior, and evidence-backed performance matter more than feature count.
 
 ## Development principles
 
 Contributions should preserve these principles:
 
 - derive archive behavior from PostgreSQL upstream source and generated compatibility fixtures;
-- keep the parser core independent from CLI, Python, Arrow, and presentation concerns;
+- keep the parser core independent from CLI, Python, Arrow, PostgreSQL server processes, `libpq`, and presentation concerns;
 - treat every archive byte as untrusted;
-- use checked arithmetic for attacker-controlled sizes and offsets;
+- use checked arithmetic for attacker-controlled sizes, offsets, and counters;
 - avoid project-authored `unsafe` unless an accepted ADR justifies it;
 - do not allocate the complete archive or complete table data in normal streaming paths;
-- keep mandatory core dependencies minimal;
-- keep archive framing, decompression, and COPY parsing as separate responsibilities;
+- provide bounded paths for both row scans and raw decompressed entry extraction;
+- keep mandatory core dependencies minimal and document native build/runtime constraints;
+- keep archive framing, decompression, COPY parsing, and presentation as separate responsibilities;
 - add tests for every format edge case and bug fix;
 - do not claim performance wins without a reproducible benchmark.
+
+## Product boundary
+
+pgdumpx is a bounded, byte-oriented row scanner for PostgreSQL Custom Format archives. TOC lookup, selective seeking, and decompression are foundations of that workflow; the primary user value is safe row/field inspection and search without restore.
+
+The project implements its own narrow read path rather than using another dump library as a mandatory backend. Related projects remain valuable references and differential-test comparators. See [ADR 0007](docs/adr/0007-standalone-row-scanner-and-vertical-slices.md).
 
 ## Authoritative references
 
@@ -32,27 +39,67 @@ Relevant upstream files include:
 
 See `docs/PG-DUMP-CUSTOM-FORMAT.md` for the project's format notes and source-governance rules.
 
+## Documentation ownership
+
+Each document has one primary responsibility. Avoid copying normative text into several files when a link is sufficient.
+
+| Document | Primary responsibility |
+|---|---|
+| `README.md` / `README.ja.md` | Product value, status, quick examples, high-level scope |
+| `docs/REQUIREMENTS.md` | Normative v0.1 behavior and acceptance criteria |
+| `ARCHITECTURE.md` | Internal boundaries, data flow, and safety architecture |
+| `docs/API-DESIGN.md` | Intended public Rust API and exact API semantics |
+| `docs/PG-DUMP-CUSTOM-FORMAT.md` | Upstream-derived archive-format notes |
+| `docs/COPY-TEXT.md` | COPY text byte and row contract |
+| `docs/COMPATIBILITY.md` | Target versus fixture-verified support and fixture provenance |
+| `ROADMAP.md` | Delivery order and release sequencing |
+| `docs/adr/` | Accepted design decisions and supersession history |
+
+When a change affects more than one responsibility, update the smallest complete set and check terminology across those documents before opening a PR.
+
 ## Format changes
 
 For a change that affects archive interpretation:
 
 1. identify the relevant PostgreSQL upstream behavior and archive-version condition;
 2. add or regenerate a fixture with a documented `pg_dump` command when possible;
-3. add a focused malformed or boundary test when relevant;
-4. explain compatibility impact in the PR;
-5. update requirements, format notes, API docs, or ADRs if the public contract changes.
+3. record generator version, command, checksum, purpose, and expected objects in the fixture manifest;
+4. add a focused malformed or boundary test when relevant;
+5. explain compatibility impact in the PR;
+6. update format notes, requirements, API docs, compatibility status, or ADRs when their owned contract changes.
+
+## Fixture policy
+
+Valid-format compatibility evidence should come from official `pg_dump` output. Hand-built fixtures are appropriate for malformed states that an official writer cannot produce, but they must not be the sole evidence for normal behavior.
+
+The fixture manifest is expected to record fields equivalent in purpose to:
+
+```toml
+[[fixture]]
+name = "pg18-gzip-copy-basic"
+path = "tests/fixtures/pg18-gzip-copy-basic.dump"
+archive_version = "1.16.0"
+generator = "pg_dump (PostgreSQL) 18.x"
+command = "pg_dump -Fc --compress=gzip:6 --file=..."
+sha256 = "<recorded checksum>"
+purpose = ["header", "toc", "gzip", "copy-text"]
+expected_tables = ["public.orders"]
+```
+
+Large benchmark data should normally be generated reproducibly rather than committed.
 
 ## Pull requests
 
 Keep PRs focused. A good parser PR explains:
 
 - which archive structure or COPY rule is implemented;
-- which archive versions are affected;
+- which archive versions and compression modes are affected;
 - malformed-input behavior;
-- resource-allocation implications;
+- allocation and total-work implications;
 - tests and fixtures added;
 - public API or error changes;
-- benchmark impact when performance is part of the change.
+- benchmark impact when performance is part of the change;
+- documentation files updated and why each owns part of the change.
 
 Avoid mixing unrelated refactors with format-semantic changes.
 
@@ -67,13 +114,23 @@ cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 ```
 
-Parser changes should additionally run relevant fixture tests and fuzz/regression tests as they become available.
+Parser changes should additionally run relevant fixture, differential, fuzz/regression, and benchmark checks as they become available.
+
+Documentation-only changes should verify at least:
+
+- all relative links resolve;
+- English and Japanese README product claims remain aligned;
+- accepted/superseded ADR references are consistent;
+- no compatibility cell is marked verified without fixture evidence;
+- CLI command, output, encoding, and exit-code contracts do not conflict across documents.
 
 ## Public API changes
 
 Before v1.0 the API may evolve, but breaking changes must still be intentional and explained.
 
-Do not expose private parser types merely for implementation convenience. Public types should serve archive inspection and extraction consumers.
+Do not expose private parser types or public struct fields merely for implementation convenience. Public metadata types should be opaque with accessors where that preserves future compatibility. Public enums expected to grow should be `#[non_exhaustive]` before v1.0.
+
+The streaming row API intentionally uses `next_row(&mut self)` rather than a standard `Iterator` when rows borrow a reusable internal buffer. Document that lifetime boundary instead of forcing per-row ownership to satisfy `Iterator`.
 
 Accepted policy decisions live under `docs/adr/`. Change an accepted architectural policy with a new ADR rather than silently diverging from the documentation.
 

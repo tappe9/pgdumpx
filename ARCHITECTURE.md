@@ -2,7 +2,7 @@
 
 Status: **Accepted for initial implementation**
 
-This document defines the initial architecture for pgdumpx. The first implementation is intentionally narrow: a safe, read-only, file-backed reader for modern PostgreSQL custom-format archives.
+This document defines the initial architecture for pgdumpx. The first implementation is intentionally narrow: a safe, read-only, file-backed row scanner for modern PostgreSQL custom-format archives.
 
 ## 1. Architectural goals
 
@@ -11,60 +11,79 @@ The architecture prioritizes, in order:
 1. correctness against PostgreSQL archive behavior;
 2. safety on untrusted archive bytes;
 3. bounded memory use for large dump files;
-4. bounded total scan/decompression work when callers request it;
+4. bounded total row-scan and raw-decompression work when callers request it;
 5. efficient selective access to individual data entries;
-6. row-aware extraction and first-match filtering without restoring the archive;
+6. byte-oriented row extraction and first-match filtering without restore;
 7. clear separation between archive framing, decompression, COPY parsing, and presentation;
-8. a reusable Pure Rust API independent of CLI, Python, Arrow, or database connections;
-9. measurable performance without sacrificing correctness or safety.
+8. a reusable Rust API independent of CLI, Python, Arrow, PostgreSQL connections, `libpq`, and `pg_restore`;
+9. public API encapsulation that leaves room for pre-1.0 compatibility growth;
+10. measurable performance without sacrificing correctness or safety.
 
-## 2. System boundary
+## 2. Product and system boundary
 
 pgdumpx **reads** PostgreSQL custom-format dump archives. It does not create, modify, restore, or execute their SQL.
 
-The project's primary specialization is the composition of selective custom-archive access with bounded, byte-oriented, row-aware PostgreSQL `COPY` processing. TOC lookup, seeking, and streaming decompression are the foundation for that higher-level inspection workflow rather than standalone product claims.
+The project's specialization is the composition of selective custom-archive access with bounded, byte-oriented, row-aware PostgreSQL `COPY` processing. TOC lookup, seeking, and streaming decompression are foundations for that higher-level workflow rather than standalone product claims.
 
 ```text
 seekable pg_dump -Fc archive
           │
           ▼
-┌──────────────────────────────┐
-│          pgdumpx core        │
-│                              │
-│  checked primitive reader    │
-│          │                   │
-│  header + TOC parser         │
-│          │                   │
-│      ArchiveIndex            │
-│          │                   │
-│  on-demand entry seek        │
-│          │                   │
-│  framed data reader          │
-│          │                   │
-│  decompressor                │
-│          │                   │
-│  representation validation   │
-│          │                   │
-│  COPY text row parser        │
-│          │                   │
-│  row filter / first match    │
-│          │                   │
-│  scan-work accounting        │
-└──────────┬───────────────────┘
+┌────────────────────────────────┐
+│          pgdumpx core          │
+│                                │
+│  checked primitive reader      │
+│          │                     │
+│  header + TOC parser           │
+│          │                     │
+│      ArchiveIndex              │
+│          │                     │
+│  on-demand entry seek          │
+│          │                     │
+│  framed data reader            │
+│          │                     │
+│  decompressor                  │
+│          │                     │
+│  raw-output accounting         │
+│          │                     │
+│  representation validation     │
+│          │                     │
+│  COPY text row parser          │
+│          │                     │
+│  row filter / first match      │
+│          │                     │
+│  row-scan accounting           │
+└──────────┬─────────────────────┘
            │
      public Rust API
            │
      ┌─────┼────────┐
      ▼     ▼        ▼
     CLI   PyO3    Arrow/other
-  future  future     future
+   v0.1   future     future
 ```
 
-The core does not own terminal formatting, command-line argument parsing, Python objects, Arrow arrays, network database connections, SQL execution, or a SQL query language.
+The core does not own terminal formatting, command-line parsing, Python objects, Arrow arrays, network database connections, SQL execution, or a SQL query language.
 
-## 3. Initial workspace direction
+## 3. Runtime and dependency boundary
 
-The first code milestone should use a Cargo workspace with separate library and CLI crates:
+The default build must not require:
+
+- a running PostgreSQL server;
+- `libpq`;
+- `pg_restore` or another PostgreSQL executable at runtime;
+- project-authored C code;
+- project-authored `unsafe` without a separately accepted ADR.
+
+The project does not use “Pure Rust” as a blanket guarantee about every transitive dependency. Compression backends are selected through correctness, maintenance, portability, build, and benchmark evidence. A backend that introduces a material native build/runtime constraint must be documented and, where practical, feature-gated.
+
+pgdumpx implements its own narrow archive read path rather than using another dump library as a mandatory backend. This keeps byte preservation, integrity validation, resource accounting, and typed errors under one coherent contract. Adjacent libraries may be used for research and differential testing.
+
+See `docs/adr/0007-standalone-row-scanner-and-vertical-slices.md`.
+
+## 4. Initial workspace direction
+
+The first code milestone uses a Cargo workspace with separate library and CLI crates:
 
 ```text
 pgdumpx/
@@ -89,7 +108,9 @@ pgdumpx/
 
 Exact private module names are not public API commitments.
 
-## 4. Core responsibilities
+The CLI crate exists from the first vertical slice so end-to-end behavior is exercised early. Parser logic remains in the library.
+
+## 5. Core responsibilities
 
 The `pgdumpx` library owns:
 
@@ -100,14 +121,15 @@ The `pgdumpx` library owns:
 - lookup indexes for entries and table/table-data relationships;
 - checked seeking to data blocks;
 - custom data block framing validation;
-- streaming decompression for supported compression algorithms;
+- streaming decompression for supported algorithms;
+- bounded raw decompressed entry extraction;
 - validation that a selected row-aware table-data entry uses a supported COPY representation;
 - PostgreSQL `COPY` text row framing and field unescaping;
 - supported COPY column-layout extraction from TOC `copyStmt` metadata;
-- byte-oriented column lookup for table rows with explicit metadata-error semantics;
+- byte-oriented column lookup with explicit metadata-error semantics;
 - streaming predicate evaluation and first-match retrieval;
-- per-item and operation-level resource limits;
-- typed errors;
+- structural, row-scan, and raw-output resource limits;
+- typed, contextual errors;
 - public metadata and row-access APIs.
 
 The library does **not** own:
@@ -115,16 +137,16 @@ The library does **not** own:
 - archive writing;
 - `pg_restore` behavior;
 - SQL execution;
-- SQL `WHERE` parsing or general SQL expression evaluation;
+- SQL `WHERE` parsing or general expression evaluation;
 - PostgreSQL client connections;
 - INSERT-statement row parsing in v0.1;
-- filesystem path discovery beyond caller-provided readers/convenience APIs;
-- CLI output formatting;
+- filesystem discovery beyond caller-provided sources and explicit convenience APIs;
+- CLI presentation formatting;
 - DataFrame or Arrow representations;
 - Python bindings;
 - persistent row indexes in v0.1.
 
-## 5. Archive open pipeline
+## 6. Archive open pipeline
 
 Opening an archive performs metadata work only:
 
@@ -155,7 +177,9 @@ Archive<R>
 
 Opening must not read or decompress every table-data block.
 
-## 6. Source abstraction
+The first vertical slice may parse only the archive 1.16 TOC fields required for table lookup and row access. The final v0.1 parser must implement the complete supported-version requirements recorded in `docs/REQUIREMENTS.md`.
+
+## 7. Source abstraction
 
 The initial high-performance API requires a seekable source:
 
@@ -168,32 +192,45 @@ This matches the primary use case: local files and other seekable byte sources.
 Why `Read + Seek` first:
 
 - custom archives record data positions when generated on seekable output;
-- selective entry access is a foundation for the row-aware inspection workflow;
+- selective entry access is foundational to the row-aware workflow;
 - arbitrary non-seekable streaming requires sequential block discovery and different state management;
 - adding a separate sequential-reader API later is safer than weakening the file-backed API now.
 
 A convenience `Archive::open_path()` may be added outside the parser's lowest-level primitives.
 
-## 7. Archive index
+## 8. Archive index
 
 Metadata is eagerly decoded into a compact index. Payloads are not.
 
-Conceptual representation:
+Conceptual internal representation:
 
 ```rust
-pub struct ArchiveIndex {
+struct ArchiveIndex {
     header: ArchiveHeader,
     entries: Vec<TocEntry>,
     by_dump_id: HashMap<DumpId, usize>,
-    tables: HashMap<TableKey, TableRef>,
+    tables: HashMap<TableKey, TableIndexEntry>,
 }
 ```
 
-The exact collection types are implementation details. The design requirement is that common entry/table lookup not require repeatedly scanning all TOC entries.
+Exact collection types are implementation details. Common dump-ID and `(schema, table)` lookup must not repeatedly scan all TOC entries.
 
-The archive index is **entry-level**, not row-level. It can identify the selected table-data entry and its archive offset, but it does not provide offsets for individual COPY rows.
+The index is **entry-level**, not row-level. It identifies a selected table-data entry and archive offset; it does not provide offsets for individual COPY rows.
 
-## 8. Entry data access
+## 9. Public metadata encapsulation
+
+Archive metadata types such as `ArchiveHeader`, `ArchiveVersion`, `DumpId`, `TocEntry`, and `Column` use private fields with accessors unless direct construction is an intentional requirement.
+
+Reasons:
+
+- upstream version expansion can add metadata without breaking struct literals;
+- internal byte-storage choices remain changeable;
+- invalid combinations cannot be constructed accidentally;
+- CLI/serialization DTOs do not freeze the parser model.
+
+Public enums expected to gain variants are `#[non_exhaustive]` before v1.0.
+
+## 10. Entry data access
 
 Entry reads are lazy:
 
@@ -216,18 +253,37 @@ chunk framing reader
 stream decompressor
     │
     ▼
+raw-output accounting
+    │
+    ▼
 Read-compatible EntryDataReader
 ```
 
-An entry reader must never require `Vec<u8>` proportional to the complete entry unless the caller explicitly requests a convenience `read_to_end` operation.
+An entry reader never requires `Vec<u8>` proportional to the complete entry unless a caller explicitly requests a convenience `read_to_end` operation.
 
-Raw entry reading and row-aware parsing are separate capabilities. An archive entry may be structurally readable even when its logical table-data representation is unsupported by the v0.1 COPY row parser.
+Raw entry reading and row-aware parsing are separate capabilities. An archive entry may be structurally readable even when its logical representation is unsupported by the v0.1 COPY parser.
 
-## 9. COPY text parsing
+### Raw output limits
+
+A low-level unlimited `EntryDataReader` may be available for trusted callers. The library also provides a bounded reader and a high-level copy operation with an `EntryReadLimits`-style decompressed-byte budget.
+
+Required behavior:
+
+- count decompressed bytes returned or copied;
+- use checked counters;
+- fail when the next bytes would cross the configured limit;
+- distinguish limit exhaustion from normal EOF;
+- do not report a truncated stream as successful completion;
+- preserve a typed pgdumpx resource error through the `std::io::Read` error source;
+- make the CLI `extract` command use the bounded high-level path.
+
+Large-object entries with OID framing may use a separate API rather than being forced into a flat byte stream.
+
+## 11. COPY text parsing
 
 v0.1 row-aware extraction targets table data emitted through PostgreSQL `COPY ... FROM stdin` text form.
 
-The parser is layered on top of decompressed entry bytes:
+The parser is layered on decompressed entry bytes:
 
 ```text
 EntryDataReader
@@ -251,27 +307,25 @@ escape / NULL decoding
 Row / FieldRef
 ```
 
-The COPY parser preserves raw logical bytes and must not assume UTF-8 for arbitrary database text data unless an API explicitly requests UTF-8 conversion.
+The COPY parser preserves logical bytes and does not assume UTF-8 unless an API explicitly requests conversion.
 
-`FieldRef::Bytes` represents logical field bytes after PostgreSQL COPY text escape decoding. The escaped spelling is an input representation detail, not the value exposed by the row API.
+`FieldRef::Bytes` represents bytes after PostgreSQL COPY text escape decoding. The escaped spelling is an input representation detail, not the exposed value.
 
-The detailed COPY text contract is maintained in `docs/COPY-TEXT.md` and tested independently from custom archive framing.
+The detailed contract is maintained in `docs/COPY-TEXT.md` and tested independently from archive framing.
 
 ### Supported representation boundary
 
 Row-aware v0.1 APIs support normal pg_dump-generated COPY text table data.
 
-INSERT-based dump modes such as `--inserts`, `--column-inserts`, and INSERT output produced through `--rows-per-insert` must be detected from available metadata and rejected explicitly by row APIs. They must not be guessed as COPY text.
+INSERT-based dump modes such as `--inserts`, `--column-inserts`, and INSERT output produced through `--rows-per-insert` are detected from available metadata and rejected explicitly. They are not guessed as COPY text.
 
-Binary COPY decoding is also deferred.
+Binary COPY decoding is deferred.
 
 ### Column metadata
 
-For normal pg_dump table-data entries, the TOC carries the COPY statement used to restore that entry. pgdumpx should parse the supported pg_dump-generated column list from this metadata and expose a byte-oriented column layout.
+For normal pg_dump table-data entries, the TOC carries the COPY statement used to restore that entry. pgdumpx parses the supported pg_dump-generated column list and exposes a byte-oriented layout.
 
 Column lookup is resolved once against that layout and then uses positional field access while scanning rows.
-
-The API distinguishes:
 
 ```text
 metadata valid + column found      -> Ok(Some(index))
@@ -279,9 +333,15 @@ metadata valid + column not found  -> Ok(None)
 metadata unavailable/malformed     -> Err(...)
 ```
 
-If a supported table-data stream is readable but column metadata cannot be derived, positional row iteration may still work while column-aware helpers return a typed metadata-unavailable error.
+If row bytes are positionally readable but column metadata cannot be derived, positional iteration may remain available while column-aware helpers return a typed metadata error.
 
-### First-match row filtering
+### Lending row model
+
+Normal iteration returns a borrowed `Row` backed by a reusable buffer. It remains valid only until the next mutable row-reader operation.
+
+This relationship is intentionally exposed through `next_row(&mut self)` or an equivalent lending method rather than forcing owned allocation to implement standard `Iterator`.
+
+### First-match filtering
 
 v0.1 includes first-match filtering as a core use case:
 
@@ -294,27 +354,29 @@ seek directly to table-data entry
       ▼
 stream decompress + parse COPY rows
       │
-      ├── predicate false ──► account work ──► next row
+      ├── row would exceed budget ──► typed error, row not yielded
       │
-      ├── budget exceeded ──► typed error
+      ├── predicate false ──────────► account row ──► next row
       │
-      └── predicate true  ──► copy current row into OwnedRow and stop
+      └── predicate true ───────────► copy current row into OwnedRow and stop
 ```
 
-This is intentionally **not** modeled as indexed database lookup. PostgreSQL custom archives provide an offset for the table-data entry, not an index from column values to row positions. Therefore:
+This is not indexed database lookup. PostgreSQL Custom Format provides an offset for the table-data entry, not a map from column values to row positions.
 
-- selecting the table is efficient after TOC parsing;
-- searching within that table is sequential;
+Therefore:
+
+- table selection is efficient after TOC parsing;
+- search within that table is sequential;
 - a match near the beginning can stop early;
-- a missing match or match near the end may require decompressing and parsing the complete selected table unless a configured scan budget ends the operation first;
-- worst-case unrestricted search work is `O(selected table data size)`;
-- memory remains bounded by normal streaming buffers plus the current row and, on success, one owned result row.
+- a missing or late match may process the complete selected entry unless a budget stops it;
+- worst-case unrestricted work is `O(selected table-data size)`;
+- memory remains bounded by metadata/indexes, streaming buffers, the current row, and one owned matched row.
 
-A SQL-like `WHERE` parser is not required. v0.1 exposes a Rust predicate API plus column-index helpers so callers can express equality and other application-specific conditions without adding SQL parsing to the core.
+A SQL-like `WHERE` parser is not required. Callers use a Rust predicate and column-index helpers.
 
-## 10. Ownership and allocation strategy
+## 12. Ownership and allocation strategy
 
-Normal operation should scale approximately with:
+Normal operation scales approximately with:
 
 ```text
 TOC metadata
@@ -322,33 +384,34 @@ TOC metadata
 + compressed input buffer
 + decompression buffer
 + current COPY row
-+ one OwnedRow when first-match returns a result
++ one OwnedRow when first-match succeeds
 ```
 
 The design rejects:
 
 - loading the whole archive into memory;
 - loading every data entry during `Archive::open`;
-- loading a complete table merely to evaluate a row predicate;
-- allocating based solely on an untrusted declared string/row length without a configured or hard safety check;
-- copying decompressed entry bytes merely to expose a streaming API.
+- loading a complete table to evaluate a predicate;
+- allocating from an untrusted declared length without a configured or hard check;
+- copying decompressed entry bytes merely to expose a streaming API;
+- allocating every row solely to implement standard `Iterator`.
 
-The borrowed `Row` remains the high-performance iteration representation. `OwnedRow` exists specifically for results that must outlive the row reader's reusable buffer, including `find_first`.
+## 13. Compression boundary
 
-## 11. Compression boundary
+Compression is an internal streaming boundary. Archive framing identifies the algorithm; a small abstraction returns a `Read` implementation for decompressed bytes.
 
-Compression is an internal streaming boundary. Archive framing code identifies the configured algorithm; a small abstraction returns a `Read` implementation for decompressed bytes.
-
-Planned v0.1 algorithms:
+Final v0.1 algorithms:
 
 - none;
 - gzip;
 - LZ4;
 - Zstandard.
 
-The project prefers Pure Rust implementations when their correctness and maintenance quality are acceptable. Compression dependencies are not part of the public API.
+The first end-to-end slice implements none and gzip for archive 1.16. LZ4, Zstandard, and older version representations follow after the row-search path is working.
 
-## 12. Error architecture
+Compression dependencies are not part of the public API. Backend selection is evidence-based rather than governed by an ambiguous “Pure Rust” label.
+
+## 14. Error architecture
 
 Errors are typed and preserve useful context.
 
@@ -364,95 +427,115 @@ Representative categories:
 - malformed TOC entry;
 - invalid data offset;
 - unexpected data block type;
-- dump-id mismatch after seek;
+- dump-ID mismatch after seek;
 - unsupported compression;
 - decompression failure;
 - malformed COPY data;
 - COPY column metadata unavailable or malformed;
 - unsupported table-data representation;
 - unknown requested column;
-- resource limit exceeded, including scan-work budgets;
-- arithmetic overflow.
+- structural, row-scan, or raw-output resource limit exceeded;
+- arithmetic overflow;
+- explicit UTF-8 conversion failure.
 
 The public error enum is `#[non_exhaustive]` before v1.0.
 
-## 13. Resource limits
+Errors include offset, dump ID, object, row, consumed work, or limit context when meaningful. Callers do not parse `Display` strings to identify categories.
 
-Untrusted metadata and decompressed rows can create denial-of-service behavior. Limits are part of the initial architecture rather than an afterthought.
+## 15. Resource limits and accounting
 
-Structural/per-item configuration is equivalent in purpose to:
+Untrusted metadata and decompressed content can create denial-of-service behavior. Limits are part of the architecture rather than an afterthought.
+
+### Structural/per-item limits
+
+Equivalent in purpose to:
 
 ```rust
 pub struct Limits {
-    pub max_toc_entries: usize,
-    pub max_string_bytes: usize,
-    pub max_dependencies_per_entry: usize,
-    pub max_row_bytes: usize,
-    pub max_fields_per_row: usize,
+    // maximum TOC entries
+    // maximum metadata string bytes
+    // maximum dependencies per entry
+    // maximum row bytes
+    // maximum fields per row
 }
 ```
 
-Long-running scan work is separately bounded when requested:
+### Row-scan limits
+
+Equivalent in purpose to:
 
 ```rust
 pub struct ScanLimits {
-    pub max_rows: Option<u64>,
-    pub max_decompressed_bytes: Option<u64>,
+    // optional maximum complete rows
+    // optional maximum decompressed bytes consumed by the row parser
 }
 ```
 
-Exact defaults are decided during implementation from compatibility fixtures, usability, and fuzzing evidence.
+Accounting rules:
 
-The distinction is intentional:
+- `max_rows = N` permits at most `N` complete rows to be yielded/evaluated;
+- a row that crosses a budget is not yielded;
+- the matched row counts;
+- parser-consumed decompressed bytes include separators and terminators;
+- decoder/`BufRead` read-ahead does not count until consumed;
+- counters use checked arithmetic;
+- early match does not consume later rows.
 
-- structural limits bound counts and individual allocations;
-- scan limits bound total CPU/decompression work for an operation;
-- neither mechanism requires buffering the complete archive or entry;
-- `OwnedRow` creation remains bounded by row and field limits;
-- scan counters use checked arithmetic and return typed errors when configured budgets are exceeded.
+### Raw extraction limits
 
-## 14. Version policy
+Equivalent in purpose to:
 
-v0.1 targets archive versions 1.14, 1.15, and 1.16.
+```rust
+pub struct EntryReadLimits {
+    // optional maximum decompressed bytes returned or copied
+}
+```
 
-Version-specific fields are decoded deliberately. In particular, archive 1.15 introduced explicit compression-algorithm information in the header and 1.16 introduced additional large-object metadata/relkind-related archive changes in PostgreSQL upstream.
+Raw limit exhaustion is an error, not successful truncation.
+
+Exact defaults are decided from compatibility fixtures, usability, fuzzing, and CLI needs.
+
+## 16. Version and compatibility policy
+
+The final v0.1 target is archive versions 1.14, 1.15, and 1.16.
+
+Version-specific fields are decoded deliberately. In particular, archive 1.15 introduced explicit compression-algorithm information and 1.16 introduced additional large-object metadata/relkind-related changes.
 
 Unsupported versions return a typed error rather than being parsed optimistically.
 
-Support for older versions or other pg_dump archive formats is not required by the initial product direction and may be considered only if there is demonstrated demand.
+Delivery begins with archive 1.16. Intended versus fixture-verified support is tracked in `docs/COMPATIBILITY.md`; the narrow alpha must not be described as complete v0.1 compatibility.
 
-Intended versus fixture-verified support is tracked in `docs/COMPATIBILITY.md`.
-
-## 15. Safety policy
+## 17. Safety policy
 
 Every archive byte is untrusted.
 
 Initial rules:
 
 - no project-authored `unsafe` without a separately accepted ADR;
-- checked integer conversions and offset arithmetic;
+- checked integer conversions, offsets, and counters;
 - no unchecked indexing into attacker-controlled buffers;
-- no panic for structurally malformed archive input;
-- validate a sought data block's type and dump ID before consuming payload;
+- no parser panic for structurally malformed input;
+- validate a sought block's type and dump ID before consuming payload;
 - limit metadata counts, string sizes, dependency counts, row sizes, and field counts;
-- provide scan-work budgets for total rows/decompressed bytes when callers need hostile-input protection;
-- keep first-match filtering on the same bounded streaming path as normal row iteration;
-- reject unsupported logical table-data representation before invoking the COPY parser;
-- fuzz parser boundaries before a stable release.
+- provide row-scan budgets for total rows/decompressed bytes;
+- provide a bounded raw decompression path;
+- keep first-match filtering on the same bounded path as iteration;
+- reject unsupported representations before COPY parsing;
+- fuzz parser and accounting boundaries before stable release.
 
-The no-panic invariant does not claim recoverability from global allocator exhaustion or OS-level I/O failures.
+The no-panic invariant does not claim recovery from global allocator exhaustion or OS-level failures.
 
-## 16. Concurrency strategy
+## 18. Concurrency strategy
 
 v0.1 does not require parallel extraction.
 
-The architecture must, however, avoid global mutable state that would prevent future parallel extraction. A later file-oriented API may reopen or clone file handles so independent workers can seek to different data entries concurrently.
+The architecture avoids global mutable state that would prevent future parallel extraction. A later file-oriented API may reopen or clone file handles so independent workers can seek to different entries.
 
-Parallel extraction must be benchmarked; it is not automatically beneficial for compressed input or a single storage device.
+Parallel extraction must be benchmarked; it is not automatically beneficial for compressed input or one storage device.
 
-## 17. CLI as a library consumer
+## 19. CLI as an early library consumer
 
-The CLI must not duplicate parser logic. Its planned v0.1 commands are:
+The CLI must not duplicate parser logic. Planned v0.1 commands are:
 
 ```text
 inspect
@@ -461,59 +544,89 @@ extract
 find
 ```
 
-`find` is a minimal equality-oriented first-match command equivalent in purpose to:
+`find` is included in the first vertical slice and delegates to table lookup, streaming decompression, COPY parsing, column lookup, limits, and `find_first`.
+
+`extract` writes the decompressed selected table-data body as binary-safe bytes. It does not add DDL or a COPY statement wrapper and uses the bounded raw-copy path.
+
+v0.1 CLI identifiers and values are UTF-8, while the Rust API remains byte-oriented.
+
+Exit behavior:
 
 ```text
-pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+0  success / find matched
+1  find completed with no match
+2+ failure
 ```
 
-It resolves the column and delegates to the same `TableRowReader` / `find_first` path used by Rust callers. It does not introduce a SQL parser or condition DSL.
+Diagnostics remain on stderr so binary stdout is not corrupted.
 
-Practical scan-limit flags should map directly to the core `ScanLimits` concept.
+## 20. Vertical-slice delivery
 
-## 18. Testing architecture
+The first usable alpha is deliberately narrow:
 
-Tests are layered:
+```text
+workspace + CI
+    -> archive 1.16 header
+    -> minimum TOC/table lookup
+    -> validated entry seek
+    -> none/gzip streaming
+    -> COPY rows + columns
+    -> find_first
+    -> pgdumpx find
+```
+
+After this path works with official fixtures, development expands to full limits, raw extraction semantics, archive 1.14/1.15, LZ4/Zstandard, fuzzing, and benchmarks.
+
+The final v0.1 scope remains unchanged. This sequence exposes user value and integration risks earlier than a horizontal layer-by-layer roadmap.
+
+## 21. Testing architecture
+
+Tests are layered.
 
 ### Primitive unit tests
 
 Integer, offset, string, version, timestamp, and bounds behavior.
 
-### Format fixtures
+### Official format fixtures
 
-Custom archives generated by supported PostgreSQL `pg_dump` versions, with none/gzip/LZ4/Zstandard variants where PostgreSQL supports them.
+Custom archives are generated by supported official `pg_dump` versions.
 
-Verified combinations are reflected in `docs/COMPATIBILITY.md`; targets without fixtures must not be presented as verified.
+Every valid fixture records:
+
+- generator version;
+- exact command;
+- checksum;
+- archive version/compression;
+- fixture purpose;
+- expected objects.
+
+Verified combinations are reflected in `docs/COMPATIBILITY.md`; targets without passing production-path fixtures are not presented as verified.
 
 ### Hand-built malformed fixtures
 
-Truncation, invalid lengths, offset overflow, wrong block type, dump-id mismatch, unsupported version, and resource-budget exhaustion.
+Truncation, impossible lengths, overflow, wrong block type, dump-ID mismatch, unsupported version, malformed COPY data, and resource-budget exhaustion.
+
+Hand-built bytes are not the sole evidence for valid-format behavior.
+
+### Streaming and resource tests
+
+Cover arbitrary short reads, none/gzip/LZ4/Zstandard boundaries, raw output below/exactly/above limits, row scan below/exactly/above limits, parser-consumed byte accounting independent of read-ahead buffer size, and no silent truncation.
 
 ### COPY parser tests
 
-NULL markers, escapes, tabs, backslashes, control characters, empty fields, terminator handling, non-UTF-8 bytes, large-row limits, malformed escapes, supported COPY column-list parsing, and explicit rejection of INSERT-based row representations.
+NULL, empty values, tabs, backslashes, numeric/control escapes, terminator, non-UTF-8 bytes, row/field limits, malformed escapes, supported column lists, missing/unavailable metadata, and explicit rejection of INSERT-based representations.
 
 ### First-match tests
 
-Cover at least:
+Cover column lookup, first/middle/late/absent match, first of multiple matches, early termination, owned-row lifetime, non-UTF-8 values, and all resource boundaries.
 
-- column lookup by name;
-- valid metadata with missing column;
-- unavailable/malformed column metadata;
-- first-row match;
-- middle/late match;
-- no match;
-- multiple matching rows return the first only;
-- early termination after a match using an instrumented reader;
-- matched `OwnedRow` remains valid after the row reader is dropped;
-- non-UTF-8 match values;
-- row/field resource limits during filtering;
-- max-row scan budget;
-- max-decompressed-byte scan budget.
+### CLI integration tests
 
-### Differential/integration checks
+Cover binary `extract` stdout, diagnostics on stderr, UTF-8 argument behavior, and exit `0`/`1`/`2+` semantics.
 
-Where practical, compare extracted bytes or rows with `pg_restore` output for the same entry.
+### Differential checks
+
+Where practical, compare selected decompressed bytes or logical rows with `pg_restore` output and adjacent libraries for equivalent operations.
 
 ### Fuzzing
 
@@ -521,33 +634,36 @@ Primary invariants:
 
 ```text
 arbitrary metadata bytes -> Ok(...) or typed Err(...), never parser panic
+arbitrary framed bytes   -> output or typed Err(...), never parser panic
 arbitrary COPY bytes     -> rows or typed Err(...), never parser panic
 ```
 
-## 19. Performance policy
+## 22. Performance policy
 
 Performance is a product requirement but not a correctness exception.
 
-Benchmarks should measure at least:
+Benchmarks measure at least:
 
-- archive open / TOC parse time;
-- peak RSS while opening large archives;
-- single-entry extraction throughput;
+- archive open / TOC time;
+- peak RSS during open;
+- selected-entry extraction throughput and peak RSS;
 - COPY row parsing throughput;
-- first-match filtering with matches near the beginning, middle, end, and absent;
+- first-match positions near beginning, middle, end, and absent;
 - compression-specific throughput;
-- peak RSS during extraction/search;
-- overhead of enabled scan-work accounting.
+- raw-output and row-scan accounting overhead.
 
-Comparative benchmarks against relevant PostgreSQL tools and libraries may be included when they answer a concrete performance question, but README claims must be based on reproducible results.
+Published benchmark reports record hardware, OS, commit, fixture/generator, archive version, compression, command/API path, match position, warm-up/repetition method, and measurement tool.
 
-## 20. Accepted ADRs
+Comparisons against PostgreSQL tools or libraries are included only when they answer a concrete question and semantic differences are stated.
 
-- ADR 0001 — Pure Rust read-only engine
+## 23. Accepted ADRs
+
+- ADR 0001 — Pure Rust read-only engine (**superseded by ADR 0007**)
 - ADR 0002 — Custom format first
 - ADR 0003 — Indexed metadata plus streaming entry readers
 - ADR 0004 — v0.1 public API and compatibility policy
 - ADR 0005 — Streaming first-match row filtering
 - ADR 0006 — v0.1 API and scan-work refinements
+- ADR 0007 — Standalone row scanner and vertical-slice delivery
 
-Intentional architectural divergence should be recorded in a new ADR.
+Intentional architectural divergence must be recorded in a new ADR.

@@ -1,7 +1,8 @@
 # ADR 0001: Build a Pure Rust read-only engine
 
-- Status: Accepted
+- Status: Superseded by [ADR 0007](0007-standalone-row-scanner-and-vertical-slices.md)
 - Date: 2026-08-19
+- Superseded: 2026-08-19
 
 ## Context
 
@@ -39,3 +40,7 @@ Pure Rust does not mean every transitive dependency is guaranteed to contain no 
 - format compatibility logic must be maintained as PostgreSQL evolves;
 - compression implementations may differ in performance from native libraries;
 - archive writing and repair workflows are intentionally unavailable.
+
+## Supersession note
+
+The original decision used “Pure Rust” without defining whether it prohibited every native or FFI-backed transitive dependency. ADR 0007 retains the read-only, standalone Rust engine and no-PostgreSQL-runtime goals, but replaces that ambiguous label with explicit dependency and product-boundary requirements.

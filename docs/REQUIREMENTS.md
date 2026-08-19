@@ -6,9 +6,11 @@ This document defines the functional, safety, compatibility, and quality contrac
 
 ## 1. Product definition
 
-pgdumpx is a read-only Pure Rust library for inspecting and selectively extracting data from PostgreSQL custom-format (`pg_dump -Fc`) archives.
+pgdumpx is a read-only Rust library and CLI for bounded, byte-oriented row inspection of PostgreSQL custom-format (`pg_dump -Fc`) archives.
 
-The primary product is the reusable Rust library. The CLI is a separate consumer of that library.
+The primary product is the reusable Rust library. The CLI is a consumer and an end-to-end acceptance path for the same library behavior.
+
+The default build must not require a running PostgreSQL server, `libpq`, `pg_restore`, or another PostgreSQL executable at runtime. The project does not use “Pure Rust” as a blanket guarantee about every transitive dependency.
 
 ## 2. Goals
 
@@ -32,17 +34,27 @@ Given a table and a row predicate, callers must be able to scan the selected tab
 
 Malformed archive or COPY data must produce a typed error rather than unchecked memory access, arithmetic wraparound, or parser panic.
 
-### G-006 — Reusable core
+### G-006 — Reusable, runtime-independent core
 
-Archive behavior must not depend on terminal output, Python, Arrow, a PostgreSQL connection, SQL execution, or a SQL query parser.
+Archive behavior must not depend on terminal output, Python, Arrow, a PostgreSQL connection, SQL execution, a SQL query parser, `libpq`, or invocation of `pg_restore`.
 
 ### G-007 — Measurable performance
 
 The project must include repeatable benchmarks before making comparative performance claims.
 
-### G-008 — Bounded scan work
+### G-008 — Bounded row-scan work
 
 The library must provide a way for applications to bound total row-scan/decompression work in addition to bounding individual metadata and row allocations.
+
+### G-009 — Bounded raw extraction
+
+The library must provide a high-level way to bound decompressed bytes when extracting a raw selected entry. Callers must not be forced to reimplement safe output accounting around a low-level `Read` adapter.
+
+### G-010 — Early end-to-end value
+
+Implementation must prioritize a narrow archive 1.16 + none/gzip path that reaches COPY rows, column lookup, `find_first`, and `pgdumpx find` before broad compatibility expansion.
+
+This goal changes delivery order, not the final v0.1 compatibility target.
 
 ## 3. Non-goals for v0.1
 
@@ -60,6 +72,9 @@ v0.1 will not:
 - provide a persistent row-level index or guarantee constant-time row lookup;
 - expose Arrow, Polars, Parquet, or Python APIs from the core crate;
 - promise parallel extraction;
+- generate a complete restorable SQL script from `extract`;
+- provide arbitrary byte-literal CLI query syntax;
+- promise that every transitive dependency contains no native code or internal `unsafe`;
 - promise compatibility with malformed archives accepted accidentally by a particular PostgreSQL release.
 
 ## 4. Functional requirements
@@ -84,17 +99,17 @@ The parser must decode the archive version, integer-size field, offset-size fiel
 
 ### FR-004 — Supported archive versions
 
-v0.1 must support archive versions 1.14, 1.15, and 1.16.
+The final v0.1 release must support archive versions 1.14, 1.15, and 1.16.
 
-A newer or older unsupported version must fail explicitly with `UnsupportedArchiveVersion` or equivalent. The parser must not guess a newer format's layout.
+Implementation may initially verify only archive 1.16 while the first vertical slice is developed. Any newer or older unsupported version must fail explicitly with `UnsupportedArchiveVersion` or equivalent. The parser must not guess a newer format's layout.
 
 ### FR-005 — Parse archive metadata
 
-The parser must decode version-appropriate archive metadata required for inspection, including creation timestamp fields, database name, originating PostgreSQL server version string, and `pg_dump` version string where present in the supported versions.
+The parser must decode version-appropriate metadata required for inspection, including creation timestamp fields, database name, originating PostgreSQL server version string, and `pg_dump` version string where present.
 
 ### FR-006 — Parse TOC entries
 
-The parser must parse the complete TOC metadata required to identify and relate objects, including at least:
+The parser must parse the TOC metadata required to identify and relate objects, including at least:
 
 - dump ID;
 - whether the entry owns dump data;
@@ -112,13 +127,15 @@ The parser must parse the complete TOC metadata required to identify and relate 
 
 Version-conditional fields must be handled explicitly.
 
+The first vertical slice may implement the minimum 1.16 fields required for table lookup and row access, but the v0.1 release must satisfy the complete supported-version requirements.
+
 ### FR-007 — Build entry indexes
 
 The archive must support efficient lookup by dump ID and practical table/table-data lookup by `(schema, name)` without rescanning payload data.
 
 These indexes are entry-level. v0.1 does not require an index mapping field values to individual rows.
 
-### FR-008 — Preserve raw metadata bytes where text encoding is not guaranteed
+### FR-008 — Preserve raw metadata bytes where encoding is not guaranteed
 
 The lowest-level parser must not require arbitrary archive strings or table data to be valid UTF-8 merely for the archive to be structurally readable.
 
@@ -136,16 +153,37 @@ After seeking, the parser must verify the custom block type and encoded dump ID 
 
 The library must provide a `Read`-compatible streaming view of decompressed table-data bytes without buffering the complete entry.
 
+A low-level unlimited reader may exist for trusted callers, but the library must also expose a bounded path equivalent in purpose to:
+
+```rust
+pub fn entry_reader_with_limits(
+    &mut self,
+    id: DumpId,
+    limits: EntryReadLimits,
+) -> Result<Option<EntryDataReader<'_, R>>, PgDumpError>;
+
+pub fn copy_entry_to<W: Write>(
+    &mut self,
+    id: DumpId,
+    writer: &mut W,
+    limits: EntryReadLimits,
+) -> Result<u64, PgDumpError>;
+```
+
+Raw extraction limits count decompressed bytes returned or copied. Exceeding the limit must return an error rather than reporting successful truncation.
+
 ### FR-012 — Compression support
 
-v0.1 must support and test:
+The final v0.1 release must support and test:
 
 - none;
 - gzip;
 - LZ4;
 - Zstandard.
 
-The implementation must honor archive-version-specific compression representation rather than treating all versions identically.
+The first vertical slice targets none and gzip. The implementation must honor archive-version-specific compression representation rather than treating all versions identically.
+
+Compression backend choices must not leak dependency-specific types into the public archive API. Material native build/runtime constraints must be documented.
 
 ### FR-013 — Table/table-data relationship
 
@@ -153,7 +191,7 @@ The public model must make it convenient to locate the table-data entry associat
 
 ### FR-014 — COPY text rows
 
-The library must provide a row iterator/reader for supported table-data entries encoded in PostgreSQL COPY text form.
+The library must provide a row reader for supported table-data entries encoded in PostgreSQL COPY text form.
 
 The parser must correctly handle at least:
 
@@ -203,9 +241,23 @@ pub fn column_index(
 ) -> Result<Option<usize>, PgDumpError>;
 ```
 
-If table rows are positionally readable but the supported column layout cannot be derived, positional row iteration may remain available, while column-aware lookup/filtering must fail explicitly with a typed error rather than guessing field names.
+If rows are positionally readable but the supported column layout cannot be derived, positional iteration may remain available while column-aware lookup/filtering fails explicitly rather than guessing names.
 
-### FR-018 — First-match predicate scan
+### FR-018 — Lending row API
+
+Normal row iteration must return a borrowed row backed by a reusable reader buffer or an equivalent allocation-conscious representation.
+
+A method equivalent in purpose to:
+
+```rust
+pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError>;
+```
+
+is acceptable and intentionally need not implement standard `Iterator` when the yielded row borrows from the same object that must be mutably advanced.
+
+The lifetime boundary must be documented: a borrowed row remains valid only until the next mutable row-reader operation.
+
+### FR-019 — First-match predicate scan
 
 The row reader must provide an operation equivalent in purpose to:
 
@@ -223,58 +275,73 @@ Semantics:
 - rows are evaluated in archive/COPY order;
 - the first row whose predicate returns `true` is returned;
 - scanning stops immediately after the first match is fully parsed;
-- if no row matches, the result is `Ok(None)` after the selected table-data stream is exhausted;
-- the operation must use the same streaming, decompression, parsing, and resource-limit path as normal row iteration;
-- the operation must not allocate or buffer the complete table.
+- if no row matches, the result is `Ok(None)` after the selected stream is exhausted;
+- the operation uses the same streaming, decompression, parsing, and resource-limit path as normal row iteration;
+- the operation does not allocate or buffer the complete table.
 
-### FR-019 — Owned first-match result
+### FR-020 — Owned first-match result
 
-A successful first-match operation must return an owned row representation whose fields remain valid after the streaming row reader advances or is dropped.
+A successful first-match operation must return an owned row whose fields remain valid after the streaming reader advances or is dropped.
 
-The owned result remains byte-oriented and is bounded by the same `max_row_bytes` and `max_fields_per_row` limits as the borrowed row representation.
+The owned result remains byte-oriented and is bounded by the same row-size and field-count limits as the borrowed row.
 
-### FR-020 — Explicit row-search performance semantics
+### FR-021 — Explicit row-search performance semantics
 
-The public documentation must state that custom archives provide table-data entry offsets, not row-level indexes.
+Public documentation must state that custom archives provide table-data entry offsets, not row-level indexes.
 
 Therefore first-match lookup is a sequential scan within the selected table:
 
 - selecting the table-data entry uses parsed TOC/index metadata;
-- row matching requires streaming decompression and row parsing from the beginning of that entry;
+- row matching requires streaming decompression and parsing from the beginning of that entry;
 - a match may terminate early;
-- a missing match or late match may require reading the complete selected table-data entry;
-- worst-case work is proportional to the selected table's data size.
+- a missing or late match may read the complete selected entry;
+- worst-case unrestricted work is proportional to selected table-data size.
 
 The project must not describe this API as database-index lookup or imply constant-time row access.
 
-### FR-021 — Explicit unsupported table-data representation
+### FR-022 — Explicit unsupported table-data representation
 
-Before row-aware parsing, pgdumpx must determine whether the selected entry is supported as COPY text from the available TOC/table-data metadata.
+Before row-aware parsing, pgdumpx must determine whether the selected entry is supported as COPY text from available TOC/table-data metadata.
 
 INSERT-based dump modes such as `--inserts`, `--column-inserts`, and INSERT output produced through `--rows-per-insert` must not be sent through the COPY text parser.
 
-Row-aware access to such data must return a typed error equivalent to `UnsupportedTableDataRepresentation`. Raw entry extraction may remain available if the archive entry itself is readable.
+Row-aware access to such data returns a typed error equivalent to `UnsupportedTableDataRepresentation`. Raw entry extraction may remain available if the archive entry itself is readable.
 
-### FR-022 — Scan work budgets
+### FR-023 — Scan work budgets
 
 Long-running row operations must support configurable work budgets equivalent in purpose to:
 
 ```rust
 pub struct ScanLimits {
-    pub max_rows: Option<u64>,
-    pub max_decompressed_bytes: Option<u64>,
+    // private
 }
 ```
 
-Exact naming and defaults may evolve during TDD.
+with maximum rows and maximum decompressed bytes.
 
-Requirements:
+Required accounting semantics:
 
-- row count is checked using overflow-safe accounting;
-- decompressed-byte accounting applies to bytes consumed for the selected row-aware operation;
-- exceeding a configured budget returns a typed resource-limit error;
-- budget enforcement must not require buffering the complete entry;
-- the library must expose this mechanism directly rather than requiring every caller to reimplement the scan loop.
+- row counters use checked arithmetic;
+- `max_rows = N` permits at most `N` complete rows to be yielded or evaluated;
+- a row that would cross a row or byte budget is not yielded or passed to the predicate;
+- the matching row counts toward both budgets;
+- decompressed-byte accounting applies to bytes consumed by the row parser, including separators and terminators;
+- unread decoder/reader lookahead does not count merely because it was buffered;
+- exceeding a budget returns a typed resource-limit error;
+- budget enforcement does not require buffering the complete entry;
+- the library exposes this mechanism directly rather than requiring callers to recreate the scan loop.
+
+### FR-024 — Encapsulated public metadata
+
+Public archive metadata types such as `ArchiveHeader`, `ArchiveVersion`, `DumpId`, `TocEntry`, and `Column` should use private fields with accessors unless direct construction is a deliberate requirement.
+
+Public enums expected to grow with compatibility should be `#[non_exhaustive]` before v1.0.
+
+### FR-025 — Standalone read path
+
+The production archive/COPY path must be implemented within pgdumpx rather than delegating mandatory behavior to another dump library.
+
+Other libraries may be used as research references or differential-test comparators. This requirement exists so byte preservation, limits, integrity checks, and error semantics remain under one coherent contract.
 
 ## 5. CLI requirements
 
@@ -300,7 +367,11 @@ List TOC entries with stable, understandable identifiers and schema/name context
 pgdumpx extract <FILE> <SCHEMA.TABLE>
 ```
 
-Stream the selected table's decompressed entry data to stdout by default. Structured conversion options are deferred unless they naturally fit v0.1.
+Write the selected entry's **decompressed table-data body** to stdout as binary-safe bytes.
+
+The command must not imply that output is a complete restorable SQL script. It does not add schema DDL, a `COPY` statement wrapper, or unrelated entries.
+
+The command must use the library's bounded raw extraction path. A configured limit is an error boundary; output must not be silently reported as successful truncation.
 
 ### CLI-004 — Find first matching field value
 
@@ -308,19 +379,33 @@ Stream the selected table's decompressed entry data to stdout by default. Struct
 pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
-The command must resolve the column through the same COPY column metadata path as the library and return the first row whose selected field equals the provided byte/string value according to the CLI's documented encoding rules.
+The command resolves the column through the same COPY metadata path as the library and returns the first row whose selected logical field bytes equal the UTF-8 bytes of `<VALUE>`.
 
-It must use the core streaming `find_first` path rather than implementing a separate parser.
+v0.1 command-line schema, table, column, and value arguments are UTF-8. The Rust API remains byte-oriented. Arbitrary byte-literal CLI input is deferred.
 
-The command is intentionally narrow. A SQL `WHERE` parser or general condition DSL is not required for v0.1.
+The command uses the core streaming `find_first` path rather than implementing a separate parser.
 
-The CLI should expose practical scan-budget options once exact names are established, for example maximum rows and/or maximum decompressed bytes.
+The command is intentionally narrow. A SQL `WHERE` parser or general condition DSL is not required.
+
+The CLI should expose practical scan-budget options, including maximum rows and/or maximum decompressed bytes.
 
 ### CLI-005 — Exit behavior
 
-I/O, format, decompression, COPY, integrity, unsupported-representation, unknown-column, or resource-limit errors must result in a non-zero exit code and diagnostics on stderr.
+Stable behavior:
 
-A no-match result for `find` must have documented, stable behavior that is distinguishable from parser failure.
+```text
+0  find matched a row; other commands completed successfully
+1  find completed successfully but no row matched
+2+ usage, I/O, format, integrity, decompression, COPY, encoding, unknown-column, unsupported-representation, or resource error
+```
+
+Exact subdivision of error codes `2+` may evolve, but no-match must remain distinct from parser/runtime failure.
+
+Diagnostics go to stderr. Binary `extract` output goes to stdout without diagnostic contamination.
+
+### CLI-006 — Shared implementation
+
+All archive parsing, entry streaming, COPY parsing, column lookup, limit accounting, and first-match behavior must delegate to the public or intended-public library path. The CLI must not maintain a second parser.
 
 ## 6. Error requirements
 
@@ -345,11 +430,13 @@ Expected categories include:
 - malformed or unavailable COPY column metadata;
 - unsupported table-data representation;
 - unknown requested column where a convenience API requires one;
-- resource limit exceeded, including scan budgets;
+- resource limit exceeded, including structural, scan, and raw extraction budgets;
 - arithmetic overflow;
-- UTF-8 conversion failure for explicit string accessors.
+- UTF-8 conversion failure for explicit string accessors or CLI input handling.
 
-Errors should include byte offsets, dump IDs, object context, row numbers, or resource-limit context where meaningful.
+Errors should include byte offsets, dump IDs, object context, row numbers, consumed work, or limit context where meaningful.
+
+A limit-aware `Read` adapter must preserve the typed pgdumpx limit error as an error source so high-level APIs can map it back to `PgDumpError`.
 
 ## 7. Resource and safety requirements
 
@@ -359,7 +446,7 @@ Normal archive opening must not allocate a buffer proportional to the complete a
 
 ### SAFE-002 — No whole-table allocation for streaming reads
 
-`EntryDataReader`, row iteration, and first-match filtering must not require a complete data entry in memory.
+`EntryDataReader`, row iteration, first-match filtering, and CLI extraction must not require a complete data entry in memory.
 
 ### SAFE-003 — Checked arithmetic
 
@@ -383,25 +470,31 @@ Structurally malformed input must return `Ok` or `Err`; it must not cause a pars
 
 ### SAFE-008 — `unsafe` policy
 
-The initial implementation uses no project-authored `unsafe`. Introducing it requires an accepted ADR explaining invariants and testing.
+The initial implementation uses no project-authored `unsafe`. Introducing it requires an accepted ADR explaining invariants, alternatives, and verification.
 
 ### SAFE-009 — Decompression resource awareness
 
-The API and documentation must distinguish individual allocation limits from total scan/decompression work.
-
-Callers processing untrusted input must have a supported way to bound total rows and/or decompressed bytes consumed by a row scan.
+The API and documentation must distinguish individual allocation limits from total row-scan work and raw decompressed output.
 
 ### SAFE-010 — First-match result allocation
 
-Creating an `OwnedRow` for a match must copy only the matched row and must remain bounded by the configured row and field limits.
+Creating an `OwnedRow` for a match copies only the matched row and remains bounded by configured row and field limits.
 
 ### SAFE-011 — Scan budget enforcement
 
-Configured scan budgets must be checked on the normal streaming path and terminate processing with a typed error when exceeded. A scan budget is not permission to pre-decompress or pre-count the complete entry.
+Configured scan budgets are checked on the normal streaming path and terminate with a typed error when exceeded. A scan budget is not permission to pre-decompress or pre-count the complete entry.
+
+### SAFE-012 — Raw extraction budget enforcement
+
+The library and CLI provide a bounded raw extraction path. Crossing the configured decompressed-byte limit returns an error and is distinguishable from normal EOF.
+
+### SAFE-013 — Dependency boundary disclosure
+
+The default build requires no PostgreSQL runtime component. Compression or optional dependencies that introduce material native build/runtime constraints must be documented and, where practical, feature-gated.
 
 ## 8. Compatibility requirements
 
-Primary compatibility source is PostgreSQL upstream behavior for the supported archive versions.
+Primary compatibility source is PostgreSQL upstream behavior for supported archive versions.
 
 Relevant upstream files include:
 
@@ -410,11 +503,23 @@ Relevant upstream files include:
 - `src/bin/pg_dump/pg_backup_custom.c`;
 - `src/bin/pg_dump/compress_io.c`.
 
-Reference fixtures should be generated by official PostgreSQL `pg_dump`, not invented solely from reverse-engineered assumptions.
+Reference fixtures must be generated by official PostgreSQL `pg_dump`, not invented solely from reverse-engineered assumptions.
 
 Known version conditions that affect supported parsing must be recorded in `docs/PG-DUMP-CUSTOM-FORMAT.md` and tests.
 
-`docs/COMPATIBILITY.md` is the public matrix separating intended support from fixture-verified support. A combination must not be described as verified until reference fixtures and tests support that claim.
+`docs/COMPATIBILITY.md` is the public matrix separating intended support from fixture-verified support. A combination must not be described as verified until production-path tests support that claim.
+
+Every valid-format fixture must record provenance equivalent in purpose to:
+
+- stable fixture name/path;
+- archive format version;
+- exact `pg_dump` generator version;
+- exact generation command;
+- checksum;
+- fixture purpose;
+- expected schemas/tables or entries.
+
+Malformed hand-built fixtures are allowed for invalid states that official tools cannot generate, but they must not be the sole evidence for valid behavior.
 
 ## 9. Testing requirements
 
@@ -423,7 +528,7 @@ The test suite should cover at least:
 - invalid/truncated `PGDMP` magic;
 - versions 1.14, 1.15, and 1.16;
 - unsupported older/newer versions;
-- varying integer and offset sizes supported by the upstream format;
+- varying integer and offset sizes supported by upstream behavior;
 - truncated archive metadata;
 - zero and multiple TOC entries;
 - large/invalid string lengths;
@@ -434,7 +539,9 @@ The test suite should cover at least:
 - dump-id mismatch;
 - uncompressed entry streaming;
 - gzip/LZ4/Zstandard entry streaming;
-- short reads across framing boundaries;
+- short reads across framing and decoder boundaries;
+- bounded raw entry extraction at below/exactly/above-limit sizes;
+- raw limit exhaustion distinguishable from EOF and not reported as successful truncation;
 - table/table-data lookup;
 - COPY NULL, empty string, tabs, escapes, embedded escaped control characters, and terminator;
 - non-UTF-8 field bytes;
@@ -442,10 +549,11 @@ The test suite should cover at least:
 - malformed COPY escapes;
 - supported COPY column-list parsing;
 - byte-oriented column-name lookup;
-- metadata valid + column present;
-- metadata valid + column absent;
-- column metadata unavailable/malformed behavior;
-- INSERT-based table-data representation rejected explicitly by row APIs;
+- valid metadata + column present;
+- valid metadata + column absent;
+- unavailable/malformed column metadata;
+- INSERT-based representation rejected explicitly by row APIs;
+- borrowed row invalidation/lifetime behavior documented through compile-time/API tests where practical;
 - first-row first-match;
 - middle/late first-match;
 - no-match result;
@@ -453,11 +561,16 @@ The test suite should cover at least:
 - early stop after the first match using an instrumented reader;
 - owned matched row surviving reader drop;
 - non-UTF-8 predicate values;
-- first-match behavior under row/field resource limits;
-- max-row scan budget exceeded;
-- max-decompressed-byte scan budget exceeded;
-- arbitrary-input no-panic fuzzing for metadata and COPY parsing;
-- fixture comparison with `pg_restore` where practical.
+- first-match behavior under row/field limits;
+- max-row budget below/exactly/above the boundary;
+- max-decompressed-byte budget below/exactly/above the boundary;
+- parser-consumed byte accounting independent of decoder read-ahead buffer size;
+- CLI `extract` binary stdout and stderr separation;
+- CLI UTF-8 input boundary;
+- CLI exit 0/1/2+ behavior;
+- arbitrary-input no-panic fuzzing for metadata, framing, limits, and COPY parsing;
+- fixture comparison with `pg_restore` where practical;
+- fixture manifest entries matching checksums and generator metadata.
 
 ## 10. Performance requirements
 
@@ -469,8 +582,21 @@ v0.1 must include a benchmark harness capable of measuring:
 - peak memory for extraction;
 - COPY parsing throughput;
 - first-match scan with matches near the beginning, middle, end, and absent;
-- compression-specific throughput;
-- overhead of enabled scan-budget accounting.
+- none/gzip/LZ4/Zstandard throughput;
+- raw extraction limit-accounting overhead;
+- row-scan budget-accounting overhead.
+
+Benchmark reports used for public claims must record:
+
+- hardware and operating system;
+- exact commit/release;
+- fixture or reproducible dataset generator;
+- archive version and compression;
+- command/API path;
+- match position when applicable;
+- measurement tool and repetition/warm-up method.
+
+Comparisons with `pg_restore` or another library must use operations that are meaningfully equivalent and state material semantic differences.
 
 Performance optimizations must preserve tests and safety invariants.
 
@@ -478,25 +604,31 @@ Performance optimizations must preserve tests and safety invariants.
 
 v0.1 is ready when:
 
-- the supported archive versions open from reference-generated fixtures;
-- `docs/COMPATIBILITY.md` marks only actually tested combinations as verified;
+- official fixtures for supported archive versions open through the public parser path;
+- `docs/COMPATIBILITY.md` marks only tested combinations as verified;
+- fixture provenance and checksums are recorded;
 - metadata inspection does not read all payloads;
-- a selected table-data entry can be streamed and decompressed;
+- a selected table-data entry can be validated, streamed, and decompressed;
+- bounded raw extraction is available to library and CLI callers;
 - supported COPY text data can be iterated as rows/fields;
-- `FieldRef::Bytes` behavior matches the documented post-escape-decoding contract;
-- supported COPY column metadata can be resolved for column-aware access;
-- missing columns are distinguishable from unavailable/malformed column metadata;
-- INSERT-based unsupported row representations fail explicitly rather than being misparsed as COPY;
+- `FieldRef::Bytes` matches the documented post-escape-decoding contract;
+- borrowed row lifetime semantics are documented and do not require per-row ownership;
+- supported COPY column metadata can be resolved;
+- missing columns are distinguishable from unavailable/malformed metadata;
+- unsupported INSERT-based row representations fail explicitly;
 - a caller can return the first row matching a Rust predicate without buffering the table;
-- the returned first-match row is owned and remains valid after reader teardown;
-- row scans can be bounded by configurable total-work budgets;
-- first-match documentation explicitly states sequential-scan performance semantics;
+- the returned first-match row remains valid after reader teardown;
+- row scans can be bounded by configurable total-work budgets with exact documented accounting;
+- raw output can be bounded by decompressed bytes without successful silent truncation;
+- first-match documentation states sequential-scan complexity;
 - resource budgets are enforced with typed errors;
 - malformed parser input has broad boundary/fuzz coverage;
-- CLI `inspect`, `list`, `extract`, and `find` consume the same public library API;
-- `docs/COPY-TEXT.md` and compatibility documentation match tested behavior;
+- CLI `inspect`, `list`, `extract`, and `find` consume the same library path;
+- `extract` output and `find` UTF-8/exit contracts match the documentation;
+- the default build requires no PostgreSQL server, `libpq`, or `pg_restore` runtime;
+- `docs/COPY-TEXT.md`, API documentation, roadmap, and compatibility documentation match tested behavior;
 - CI passes on supported platforms;
 - public APIs have rustdoc documentation;
 - benchmark methodology is documented;
-- README claims match measured behavior;
+- README claims match measured and fixture-backed behavior;
 - licensing metadata and files use `MIT OR Apache-2.0`.

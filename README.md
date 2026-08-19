@@ -1,20 +1,24 @@
 # pgdumpx
 
-**A streaming, row-aware reader for PostgreSQL custom-format dumps, written in Pure Rust.**
+**A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
 > Status: design phase. No released crate or CLI exists yet.
 
-pgdumpx is a reusable Rust engine for inspecting and extracting data from large PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
+pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
-The project is intentionally **read-only**. It is not a replacement for `pg_dump` or `pg_restore`. Its focus is bounded, selective inspection: parse archive metadata, open only the table-data entry you need, stream decompression, interpret PostgreSQL `COPY` text as rows and fields, and stop a scan as soon as an application-defined predicate matches.
+Its primary value is not merely opening an archive entry. pgdumpx is designed to select one table-data entry through the archive TOC, seek to it, stream decompression, parse PostgreSQL `COPY` text into logical rows and fields, evaluate an application-defined predicate, and stop as soon as the first matching row is found.
 
-For example, a caller should be able to inspect a multi-gigabyte archive, select `public.orders`, resolve the `order_number` column, and find the first matching row without restoring the database or buffering the complete table.
+A representative target is:
+
+> Find one order, user, or other record in a multi-gigabyte `-Fc` backup without starting PostgreSQL and without buffering the complete table.
 
 [日本語 README](README.ja.md)
 
 ## Why pgdumpx?
 
-A PostgreSQL custom archive already contains a table of contents (TOC) and per-entry data offsets. pgdumpx uses that archive structure as the foundation for a row-aware inspection pipeline:
+A PostgreSQL custom archive contains a table of contents (TOC) and per-entry data positions. That makes selective **entry** access possible, but it does not provide a row-level value index.
+
+pgdumpx composes the archive and row layers into one bounded inspection path:
 
 ```text
 PostgreSQL custom archive
@@ -23,7 +27,7 @@ PostgreSQL custom archive
 header + TOC metadata
         │
         ▼
-select table-data entry + seek
+select table-data entry + validated seek
         │
         ▼
 streaming decompression
@@ -32,62 +36,70 @@ streaming decompression
 PostgreSQL COPY text parser
         │
         ├── borrowed rows and byte-oriented fields
-        ├── COPY column metadata + name lookup
-        └── streaming predicates / first-match retrieval
+        ├── COPY column metadata and name lookup
+        ├── structural and scan-work limits
+        └── predicate evaluation / first-match retrieval
 ```
 
 The initial product direction emphasizes:
 
-- **Pure Rust core** with no PostgreSQL server requirement;
-- **read-only parsing** of PostgreSQL custom-format archives;
+- **read-only parsing** of PostgreSQL Custom Format archives;
+- no running PostgreSQL server, `libpq`, or `pg_restore` requirement at runtime;
 - **lazy entry access** using `Read + Seek`;
 - **streaming decompression** without buffering an entire table;
-- **row-aware parsing** of PostgreSQL `COPY` text data;
-- **borrowed rows and byte-oriented fields** so parsing does not require UTF-8 or per-row ownership;
-- **column-aware first-match filtering** without restoring the dump;
-- **typed, location-aware errors**;
-- **per-item and scan-work resource limits** for attacker-controlled or unexpectedly large input;
-- a small core suitable for future CLI, Python, Arrow, and other bindings;
-- benchmark-backed performance claims rather than unverified speed promises.
+- **row-aware parsing** of normal pg_dump `COPY` text data;
+- **borrowed rows and byte-oriented fields** without requiring UTF-8 or per-row ownership;
+- **column-aware first-match filtering** without a SQL parser;
+- typed, location-aware errors;
+- structural, row-scan, and raw-extraction resource limits;
+- a small core suitable for CLI and later language/data integrations;
+- fixture-backed compatibility and benchmark-backed performance claims.
+
+The project does not use “Pure Rust” as a blanket dependency guarantee. The default build is intended to remain independent of PostgreSQL runtime components; compression backend and native-build implications are documented separately. See [ADR 0007](docs/adr/0007-standalone-row-scanner-and-vertical-slices.md).
 
 ## Use cases
 
-pgdumpx is intended for situations where a PostgreSQL dump is useful as an offline data source rather than only as restore input. Examples include:
+pgdumpx targets situations where a PostgreSQL dump is useful as an offline data source rather than only as restore input:
 
-- inspect a production backup without starting a PostgreSQL server;
-- find one order, user, or other record inside a large custom-format dump;
-- extract one selected table from a multi-gigabyte archive;
+- inspect a production backup without starting PostgreSQL;
+- find one record inside a large custom-format dump;
+- extract one selected table-data stream from a multi-gigabyte archive;
 - build backup verification and support/forensics tools;
-- inspect customer-provided dumps with explicit parser and scan budgets;
-- convert selected table streams into other formats in downstream tools;
-- build Rust, CLI, Python, or analytical tooling on one reusable archive reader.
-
-A representative target is: **find one record in a very large `-Fc` backup without restoring PostgreSQL and without loading the selected table into memory.**
+- process customer-supplied dumps under explicit parser and work budgets;
+- convert selected row streams into CSV, JSON Lines, Arrow, or Parquet in downstream tools;
+- build Rust, CLI, Python, or analytical tooling on one reusable row-scanning core.
 
 ## Initial scope
 
-v0.1 targets PostgreSQL custom-format archives only:
+v0.1 targets PostgreSQL Custom Format only:
 
 ```bash
 pg_dump -Fc mydb > backup.dump
 ```
 
-The initial compatibility target is archive format versions **1.14 through 1.16**. Support for older archive versions and other `pg_dump` formats is intentionally deferred and is not required for the project to be useful.
-
-Planned compression support:
+The final v0.1 compatibility target is archive format versions **1.14 through 1.16** with:
 
 - none;
 - gzip;
 - LZ4;
 - Zstandard.
 
-Row-aware v0.1 access targets normal pg_dump table data represented as PostgreSQL `COPY` text. INSERT-based dump modes such as `--inserts`, `--column-inserts`, and INSERT output produced with `--rows-per-insert` are not parsed as rows in v0.1 and must fail explicitly through the row API rather than being guessed as COPY input. Binary COPY decoding is also deferred.
+Implementation starts with a narrow end-to-end slice for archive 1.16 and none/gzip, then expands to the complete matrix. See [ROADMAP.md](ROADMAP.md).
 
-The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Until implementation fixtures exist, compatibility entries are targets rather than release claims.
+Row-aware access targets normal pg_dump table data represented as PostgreSQL `COPY` text. The following are explicitly outside the v0.1 row parser:
+
+- `--inserts`;
+- `--column-inserts`;
+- INSERT output produced by `--rows-per-insert`;
+- Binary COPY.
+
+Unsupported logical representations must fail through a typed row-API error rather than being guessed as COPY text. Raw entry extraction may still be available when the archive entry itself is structurally readable.
+
+The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Until implementation fixtures pass through production code paths, compatibility entries are targets rather than release claims.
 
 ## Intended Rust API
 
-The public API is still a design contract, not an implemented interface. The current direction is:
+The public API is still a design contract, not an implemented interface.
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -95,10 +107,10 @@ use pgdumpx::{Archive, FieldRef};
 let file = std::fs::File::open("backup.dump")?;
 let mut archive = Archive::open(file)?;
 
-println!("archive version: {}", archive.header().archive_version());
+println!("archive version: {:?}", archive.header().version());
 
 for entry in archive.entries() {
-    println!("{} {:?} {}", entry.id(), entry.kind(), entry.name());
+    println!("{entry:?}");
 }
 
 let mut rows = archive.table_rows(b"public", b"orders")?;
@@ -107,7 +119,9 @@ while let Some(row) = rows.next_row()? {
 }
 ```
 
-A primary v0.1 use case is finding the first matching row without restoring the archive:
+`next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references a reusable internal buffer and remains valid only until the next mutable reader operation.
+
+A primary v0.1 use case is finding the first matching row:
 
 ```rust
 let mut rows = archive.table_rows(b"public", b"orders")?;
@@ -120,17 +134,27 @@ let row = rows.find_first(|row| {
 })?;
 ```
 
-Column lookup distinguishes three states: `Ok(Some(index))` when metadata is valid and the column exists, `Ok(None)` when metadata is valid but the requested name is absent, and `Err(...)` when the supported COPY column layout cannot be derived.
+Column lookup distinguishes three states:
 
-`find_first` is a **streaming scan**, not a database index lookup. The custom archive lets pgdumpx seek directly to the selected table-data entry, but it does not contain a row-level index. The reader therefore decompresses and parses rows in order until the predicate matches, then stops immediately. Worst-case work is proportional to the selected table's data size.
+```text
+Ok(Some(index))  valid metadata, column found
+Ok(None)         valid metadata, requested column absent
+Err(...)         column layout unavailable or malformed
+```
 
-Long-running scans can be given operation-level work budgets such as maximum rows and maximum decompressed bytes, in addition to per-row allocation limits. This keeps bounded-memory parsing from becoming an implicitly unbounded CPU/decompression operation when input is untrusted.
+`find_first` is a **streaming sequential scan**, not a database index lookup. The TOC enables direct access to the selected table-data entry, but rows must be decompressed and parsed in order from the beginning of that entry. A match can stop early; an absent or late match may process the complete selected table unless a configured budget ends the operation.
 
-The final API may change before the first release. See [docs/API-DESIGN.md](docs/API-DESIGN.md).
+The API includes separate concepts for:
+
+- structural/per-item limits;
+- total row-scan work limits;
+- decompressed-byte limits for raw entry extraction.
+
+See [docs/API-DESIGN.md](docs/API-DESIGN.md).
 
 ## Intended CLI
 
-The CLI is a consumer of the same public Rust library API:
+The CLI consumes the same public Rust library API. It is also an early end-to-end acceptance path rather than a separate parser implementation.
 
 ```bash
 pgdumpx inspect backup.dump
@@ -139,67 +163,95 @@ pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
 ```
 
-`find` is intentionally a narrow first-match equality command that demonstrates the row-aware core. It is not a SQL parser and does not introduce a general `WHERE` language in v0.1.
+### `extract`
 
-CLI work begins only after the parser core is usable and tested.
+`extract` writes the selected entry's **decompressed table-data body** to stdout as binary-safe bytes. It does not add schema DDL, a `COPY` statement wrapper, or a complete restorable SQL script.
+
+The command uses the library's bounded raw-extraction path. Limit exhaustion is an error; output is not silently truncated.
+
+### `find`
+
+`find` is a narrow first-match equality command. It is not a SQL parser and does not introduce a general `WHERE` language.
+
+v0.1 command-line schema, table, column, and value arguments are UTF-8. The Rust API remains byte-oriented and can represent non-UTF-8 archive values. A future byte-literal CLI input mode would require a separate design.
+
+Stable exit behavior:
+
+```text
+0  match found
+1  no matching row
+2+ usage, I/O, format, integrity, decompression, COPY, encoding, or resource error
+```
 
 ## Architecture
 
-The core opens a seekable archive, parses only the header and TOC into an in-memory index, and defers entry data reads until requested:
+Archive opening parses metadata and builds an entry-level index. Payloads remain lazy:
 
 ```text
-PostgreSQL custom archive
+Archive<R: Read + Seek>
         │
-        ▼
-  Archive<R: Read + Seek>
-        │
-        ├── Header parser
-        ├── TOC parser ─────► ArchiveIndex
-        │                         │
-        │                         ├── metadata queries
-        │                         └── entry offsets
-        │
-        └── on-demand seek
-                 │
-                 ▼
+        ├── header + TOC parser
+        ├── ArchiveIndex
+        └── on-demand validated seek
+                  │
+                  ▼
           EntryDataReader
-                 │
-          decompression
-                 │
-                 ▼
-          COPY text parser
-                 │
-                 ├── row iteration
-                 └── first-match filtering
+                  │
+          streaming decompression
+                  │
+                  ▼
+          COPY text row reader
+                  │
+                  ├── row iteration
+                  └── first-match filtering
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the accepted initial architecture.
+The implementation owns a narrow standalone read path so byte-oriented metadata, integrity checks, resource accounting, and row-parser errors follow one coherent model. Adjacent dump libraries remain useful references and differential-test comparators.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## COPY text contract
 
-The byte-oriented API exposes **logical field bytes after PostgreSQL COPY text escape decoding**. `\N` is represented as `FieldRef::Null`; empty non-NULL fields remain zero-length byte strings.
+`FieldRef::Bytes` exposes **logical field bytes after PostgreSQL COPY text escape decoding**. `\N` is represented as `FieldRef::Null`; an empty non-NULL field remains a zero-length byte string.
 
-COPY record framing, escaping, column metadata, unsupported table-data representations, and parser limits are specified separately in [docs/COPY-TEXT.md](docs/COPY-TEXT.md).
+COPY record framing, escaping, column metadata, unsupported representations, and parser limits are specified in [docs/COPY-TEXT.md](docs/COPY-TEXT.md).
+
+## Evidence policy
+
+Compatibility and performance are claims that require evidence.
+
+Valid archive fixtures must record:
+
+- official `pg_dump` generator version;
+- exact generation command;
+- archive-format version and compression;
+- checksum;
+- fixture purpose and expected objects.
+
+Benchmarks must record the fixture, command, hardware, compression, match position, and measurement method. README performance claims are added only after reproducible results exist.
 
 ## Related projects
 
 - [`libpgdump`](https://github.com/gmr/libpgdump) — a Rust library for reading and writing PostgreSQL custom, directory, and tar dump formats.
 - [`pgdumplib`](https://github.com/gmr/pgdumplib) — a Python library for reading and writing PostgreSQL custom-format dumps.
 
-These projects cover adjacent PostgreSQL dump use cases. pgdumpx keeps its own deliberately narrow contract around read-only, bounded, row-aware inspection of custom-format archives.
+These projects cover adjacent PostgreSQL dump use cases. pgdumpx keeps a deliberately narrow contract around read-only, bounded, byte-oriented row inspection of Custom Format archives.
 
-## Documentation
+## Documentation map
 
-- [Requirements](docs/REQUIREMENTS.md)
-- [Architecture](ARCHITECTURE.md)
-- [Public API design](docs/API-DESIGN.md)
-- [PostgreSQL custom archive format notes](docs/PG-DUMP-CUSTOM-FORMAT.md)
-- [COPY text parser contract](docs/COPY-TEXT.md)
-- [Compatibility matrix](docs/COMPATIBILITY.md)
-- [Roadmap](ROADMAP.md)
-- [Architecture Decision Records](docs/adr/)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
+Each document has one primary responsibility to reduce duplication and drift:
+
+- [README](README.md) / [日本語 README](README.ja.md) — product value, status, examples, and high-level scope;
+- [Requirements](docs/REQUIREMENTS.md) — normative v0.1 behavior and acceptance criteria;
+- [Architecture](ARCHITECTURE.md) — internal boundaries and data flow;
+- [Public API design](docs/API-DESIGN.md) — intended Rust API and exact API semantics;
+- [Custom archive format notes](docs/PG-DUMP-CUSTOM-FORMAT.md) — upstream-derived archive behavior;
+- [COPY text contract](docs/COPY-TEXT.md) — row and field byte semantics;
+- [Compatibility matrix](docs/COMPATIBILITY.md) — target versus fixture-verified support;
+- [Roadmap](ROADMAP.md) — delivery order;
+- [Architecture Decision Records](docs/adr/) — accepted and superseded design decisions;
+- [Contributing](CONTRIBUTING.md) — contribution and document-update policy;
+- [Security policy](SECURITY.md) — vulnerability reporting and resource-threat model.
 
 ## Licensing
 
