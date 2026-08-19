@@ -19,14 +19,7 @@ fn distinguishes_null_empty_and_escaped_null_spelling() {
     let mut rows = CopyRowReader::new(Cursor::new(b"\\N\t\t\\\\N\n\\.\n".as_slice()));
 
     let row = rows.next_row().unwrap().unwrap();
-    assert_row(
-        row,
-        &[
-            None,
-            Some(b"".as_slice()),
-            Some(b"\\N".as_slice()),
-        ],
-    );
+    assert_row(row, &[None, Some(b"".as_slice()), Some(b"\\N".as_slice())]);
     assert!(rows.next_row().unwrap().is_none());
 }
 
@@ -95,8 +88,7 @@ fn malformed_or_truncated_escape_and_terminator_are_typed() {
         PgDumpError::MalformedCopyTerminator { row: 1, .. }
     ));
 
-    let mut embedded_terminator =
-        CopyRowReader::new(Cursor::new(b"prefix\\.\n".as_slice()));
+    let mut embedded_terminator = CopyRowReader::new(Cursor::new(b"prefix\\.\n".as_slice()));
     assert!(matches!(
         embedded_terminator.next_row().unwrap_err(),
         PgDumpError::MalformedCopyTerminator { row: 1, .. }

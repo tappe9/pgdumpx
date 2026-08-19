@@ -34,16 +34,12 @@ fn row_byte_limit_accepts_below_and_exact_and_rejects_above() {
 fn field_count_limit_accepts_below_and_exact_and_rejects_above() {
     let limits = CopyParserLimits::new(64, 3);
 
-    for (input, expected_fields) in [
-        (b"a\tb\n".as_slice(), 2),
-        (b"a\tb\tc\n".as_slice(), 3),
-    ] {
+    for (input, expected_fields) in [(b"a\tb\n".as_slice(), 2), (b"a\tb\tc\n".as_slice(), 3)] {
         let mut rows = CopyRowReader::with_limits(Cursor::new(input), limits);
         assert_eq!(rows.next_row().unwrap().unwrap().len(), expected_fields);
     }
 
-    let mut rows =
-        CopyRowReader::with_limits(Cursor::new(b"a\tb\tc\td\n".as_slice()), limits);
+    let mut rows = CopyRowReader::with_limits(Cursor::new(b"a\tb\tc\td\n".as_slice()), limits);
     assert!(matches!(
         rows.next_row().unwrap_err(),
         PgDumpError::CopyFieldCountLimitExceeded {
@@ -97,11 +93,8 @@ fn consumed_bytes_are_independent_of_source_segmentation() {
 #[test]
 fn consumed_byte_counter_overflow_is_typed_and_controlled() {
     let limits = CopyParserLimits::new(64, 8);
-    let mut rows = CopyRowReader::with_limits_and_consumed(
-        Cursor::new(b"a\n".as_slice()),
-        limits,
-        u64::MAX,
-    );
+    let mut rows =
+        CopyRowReader::with_limits_and_consumed(Cursor::new(b"a\n".as_slice()), limits, u64::MAX);
 
     assert!(matches!(
         rows.next_row().unwrap_err(),
