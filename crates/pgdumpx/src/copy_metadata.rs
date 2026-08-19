@@ -114,7 +114,7 @@ impl TableDataMetadata {
 }
 
 #[derive(Debug)]
-struct CopyColumnLayout {
+pub(crate) struct CopyColumnLayout {
     columns: Vec<Column>,
     by_name: HashMap<Vec<u8>, usize>,
 }
