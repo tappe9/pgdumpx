@@ -1,0 +1,35 @@
+name: Format work
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/format-work.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/first-end-to-end-find
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Format and publish
+        run: |
+          cargo fmt
+          git add crates/pgdumpx/src/table_rows_tests.rs crates/pgdumpx/tests/table_rows.rs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style: format find_first acceptance tests"
+          git push origin HEAD:feat/first-end-to-end-find
