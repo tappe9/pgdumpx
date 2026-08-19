@@ -1,17 +1,18 @@
-//! A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.
-//!
-//! Archive-format behavior is introduced incrementally by the v0.1 implementation issues.
+#![forbid(unsafe_code)]
 
-// Issue #7 wires these crate-private primitives into the production header parser.
-#[allow(dead_code)]
+mod archive;
 mod custom;
 mod error;
-#[allow(dead_code)]
 mod io;
-#[allow(dead_code)]
 mod limits;
-
-pub use error::PgDumpError;
+mod model;
 
 #[cfg(test)]
 mod archive_primitives_tests;
+
+pub use archive::Archive;
+pub use error::PgDumpError;
+pub use model::{
+    ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
+    DumpId, Section, TableRef, TocEntry,
+};
