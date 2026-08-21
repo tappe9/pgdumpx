@@ -97,6 +97,25 @@ impl<'a, R> BoundedEntryDataReader<'a, R> {
         self.terminal_error = Some(error);
         into_io_error(error.into_pg_error(self.dump_id.as_i32()))
     }
+
+    fn checked_count_after(&mut self, increment: usize) -> io::Result<u64> {
+        let increment = match u64::try_from(increment) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(self.fail(TerminalError::Overflow {
+                    consumed: self.returned,
+                    increment: u64::MAX,
+                }));
+            }
+        };
+        match checked_decompressed_count(self.dump_id.as_i32(), self.returned, increment) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail(TerminalError::Overflow {
+                consumed: self.returned,
+                increment,
+            })),
+        }
+    }
 }
 
 impl<R: Read> fmt::Debug for BoundedEntryDataReader<'_, R> {
@@ -133,28 +152,7 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
                 match self.inner.read(&mut probe) {
                     Ok(0) => return Ok(0),
                     Ok(read) => {
-                        let increment = match u64::try_from(read) {
-                            Ok(value) => value,
-                            Err(_) => {
-                                return Err(self.fail(TerminalError::Overflow {
-                                    consumed: self.returned,
-                                    increment: u64::MAX,
-                                }));
-                            }
-                        };
-                        let consumed = match checked_decompressed_count(
-                            self.dump_id.as_i32(),
-                            self.returned,
-                            increment,
-                        ) {
-                            Ok(value) => value,
-                            Err(_) => {
-                                return Err(self.fail(TerminalError::Overflow {
-                                    consumed: self.returned,
-                                    increment,
-                                }));
-                            }
-                        };
+                        let consumed = self.checked_count_after(read)?;
                         return Err(self.fail(TerminalError::Limit { limit, consumed }));
                     }
                     Err(error) => return Err(error),
@@ -163,25 +161,7 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
         };
 
         let read = self.inner.read(&mut output[..requested])?;
-        let increment = match u64::try_from(read) {
-            Ok(value) => value,
-            Err(_) => {
-                return Err(self.fail(TerminalError::Overflow {
-                    consumed: self.returned,
-                    increment: u64::MAX,
-                }));
-            }
-        };
-        self.returned =
-            match checked_decompressed_count(self.dump_id.as_i32(), self.returned, increment) {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(self.fail(TerminalError::Overflow {
-                        consumed: self.returned,
-                        increment,
-                    }));
-                }
-            };
+        self.returned = self.checked_count_after(read)?;
         Ok(read)
     }
 }
