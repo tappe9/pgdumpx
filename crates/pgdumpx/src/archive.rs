@@ -223,12 +223,6 @@ struct ArchiveIndex {
 }
 
 impl ArchiveIndex {
-    #[cfg(test)]
-#[allow(dead_code)]
-    fn build(entries: &[TocEntry]) -> Result<Self, PgDumpError> {
-        Self::build_with_limits(entries, Limits::default())
-    }
-
     fn build_with_limits(entries: &[TocEntry], limits: Limits) -> Result<Self, PgDumpError> {
         let mut by_dump_id = HashMap::new();
         reserve_map(&mut by_dump_id, entries.len(), "dump-ID index")?;
