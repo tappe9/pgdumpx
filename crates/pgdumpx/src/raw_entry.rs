@@ -172,19 +172,16 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
                 }));
             }
         };
-        self.returned = match checked_decompressed_count(
-            self.dump_id.as_i32(),
-            self.returned,
-            increment,
-        ) {
-            Ok(value) => value,
-            Err(_) => {
-                return Err(self.fail(TerminalError::Overflow {
-                    consumed: self.returned,
-                    increment,
-                }));
-            }
-        };
+        self.returned =
+            match checked_decompressed_count(self.dump_id.as_i32(), self.returned, increment) {
+                Ok(value) => value,
+                Err(_) => {
+                    return Err(self.fail(TerminalError::Overflow {
+                        consumed: self.returned,
+                        increment,
+                    }));
+                }
+            };
         Ok(read)
     }
 }
@@ -197,9 +194,8 @@ impl<R: Read + Seek> Archive<R> {
         id: DumpId,
         limits: EntryReadLimits,
     ) -> Result<Option<BoundedEntryDataReader<'_, R>>, PgDumpError> {
-        self.entry_reader(id).map(|reader| {
-            reader.map(|reader| BoundedEntryDataReader::new(id, reader, limits))
-        })
+        self.entry_reader(id)
+            .map(|reader| reader.map(|reader| BoundedEntryDataReader::new(id, reader, limits)))
     }
 
     /// Copies one selected entry's decompressed bytes to `writer` using the
@@ -228,13 +224,13 @@ impl<R: Read + Seek> Archive<R> {
             if read == 0 {
                 return Ok(copied);
             }
-            writer.write_all(&buffer[..read]).map_err(|source| {
-                PgDumpError::EntryOutputIo {
+            writer
+                .write_all(&buffer[..read])
+                .map_err(|source| PgDumpError::EntryOutputIo {
                     dump_id: id.as_i32(),
                     written: copied,
                     source,
-                }
-            })?;
+                })?;
             let increment = u64::try_from(read).map_err(|_| {
                 PgDumpError::EntryDecompressedByteCountOverflow {
                     dump_id: id.as_i32(),
