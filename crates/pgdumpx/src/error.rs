@@ -44,7 +44,7 @@ pub enum PgDumpError {
     MissingRequiredArchiveString { field: &'static str, offset: u64 },
     /// The encoded TOC entry count is negative.
     InvalidTocEntryCount { value: i32, offset: u64 },
-    /// The encoded TOC entry count exceeds the provisional finite bound.
+    /// The encoded TOC entry count exceeds the configured finite bound.
     TocEntryLimitExceeded { count: u64, limit: u64, offset: u64 },
     /// Memory for the bounded TOC vector could not be reserved.
     TocAllocationFailed { count: u64, offset: u64 },
@@ -58,7 +58,7 @@ pub enum PgDumpError {
     },
     /// A textual TOC dependency is not a positive decimal dump ID.
     InvalidDependencyEncoding { entry_id: i32, offset: u64 },
-    /// One TOC entry has more dependencies than the provisional finite bound.
+    /// One TOC entry has more dependencies than the configured finite bound.
     DependencyLimitExceeded {
         entry_id: i32,
         count: u64,
@@ -106,7 +106,7 @@ pub enum PgDumpError {
         dump_id: i32,
         representation: TableDataRepresentation,
     },
-    /// A COPY statement exceeds the provisional finite column-count bound.
+    /// A COPY statement exceeds the configured finite field-count bound.
     CopyColumnCountLimitExceeded {
         dump_id: i32,
         limit: u64,
@@ -176,14 +176,14 @@ pub enum PgDumpError {
     MalformedCopyEscape { row: u64, byte_offset: u64 },
     /// A COPY end marker is truncated, embedded in a row, or not alone on its line.
     MalformedCopyTerminator { row: u64, byte_offset: u64 },
-    /// One physical COPY row exceeds the provisional finite row-byte bound.
+    /// One physical COPY row exceeds the configured finite row-byte bound.
     CopyRowByteLimitExceeded {
         row: u64,
         limit: u64,
         actual: u64,
         byte_offset: u64,
     },
-    /// One COPY row exceeds the provisional finite field-count bound.
+    /// One COPY row exceeds the configured finite field-count bound.
     CopyFieldCountLimitExceeded {
         row: u64,
         limit: u64,
