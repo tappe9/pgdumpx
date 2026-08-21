@@ -1,32 +1,12 @@
-use crate::PgDumpError;
+use crate::{Limits, PgDumpError};
 use std::{
     fmt,
     io::{BufRead, BufReader, Read},
     iter::FusedIterator,
 };
 
-const PROVISIONAL_MAX_ROW_BYTES: u64 = 16 * 1024 * 1024;
-const PROVISIONAL_MAX_FIELDS: u64 = 4 * 1024;
 const INITIAL_ROW_CAPACITY_BYTES: usize = 8 * 1024;
 const COPY_TERMINATOR: &[u8] = b"\\.";
-
-const ALPHA1_COPY_LIMITS: CopyParserLimits =
-    CopyParserLimits::new(PROVISIONAL_MAX_ROW_BYTES, PROVISIONAL_MAX_FIELDS);
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct CopyParserLimits {
-    max_row_bytes: u64,
-    max_fields: u64,
-}
-
-impl CopyParserLimits {
-    pub(crate) const fn new(max_row_bytes: u64, max_fields: u64) -> Self {
-        Self {
-            max_row_bytes,
-            max_fields,
-        }
-    }
-}
 
 /// A borrowed logical field from a PostgreSQL COPY text row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,7 +141,7 @@ impl FieldSpan {
 /// it never buffers the complete COPY stream.
 pub struct CopyRowReader<R> {
     input: CopyInput<R>,
-    limits: CopyParserLimits,
+    limits: Limits,
     raw_row: Vec<u8>,
     logical_bytes: Vec<u8>,
     field_spans: Vec<FieldSpan>,
@@ -170,12 +150,16 @@ pub struct CopyRowReader<R> {
 }
 
 impl<R: Read> CopyRowReader<R> {
-    /// Creates a COPY text row reader using provisional finite v0.1 bounds.
+    /// Creates a COPY text row reader using finite compatibility-oriented limits.
     pub fn new(reader: R) -> Self {
-        Self::with_limits(reader, ALPHA1_COPY_LIMITS)
+        Self::with_limits(reader, Limits::default())
     }
 
-    pub(crate) fn with_limits(reader: R, limits: CopyParserLimits) -> Self {
+    /// Creates a COPY text row reader using caller-supplied structural limits.
+    ///
+    /// Only the row-byte and fields-per-row members are used by this standalone
+    /// parser. The same [`Limits`] values are used by [`crate::Archive::table_rows`].
+    pub fn with_limits(reader: R, limits: Limits) -> Self {
         Self {
             input: CopyInput::new(reader),
             limits,
@@ -188,11 +172,7 @@ impl<R: Read> CopyRowReader<R> {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_limits_and_consumed(
-        reader: R,
-        limits: CopyParserLimits,
-        consumed: u64,
-    ) -> Self {
+    pub(crate) fn with_limits_and_consumed(reader: R, limits: Limits, consumed: u64) -> Self {
         let mut parser = Self::with_limits(reader, limits);
         parser.input.consumed = consumed;
         parser
@@ -233,8 +213,12 @@ impl<R: Read> CopyRowReader<R> {
             });
         }
 
-        let field_count =
-            inspect_field_layout(&self.raw_row, self.limits.max_fields, row, row_start)?;
+        let field_count = inspect_field_layout(
+            &self.raw_row,
+            self.limits.max_fields_per_row(),
+            row,
+            row_start,
+        )?;
         self.prepare_decoded_storage(row, field_count)?;
         decode_fields(
             &self.raw_row,
@@ -301,33 +285,30 @@ impl<R: Read> CopyRowReader<R> {
     }
 
     fn push_raw_byte(&mut self, row: u64, byte: u8) -> Result<(), PgDumpError> {
-        let actual_usize =
-            self.raw_row
-                .len()
-                .checked_add(1)
-                .ok_or(PgDumpError::ArithmeticOverflow {
-                    offset: self.input.consumed(),
-                })?;
-        let actual = u64::try_from(actual_usize).map_err(|_| PgDumpError::ArithmeticOverflow {
-            offset: self.input.consumed(),
-        })?;
-        if actual > self.limits.max_row_bytes {
+        let actual = self
+            .raw_row
+            .len()
+            .checked_add(1)
+            .ok_or(PgDumpError::ArithmeticOverflow {
+                offset: self.input.consumed(),
+            })?;
+        let limit = self.limits.max_row_bytes();
+        if actual > limit {
             return Err(PgDumpError::CopyRowByteLimitExceeded {
                 row,
-                limit: self.limits.max_row_bytes,
-                actual,
+                limit: usize_to_u64(limit, self.input.consumed())?,
+                actual: usize_to_u64(actual, self.input.consumed())?,
                 byte_offset: self.input.consumed(),
             });
         }
 
-        if actual_usize > self.raw_row.capacity() {
-            let max_capacity = usize::try_from(self.limits.max_row_bytes).unwrap_or(usize::MAX);
+        if actual > self.raw_row.capacity() {
             let proposed = if self.raw_row.capacity() == 0 {
                 INITIAL_ROW_CAPACITY_BYTES
             } else {
                 self.raw_row.capacity().saturating_mul(2)
             };
-            let target = proposed.max(actual_usize).min(max_capacity);
+            let target = proposed.max(actual).min(limit);
             let additional =
                 target
                     .checked_sub(self.raw_row.len())
@@ -346,7 +327,7 @@ impl<R: Read> CopyRowReader<R> {
         Ok(())
     }
 
-    fn prepare_decoded_storage(&mut self, row: u64, field_count: u64) -> Result<(), PgDumpError> {
+    fn prepare_decoded_storage(&mut self, row: u64, field_count: usize) -> Result<(), PgDumpError> {
         if self.logical_bytes.capacity() < self.raw_row.len() {
             self.logical_bytes
                 .try_reserve_exact(self.raw_row.len())
@@ -356,11 +337,6 @@ impl<R: Read> CopyRowReader<R> {
                 })?;
         }
 
-        let field_count =
-            usize::try_from(field_count).map_err(|_| PgDumpError::CopyFieldAllocationFailed {
-                row,
-                requested: field_count,
-            })?;
         if self.field_spans.capacity() < field_count {
             self.field_spans
                 .try_reserve_exact(field_count)
@@ -427,11 +403,11 @@ impl<R: Read> CopyInput<R> {
 
 fn inspect_field_layout(
     raw: &[u8],
-    max_fields: u64,
+    max_fields: usize,
     row: u64,
     row_start: u64,
-) -> Result<u64, PgDumpError> {
-    let mut fields = 1_u64;
+) -> Result<usize, PgDumpError> {
+    let mut fields = 1_usize;
     let mut index = 0_usize;
     while index < raw.len() {
         if raw[index] == b'\\' {
@@ -460,8 +436,8 @@ fn inspect_field_layout(
             if fields > max_fields {
                 return Err(PgDumpError::CopyFieldCountLimitExceeded {
                     row,
-                    limit: max_fields,
-                    actual: fields,
+                    limit: usize_to_u64(max_fields, row_start)?,
+                    actual: usize_to_u64(fields, row_start)?,
                     byte_offset: byte_offset(row_start, index)?,
                 });
             }
@@ -472,8 +448,8 @@ fn inspect_field_layout(
     if fields > max_fields {
         return Err(PgDumpError::CopyFieldCountLimitExceeded {
             row,
-            limit: max_fields,
-            actual: fields,
+            limit: usize_to_u64(max_fields, row_start)?,
+            actual: usize_to_u64(fields, row_start)?,
             byte_offset: row_start,
         });
     }
@@ -599,6 +575,10 @@ fn byte_offset(start: u64, index: usize) -> Result<u64, PgDumpError> {
     start
         .checked_add(index)
         .ok_or(PgDumpError::ArithmeticOverflow { offset: start })
+}
+
+fn usize_to_u64(value: usize, offset: u64) -> Result<u64, PgDumpError> {
+    u64::try_from(value).map_err(|_| PgDumpError::ArithmeticOverflow { offset })
 }
 
 const fn hex_value(byte: u8) -> Option<u8> {
