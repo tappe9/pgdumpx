@@ -16,7 +16,16 @@ pub struct TableRowReader<'a, R> {
 }
 
 impl<'a, R: Read> TableRowReader<'a, R> {
+    #[cfg(test)]
     pub(crate) fn new(
+        data_id: DumpId,
+        metadata: &'a TableDataMetadata,
+        entry: EntryDataReader<'a, R>,
+    ) -> Self {
+        Self::new_with_limits(data_id, metadata, entry, Limits::default())
+    }
+
+    pub(crate) fn new_with_limits(
         data_id: DumpId,
         metadata: &'a TableDataMetadata,
         entry: EntryDataReader<'a, R>,

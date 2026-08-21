@@ -169,11 +169,7 @@ impl<R: Read> CopyRowReader<R> {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_limits_and_consumed(
-        reader: R,
-        limits: Limits,
-        consumed: u64,
-    ) -> Self {
+    pub(crate) fn with_limits_and_consumed(reader: R, limits: Limits, consumed: u64) -> Self {
         let mut parser = Self::with_limits(reader, limits);
         parser.input.consumed = consumed;
         parser
@@ -295,11 +291,10 @@ impl<R: Read> CopyRowReader<R> {
         })?;
         let max_row_bytes = self.limits.max_row_bytes();
         if actual_usize > max_row_bytes {
-            let limit = u64::try_from(max_row_bytes).map_err(|_| {
-                PgDumpError::ArithmeticOverflow {
+            let limit =
+                u64::try_from(max_row_bytes).map_err(|_| PgDumpError::ArithmeticOverflow {
                     offset: self.input.consumed(),
-                }
-            })?;
+                })?;
             return Err(PgDumpError::CopyRowByteLimitExceeded {
                 row,
                 limit,

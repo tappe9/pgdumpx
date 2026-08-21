@@ -1,7 +1,7 @@
 use crate::{
     ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, Limits, PgDumpError,
     TableRef, TableRowReader, TocEntry,
-    copy_metadata::{TableDataMetadata, parse_table_data_metadata},
+    copy_metadata::{TableDataMetadata, parse_table_data_metadata_with_limits},
     custom::{
         data::{BLK_DATA, CustomChunkReader},
         header::read_header,
@@ -42,7 +42,7 @@ impl<R: Read + Seek> Archive<R> {
             parsed_header.offset_size,
             limits,
         )?;
-        let index = ArchiveIndex::build(&entries, limits)?;
+        let index = ArchiveIndex::build_with_limits(&entries, limits)?;
 
         Ok(Self {
             reader: reader.into_inner(),
@@ -115,7 +115,7 @@ impl<R: Read + Seek> Archive<R> {
             self.integer_size,
             entry,
         )?;
-        Ok(TableRowReader::new(
+        Ok(TableRowReader::new_with_limits(
             data_id,
             metadata,
             entry_reader,
@@ -223,7 +223,12 @@ struct ArchiveIndex {
 }
 
 impl ArchiveIndex {
-    fn build(entries: &[TocEntry], limits: Limits) -> Result<Self, PgDumpError> {
+    #[cfg(test)]
+    fn build(entries: &[TocEntry]) -> Result<Self, PgDumpError> {
+        Self::build_with_limits(entries, Limits::default())
+    }
+
+    fn build_with_limits(entries: &[TocEntry], limits: Limits) -> Result<Self, PgDumpError> {
         let mut by_dump_id = HashMap::new();
         reserve_map(&mut by_dump_id, entries.len(), "dump-ID index")?;
         for (index, entry) in entries.iter().enumerate() {
@@ -274,8 +279,11 @@ impl ArchiveIndex {
         )?;
 
         for data in entries.iter().filter(|entry| entry.is_table_data()) {
-            let metadata =
-                parse_table_data_metadata(data.id(), data.copy_statement_bytes(), limits)?;
+            let metadata = parse_table_data_metadata_with_limits(
+                data.id(),
+                data.copy_statement_bytes(),
+                limits,
+            )?;
             table_data_metadata.insert(data.id(), metadata);
 
             let mut table_id = None;

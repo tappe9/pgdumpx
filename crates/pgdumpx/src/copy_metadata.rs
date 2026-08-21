@@ -130,7 +130,15 @@ pub(crate) struct CopyColumnLayout {
     by_name: HashMap<Vec<u8>, usize>,
 }
 
+#[cfg(test)]
 pub(crate) fn parse_table_data_metadata(
+    dump_id: DumpId,
+    copy_statement: Option<&[u8]>,
+) -> Result<TableDataMetadata, PgDumpError> {
+    parse_table_data_metadata_with_limits(dump_id, copy_statement, Limits::default())
+}
+
+pub(crate) fn parse_table_data_metadata_with_limits(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
     limits: Limits,
@@ -144,19 +152,14 @@ pub(crate) fn parse_table_data_metadata(
         return Ok(TableDataMetadata::Unavailable);
     }
 
-    let parsed = match CopyStatementParser::new(
-        statement,
-        dump_id,
-        limits.max_fields_per_row(),
-    )
-    .parse()
-    {
-        Ok(parsed) => parsed,
-        Err(MetadataParseError::Malformed(reason)) => {
-            return Ok(TableDataMetadata::Malformed { reason });
-        }
-        Err(MetadataParseError::Fatal(error)) => return Err(error),
-    };
+    let parsed =
+        match CopyStatementParser::new(statement, dump_id, limits.max_fields_per_row()).parse() {
+            Ok(parsed) => parsed,
+            Err(MetadataParseError::Malformed(reason)) => {
+                return Ok(TableDataMetadata::Malformed { reason });
+            }
+            Err(MetadataParseError::Fatal(error)) => return Err(error),
+        };
 
     match parsed {
         ParsedStatement::Copy(columns) => match CopyColumnLayout::new(columns, dump_id)? {
