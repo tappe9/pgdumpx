@@ -90,9 +90,7 @@ impl PgDumpError {
     /// Returns a stable high-level error category.
     pub const fn category(&self) -> ErrorCategory {
         match self {
-            Self::Io { .. } | Self::EntryOutputIo { .. } | Self::CopyIo { .. } => {
-                ErrorCategory::Io
-            }
+            Self::Io { .. } | Self::EntryOutputIo { .. } | Self::CopyIo { .. } => ErrorCategory::Io,
             Self::UnexpectedEof { .. }
             | Self::InvalidArchiveMagic { .. }
             | Self::UnsupportedArchiveVersion { .. }
