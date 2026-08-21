@@ -52,6 +52,21 @@ fn structural_toc_limit_is_consistent_for_archive_1_14_and_1_15() {
 }
 
 #[test]
+fn truncated_archive_1_15_compression_algorithm_is_typed_eof() {
+    let mut bytes = b"PGDMP".to_vec();
+    bytes.extend_from_slice(&[1, 15, 0]);
+    bytes.push(4);
+    bytes.push(8);
+    bytes.push(1); // custom format; compression algorithm byte is missing
+
+    let error = Archive::open(Cursor::new(bytes)).expect_err("truncated algorithm must fail");
+    assert!(matches!(
+        error,
+        PgDumpError::UnexpectedEof { offset: 11 }
+    ));
+}
+
+#[test]
 fn truncated_archive_1_14_legacy_compression_integer_is_typed_eof() {
     let mut bytes = b"PGDMP".to_vec();
     bytes.extend_from_slice(&[1, 14, 0]);
