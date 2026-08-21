@@ -4,17 +4,17 @@
 /// the compatibility-oriented bounds used by the initial v0.1 implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    max_toc_entries: u64,
+    max_toc_entries: usize,
     max_string_bytes: usize,
-    max_dependencies_per_entry: u64,
+    max_dependencies_per_entry: usize,
     max_row_bytes: usize,
     max_fields_per_row: usize,
 }
 
 impl Limits {
-    const DEFAULT_MAX_TOC_ENTRIES: u64 = 100_000;
+    const DEFAULT_MAX_TOC_ENTRIES: usize = 100_000;
     const DEFAULT_MAX_STRING_BYTES: usize = 16 * 1024 * 1024;
-    const DEFAULT_MAX_DEPENDENCIES_PER_ENTRY: u64 = 100_000;
+    const DEFAULT_MAX_DEPENDENCIES_PER_ENTRY: usize = 100_000;
     const DEFAULT_MAX_ROW_BYTES: usize = 16 * 1024 * 1024;
     const DEFAULT_MAX_FIELDS_PER_ROW: usize = 4 * 1024;
 
@@ -30,7 +30,7 @@ impl Limits {
     }
 
     /// Returns the maximum number of TOC entries accepted while opening an archive.
-    pub const fn max_toc_entries(self) -> u64 {
+    pub const fn max_toc_entries(self) -> usize {
         self.max_toc_entries
     }
 
@@ -40,7 +40,7 @@ impl Limits {
     }
 
     /// Returns the maximum dependency count accepted for one TOC entry.
-    pub const fn max_dependencies_per_entry(self) -> u64 {
+    pub const fn max_dependencies_per_entry(self) -> usize {
         self.max_dependencies_per_entry
     }
 
@@ -56,7 +56,7 @@ impl Limits {
 
     /// Returns a configuration with a different maximum TOC entry count.
     #[must_use]
-    pub const fn with_max_toc_entries(mut self, value: u64) -> Self {
+    pub const fn with_max_toc_entries(mut self, value: usize) -> Self {
         self.max_toc_entries = value;
         self
     }
@@ -70,7 +70,7 @@ impl Limits {
 
     /// Returns a configuration with a different maximum dependency count per entry.
     #[must_use]
-    pub const fn with_max_dependencies_per_entry(mut self, value: u64) -> Self {
+    pub const fn with_max_dependencies_per_entry(mut self, value: usize) -> Self {
         self.max_dependencies_per_entry = value;
         self
     }
