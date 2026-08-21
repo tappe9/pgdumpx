@@ -4,6 +4,8 @@ use crate::{
 use flate2::{Decompress, FlushDecompress, Status};
 #[cfg(feature = "lz4")]
 use lz4_flex::frame::FrameDecoder;
+#[cfg(feature = "lz4")]
+use std::{cell::RefCell, rc::Rc};
 use std::{
     fmt,
     io::{self, Read},
@@ -24,7 +26,7 @@ enum EntryBackend<'a, R> {
     None(CustomChunkReader<'a, R>),
     Gzip(ZlibEntryDecoder<'a, R>),
     #[cfg(feature = "lz4")]
-    Lz4(Lz4EntryDecoder<'a, R>),
+    Lz4(Lz4EntryDecoder<'a>),
 }
 
 impl<'a, R: Read> EntryDataReader<'a, R> {
@@ -226,17 +228,25 @@ impl<R: Read> Read for ZlibEntryDecoder<'_, R> {
 }
 
 #[cfg(feature = "lz4")]
-struct Lz4EntryDecoder<'a, R> {
+struct Lz4EntryDecoder<'a> {
     dump_id: DumpId,
-    decoder: FrameDecoder<TrackedCompressedSource<'a, R>>,
+    decoder: FrameDecoder<Box<dyn Read + 'a>>,
+    source_error: Rc<RefCell<Option<io::Error>>>,
 }
 
 #[cfg(feature = "lz4")]
-impl<'a, R> Lz4EntryDecoder<'a, R> {
-    fn new(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Self {
+impl<'a> Lz4EntryDecoder<'a> {
+    fn new<R: Read + 'a>(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Self {
+        let source_error = Rc::new(RefCell::new(None));
+        let tracked = TrackedCompressedSource {
+            inner: source,
+            error: Rc::clone(&source_error),
+        };
+        let reader: Box<dyn Read + 'a> = Box::new(tracked);
         Self {
             dump_id,
-            decoder: FrameDecoder::new(TrackedCompressedSource::new(source)),
+            decoder: FrameDecoder::new(reader),
+            source_error,
         }
     }
 
@@ -250,12 +260,13 @@ impl<'a, R> Lz4EntryDecoder<'a, R> {
 }
 
 #[cfg(feature = "lz4")]
-impl<R: Read> Read for Lz4EntryDecoder<'_, R> {
+impl Read for Lz4EntryDecoder<'_> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         match self.decoder.read(output) {
             Ok(read) => Ok(read),
             Err(source) => {
-                if let Some(source) = self.decoder.get_mut().take_error() {
+                let source_error = self.source_error.borrow_mut().take();
+                if let Some(source) = source_error {
                     Err(source)
                 } else {
                     Err(self.decompression_error(source))
@@ -266,34 +277,20 @@ impl<R: Read> Read for Lz4EntryDecoder<'_, R> {
 }
 
 #[cfg(feature = "lz4")]
-struct TrackedCompressedSource<'a, R> {
-    inner: CustomChunkReader<'a, R>,
-    error: Option<io::Error>,
+struct TrackedCompressedSource<R> {
+    inner: R,
+    error: Rc<RefCell<Option<io::Error>>>,
 }
 
 #[cfg(feature = "lz4")]
-impl<'a, R> TrackedCompressedSource<'a, R> {
-    fn new(inner: CustomChunkReader<'a, R>) -> Self {
-        Self { inner, error: None }
-    }
-
-    fn take_error(&mut self) -> Option<io::Error> {
-        self.error.take()
-    }
-}
-
-#[cfg(feature = "lz4")]
-impl<R: Read> Read for TrackedCompressedSource<'_, R> {
+impl<R: Read> Read for TrackedCompressedSource<R> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         match self.inner.read(output) {
             Ok(read) => Ok(read),
             Err(source) => {
                 let kind = source.kind();
-                self.error = Some(source);
-                Err(io::Error::new(
-                    kind,
-                    "compressed entry source read failed",
-                ))
+                *self.error.borrow_mut() = Some(source);
+                Err(io::Error::new(kind, "compressed entry source read failed"))
             }
         }
     }
