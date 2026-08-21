@@ -21,6 +21,8 @@ mod archive_primitives_tests;
 #[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
+mod error_tests;
+#[cfg(test)]
 mod metadata_open_tests;
 #[cfg(test)]
 mod table_rows_tests;
@@ -29,7 +31,7 @@ pub use archive::Archive;
 pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
-pub use error::PgDumpError;
+pub use error::{ErrorCategory, LimitContext, PgDumpError, ResourceLimit};
 pub use limits::Limits;
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
