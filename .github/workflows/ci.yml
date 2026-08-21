@@ -84,7 +84,9 @@ jobs:
 
       - name: Apply checked replacements
         if: steps.guard.outputs.apply == 'true'
-        run: python3 scripts/apply_issue17.py
+        run: |
+          python3 scripts/fix_issue17_generator.py
+          python3 scripts/apply_issue17.py
 
       - name: Format
         if: steps.guard.outputs.apply == 'true'
