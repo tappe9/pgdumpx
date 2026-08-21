@@ -8,8 +8,10 @@ use std::{
 const FAILURE_EXIT: i32 = 2;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-const EXPECTED_NONE_INSPECT: &[u8] = b"archive_version=1.16.0\ncompression=none\nentries=7\ntables=1\ntable_data=1\n";
-const EXPECTED_GZIP_INSPECT: &[u8] = b"archive_version=1.16.0\ncompression=gzip\nentries=7\ntables=1\ntable_data=1\n";
+const EXPECTED_NONE_INSPECT: &[u8] =
+    b"archive_version=1.16.0\ncompression=none\nentries=7\ntables=1\ntable_data=1\n";
+const EXPECTED_GZIP_INSPECT: &[u8] =
+    b"archive_version=1.16.0\ncompression=gzip\nentries=7\ntables=1\ntable_data=1\n";
 const EXPECTED_LIST: &[u8] = b"dump_id\tobject_type\tschema\tname\n3375\tENCODING\t-\tENCODING\n3376\tSTDSTRINGS\t-\tSTDSTRINGS\n3377\tSEARCHPATH\t-\tSEARCHPATH\n3378\tDATABASE\t-\tpgdumpx_fixture\n219\tTABLE\tpublic\torders\n3372\tTABLE DATA\tpublic\torders\n3224\tCONSTRAINT\tpublic\torders orders_pkey\n";
 
 #[test]
