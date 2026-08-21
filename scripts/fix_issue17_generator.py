@@ -2,6 +2,14 @@ from pathlib import Path
 
 path = Path(__file__).with_name("apply_issue17.py")
 content = path.read_text(encoding="utf-8")
+
+strict_count_check = '''    if expected is not None and count != expected:
+        raise RuntimeError(f"{path}: expected {expected} matches, found {count}: {old!r}")
+'''
+if content.count(strict_count_check) != 1:
+    raise RuntimeError("could not locate the replace_all strict-count check")
+content = content.replace(strict_count_check, "", 1)
+
 start_marker = '''regex_once(
     "crates/pgdumpx/src/copy.rs",
 '''
