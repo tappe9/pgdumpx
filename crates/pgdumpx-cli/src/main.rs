@@ -1,4 +1,6 @@
-use pgdumpx::{Archive, Compression, FieldRef, OwnedField, OwnedRow, ScanLimits};
+use pgdumpx::{
+    Archive, Compression, EntryReadLimits, FieldRef, OwnedField, OwnedRow, ScanLimits,
+};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -11,7 +13,8 @@ use std::{
 
 const NO_MATCH_EXIT: u8 = 1;
 const FAILURE_EXIT: u8 = 2;
-const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\n\nfind scan limits:\n  --max-rows <N>               positive maximum complete rows evaluated\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\n  omitted limits are unlimited";
+const DEFAULT_EXTRACT_MAX_DECOMPRESSED_BYTES: u64 = 1_073_741_824;
+const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>\n  pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\n\nextract raw-entry limit:\n  --max-decompressed-bytes <N> positive maximum decompressed entry bytes\n  omitted limit defaults to 1073741824 bytes (1 GiB)\n\nfind scan limits:\n  --max-rows <N>               positive maximum complete rows evaluated\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\n  omitted find limits are unlimited";
 
 fn main() -> ExitCode {
     let stdout = io::stdout();
@@ -43,6 +46,12 @@ where
             let archive = open_archive(&file)?;
             write_list(stdout, &archive)?;
             flush_stdout(stdout)?;
+            Ok(CliOutcome::Success)
+        }
+        Command::Extract(arguments) => {
+            let result = extract(&arguments, stdout);
+            flush_stdout(stdout)?;
+            result?;
             Ok(CliOutcome::Success)
         }
         Command::Find(arguments) => {
@@ -153,6 +162,27 @@ fn flush_stdout<W: Write>(stdout: &mut W) -> Result<(), CliError> {
         .map_err(|source| CliError::runtime(format!("stdout error: {source}")))
 }
 
+fn extract<W: Write>(arguments: &ExtractArguments, stdout: &mut W) -> Result<(), CliError> {
+    let mut archive = open_archive(&arguments.file)?;
+    let table = archive
+        .table(arguments.schema.as_bytes(), arguments.table.as_bytes())
+        .ok_or_else(|| CliError::runtime("archive error: requested table was not found".to_owned()))?;
+    let table_id = table.table_entry_id();
+    let data_id = table.data_entry_id().ok_or_else(|| {
+        CliError::runtime(format!(
+            "archive error: TABLE dump ID {} has no related TABLE DATA entry",
+            table_id.as_i32()
+        ))
+    })?;
+    let limits = EntryReadLimits::unlimited()
+        .with_max_decompressed_bytes(arguments.max_decompressed_bytes);
+
+    archive
+        .copy_entry_to(data_id, stdout, limits)
+        .map(|_| ())
+        .map_err(|source| CliError::runtime(format!("archive error: {source}")))
+}
+
 fn find(arguments: &FindArguments) -> Result<Option<OwnedRow>, CliError> {
     let file = File::open(&arguments.file).map_err(|source| {
         CliError::runtime(format!(
@@ -238,6 +268,7 @@ fn write_escaped_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()>
 enum Command {
     Inspect { file: PathBuf },
     List { file: PathBuf },
+    Extract(ExtractArguments),
     Find(FindArguments),
 }
 
@@ -256,6 +287,7 @@ impl Command {
             "list" => Ok(Self::List {
                 file: parse_metadata_file(arguments)?,
             }),
+            "extract" => Ok(Self::Extract(ExtractArguments::parse_remaining(arguments)?)),
             "find" => Ok(Self::Find(FindArguments::parse_remaining(arguments)?)),
             _ => Err(CliError::usage(format!("unsupported command {command:?}"))),
         }
@@ -274,6 +306,71 @@ where
         return Err(CliError::usage("too many arguments"));
     }
     Ok(file)
+}
+
+#[derive(Debug)]
+struct ExtractArguments {
+    file: PathBuf,
+    schema: String,
+    table: String,
+    max_decompressed_bytes: u64,
+}
+
+impl ExtractArguments {
+    fn parse_remaining<I>(mut arguments: I) -> Result<Self, CliError>
+    where
+        I: Iterator<Item = OsString>,
+    {
+        let mut max_decompressed_bytes = None;
+
+        let file = loop {
+            let argument = arguments
+                .next()
+                .ok_or_else(|| CliError::usage("FILE is required"))?;
+
+            if argument.as_os_str() == OsStr::new("--max-decompressed-bytes") {
+                let value = parse_positive_limit(&mut arguments, "--max-decompressed-bytes")?;
+                if max_decompressed_bytes.replace(value).is_some() {
+                    return Err(CliError::usage(
+                        "--max-decompressed-bytes may be specified only once",
+                    ));
+                }
+                continue;
+            }
+
+            if argument.as_os_str() == OsStr::new("--") {
+                break arguments
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| CliError::usage("FILE is required after --"))?;
+            }
+
+            if argument
+                .to_str()
+                .is_some_and(|value| value.starts_with("--"))
+            {
+                return Err(CliError::usage(format!(
+                    "unsupported extract option {argument:?}"
+                )));
+            }
+
+            break PathBuf::from(argument);
+        };
+
+        let table_selector = required_utf8(arguments.next(), "SCHEMA.TABLE")?;
+        if arguments.next().is_some() {
+            return Err(CliError::usage("too many arguments"));
+        }
+        let (schema, table) = parse_table_selector(&table_selector)?;
+
+        Ok(Self {
+            file,
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+            max_decompressed_bytes: max_decompressed_bytes
+                .unwrap_or(DEFAULT_EXTRACT_MAX_DECOMPRESSED_BYTES),
+        })
+    }
 }
 
 #[derive(Debug)]
