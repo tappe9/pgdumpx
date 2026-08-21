@@ -20,39 +20,9 @@ end_marker = '''replace_once(
 start = content.find(start_marker)
 end = content.find(end_marker, start)
 if start < 0 or end < 0:
-    raise RuntimeError("could not locate the copy.rs regex replacement block")
+    raise RuntimeError("could not locate the copy.rs provisional block replacement")
+content = content[:start] + content[end:]
 
-replacement = r'''replace_once(
-    "crates/pgdumpx/src/copy.rs",
-    """const PROVISIONAL_MAX_ROW_BYTES: u64 = 16 * 1024 * 1024;
-const PROVISIONAL_MAX_FIELDS: u64 = 4 * 1024;
-const INITIAL_ROW_CAPACITY_BYTES: usize = 8 * 1024;
-const COPY_TERMINATOR: &[u8] = b"\\.";
-
-const ALPHA1_COPY_LIMITS: CopyParserLimits =
-    CopyParserLimits::new(PROVISIONAL_MAX_ROW_BYTES, PROVISIONAL_MAX_FIELDS);
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct CopyParserLimits {
-    max_row_bytes: u64,
-    max_fields: u64,
-}
-
-impl CopyParserLimits {
-    pub(crate) const fn new(max_row_bytes: u64, max_fields: u64) -> Self {
-        Self {
-            max_row_bytes,
-            max_fields,
-        }
-    }
-}
-""",
-    """const INITIAL_ROW_CAPACITY_BYTES: usize = 8 * 1024;
-const COPY_TERMINATOR: &[u8] = b"\\.";
-""",
-)
-'''
-content = content[:start] + replacement + content[end:]
 old_count = '''    "limits.string()",
     "limits.max_string_bytes()",
     expected=2,
