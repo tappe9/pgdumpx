@@ -1,0 +1,32 @@
+name: Branch formatter
+
+on:
+  push:
+    branches: [feat/structural-limits-metadata-cli]
+
+permissions:
+  contents: write
+
+jobs:
+  fmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/structural-limits-metadata-cli
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- crates/pgdumpx/src crates/pgdumpx/tests crates/pgdumpx-cli/src crates/pgdumpx-cli/tests
+          git commit -m "style: format Rust sources"
+          git push origin HEAD:feat/structural-limits-metadata-cli
