@@ -1,5 +1,5 @@
 use crate::copy_metadata::TableDataRepresentation;
-use std::{error::Error, fmt, io};
+use std::{error::Error, fmt, io, str::Utf8Error};
 
 /// Errors produced while reading PostgreSQL dump archives.
 #[derive(Debug)]
@@ -202,6 +202,11 @@ pub enum PgDumpError {
     },
     /// Checked COPY row-number accounting overflowed.
     CopyRowNumberOverflow { row: u64 },
+    /// Explicit conversion from arbitrary bytes to UTF-8 failed.
+    InvalidUtf8 {
+        context: &'static str,
+        source: Utf8Error,
+    },
     /// Checked arithmetic or conversion overflowed.
     ArithmeticOverflow { offset: u64 },
 }
@@ -516,6 +521,9 @@ impl fmt::Display for PgDumpError {
                     "COPY row-number counter overflow after row {row}"
                 )
             }
+            Self::InvalidUtf8 { context, source } => {
+                write!(formatter, "invalid UTF-8 in {context}: {source}")
+            }
             Self::ArithmeticOverflow { offset } => {
                 write!(
                     formatter,
@@ -532,6 +540,7 @@ impl Error for PgDumpError {
             Self::Io { source, .. }
             | Self::DecompressionFailed { source, .. }
             | Self::CopyIo { source, .. } => Some(source),
+            Self::InvalidUtf8 { source, .. } => Some(source),
             _ => None,
         }
     }

@@ -11,6 +11,7 @@ mod copy_metadata;
 mod custom;
 mod entry;
 mod error;
+mod error_taxonomy;
 mod io;
 mod limits;
 mod model;
@@ -31,7 +32,8 @@ pub use archive::Archive;
 pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
-pub use error::{ErrorCategory, LimitContext, PgDumpError, ResourceLimit};
+pub use error::PgDumpError;
+pub use error_taxonomy::{ErrorCategory, LimitContext, ResourceLimit};
 pub use limits::Limits;
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
