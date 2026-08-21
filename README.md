@@ -99,7 +99,7 @@ The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/CO
 
 ## Intended Rust API
 
-The current Alpha 2 slice implements the metadata, row-streaming, first-match, and public structural-limit APIs shown below. Later v0.1 APIs remain subject to the roadmap.
+The current Alpha 2 slice implements the metadata, row-streaming, first-match, public structural-limit, scan-limit, and error-taxonomy APIs shown below. Later v0.1 APIs remain subject to the roadmap.
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -121,18 +121,26 @@ while let Some(row) = rows.next_row()? {
 
 `next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references a reusable internal buffer and remains valid only until the next mutable reader operation.
 
-A primary v0.1 use case is finding the first matching row:
+A primary v0.1 use case is finding the first matching row with explicit total-work budgets:
 
 ```rust
+use pgdumpx::ScanLimits;
+
 let mut rows = archive.table_rows(b"public", b"orders")?;
 let order_number = rows
     .column_index(b"order_number")?
     .ok_or(/* application error */)?;
 
-let row = rows.find_first(|row| {
+let scan_limits = ScanLimits::unlimited()
+    .with_max_rows(100_000)
+    .with_max_decompressed_bytes(64 * 1024 * 1024);
+
+let row = rows.find_first_with_limits(scan_limits, |row| {
     row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
 })?;
 ```
+
+`find_first` remains the convenience path without additional total-work budgets. `find_first_with_limits` uses the same streaming parser and predicate loop while enforcing the supplied `ScanLimits`.
 
 Column lookup distinguishes three states:
 
@@ -142,7 +150,7 @@ Ok(None)         valid metadata, requested column absent
 Err(...)         column layout unavailable or malformed
 ```
 
-`find_first` is a **streaming sequential scan**, not a database index lookup. The TOC enables direct access to the selected table-data entry, but rows must be decompressed and parsed in order from the beginning of that entry. A match can stop early; an absent or late match may process the complete selected table unless a configured budget ends the operation.
+Both first-match methods perform a **streaming sequential scan**, not a database index lookup. The TOC enables direct access to the selected table-data entry, but rows must be decompressed and parsed in order from the beginning of that entry. A match can stop early; an absent or late match may process the complete selected table unless a configured budget ends the operation.
 
 The API includes separate concepts for:
 
@@ -151,6 +159,8 @@ The API includes separate concepts for:
 - decompressed-byte limits for raw entry extraction.
 
 The implemented structural configuration is `Limits`. `Limits::default()` is finite and compatibility-oriented, `Archive::open` uses those defaults, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds through the same parser path.
+
+The implemented total-work configuration is `ScanLimits`. `ScanLimits::default()` and `ScanLimits::unlimited()` leave both optional budgets unset. `max_rows = N` permits at most `N` complete rows to be yielded or evaluated, including a matching row. The decompressed-byte budget counts physical COPY bytes consumed by the parser—including field separators, row terminators, escape spellings, and the COPY terminator when consumed—not logical decoded field length or unread decoder/`BufRead` lookahead. A crossing row is not yielded or passed to the predicate, and exhaustion is returned as a typed resource error with limit and consumed-work context.
 
 See [docs/API-DESIGN.md](docs/API-DESIGN.md).
 
@@ -163,6 +173,8 @@ pgdumpx inspect backup.dump
 pgdumpx list backup.dump
 pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
+pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
+  backup.dump public.orders order_number 123456
 ```
 
 ### `inspect` / `list`
@@ -179,21 +191,25 @@ The command uses the library's bounded raw-extraction path. Limit exhaustion is 
 
 `find` is a narrow first-match equality command. It is not a SQL parser and does not introduce a general `WHERE` language.
 
-The v0.1 form is exactly:
+The v0.1 form is:
 
 ```text
-pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
+
+The optional scan-limit flags precede `<FILE>`. Each accepts a positive decimal `u64`, may be specified at most once, and is independent of the other. Omitting a flag leaves that budget unlimited. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses the same parser-consumed physical COPY-byte accounting as the Rust API; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes.
 
 `<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting and escaping are not supported. Schema, table, column, and value arguments are UTF-8; the Rust API remains byte-oriented.
 
 A match writes exactly one **normalized COPY text record** to stdout. Fields remain in COPY column order, are separated by ASCII tabs, and the record ends with LF. NULL is `\N`; an empty byte field is an empty field. Backslash, tab, LF, and CR are emitted as `\\`, `\t`, `\n`, and `\r`; other non-printable or non-ASCII bytes use three-digit octal escapes such as `\377`. This keeps stdout deterministic and ASCII-safe without lossy UTF-8 conversion. No match produces no output, and diagnostics are written only to stderr.
 
+A resource limit is an operation failure, not a clean no-match result. It therefore writes a diagnostic to stderr and exits with `2+` even when no matching row was reached before exhaustion.
+
 Stable exit behavior:
 
 ```text
 0  match found
-1  no matching row
+1  completed scan with no matching row
 2+ usage, I/O, format, integrity, decompression, COPY, encoding, or resource error
 ```
 

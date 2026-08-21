@@ -1,5 +1,5 @@
 use crate::{
-    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row,
+    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row, ScanLimits,
     copy_metadata::TableDataMetadata,
 };
 use std::io::Read;
@@ -22,10 +22,20 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         entry: EntryDataReader<'a, R>,
         limits: Limits,
     ) -> Self {
+        Self::new_with_scan_limits(data_id, metadata, entry, limits, ScanLimits::unlimited())
+    }
+
+    pub(crate) fn new_with_scan_limits(
+        data_id: DumpId,
+        metadata: &'a TableDataMetadata,
+        entry: EntryDataReader<'a, R>,
+        limits: Limits,
+        scan_limits: ScanLimits,
+    ) -> Self {
         Self {
             data_id,
             metadata,
-            rows: CopyRowReader::with_limits(entry, limits),
+            rows: CopyRowReader::with_limits_and_scan_limits(entry, limits, scan_limits),
         }
     }
 
@@ -70,16 +80,27 @@ impl<'a, R: Read> TableRowReader<'a, R> {
     /// Non-matching rows continue to borrow reusable parser storage. Only the
     /// matched row is copied into an [`OwnedRow`], and the stream is not read
     /// after that match.
-    pub fn find_first<F>(&mut self, mut predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
+    pub fn find_first<F>(&mut self, predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
     where
         F: FnMut(&Row<'_>) -> bool,
     {
-        while let Some(row) = self.rows.next_row()? {
-            if predicate(&row) {
-                return OwnedRow::try_from_borrowed(&row).map(Some);
-            }
-        }
-        Ok(None)
+        self.rows.find_first(predicate)
+    }
+
+    /// Returns the first matching row while enforcing operation-level scan limits.
+    ///
+    /// Byte accounting uses physical decompressed COPY bytes consumed by the
+    /// parser, not decoder or buffered-reader lookahead and not logical decoded
+    /// field length.
+    pub fn find_first_with_limits<F>(
+        &mut self,
+        scan_limits: ScanLimits,
+        predicate: F,
+    ) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool,
+    {
+        self.rows.find_first_with_limits(scan_limits, predicate)
     }
 
     #[cfg(test)]

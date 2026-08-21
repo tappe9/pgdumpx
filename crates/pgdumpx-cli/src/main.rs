@@ -1,7 +1,7 @@
-use pgdumpx::{Archive, Compression, FieldRef, OwnedField, OwnedRow};
+use pgdumpx::{Archive, Compression, FieldRef, OwnedField, OwnedRow, ScanLimits};
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt,
     fs::File,
     io::{self, BufReader, BufWriter, Write},
@@ -11,7 +11,7 @@ use std::{
 
 const NO_MATCH_EXIT: u8 = 1;
 const FAILURE_EXIT: u8 = 2;
-const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>";
+const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\n\nfind scan limits:\n  --max-rows <N>               positive maximum complete rows evaluated\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\n  omitted limits are unlimited";
 
 fn main() -> ExitCode {
     let stdout = io::stdout();
@@ -176,8 +176,10 @@ fn find(arguments: &FindArguments) -> Result<Option<OwnedRow>, CliError> {
         })?;
     let expected = arguments.value.as_bytes();
 
-    rows.find_first(|row| row.field(column_index) == Some(FieldRef::Bytes(expected)))
-        .map_err(|source| CliError::runtime(format!("archive error: {source}")))
+    rows.find_first_with_limits(arguments.scan_limits, |row| {
+        row.field(column_index) == Some(FieldRef::Bytes(expected))
+    })
+    .map_err(|source| CliError::runtime(format!("archive error: {source}")))
 }
 
 fn write_row<W: Write>(output: &mut W, row: &OwnedRow) -> io::Result<()> {
@@ -281,6 +283,7 @@ struct FindArguments {
     table: String,
     column: String,
     value: String,
+    scan_limits: ScanLimits,
 }
 
 impl FindArguments {
@@ -288,10 +291,51 @@ impl FindArguments {
     where
         I: Iterator<Item = OsString>,
     {
-        let file = arguments
-            .next()
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::usage("FILE is required"))?;
+        let mut max_rows = None;
+        let mut max_decompressed_bytes = None;
+
+        let file = loop {
+            let argument = arguments
+                .next()
+                .ok_or_else(|| CliError::usage("FILE is required"))?;
+
+            if argument.as_os_str() == OsStr::new("--max-rows") {
+                let value = parse_positive_limit(&mut arguments, "--max-rows")?;
+                if max_rows.replace(value).is_some() {
+                    return Err(CliError::usage("--max-rows may be specified only once"));
+                }
+                continue;
+            }
+
+            if argument.as_os_str() == OsStr::new("--max-decompressed-bytes") {
+                let value = parse_positive_limit(&mut arguments, "--max-decompressed-bytes")?;
+                if max_decompressed_bytes.replace(value).is_some() {
+                    return Err(CliError::usage(
+                        "--max-decompressed-bytes may be specified only once",
+                    ));
+                }
+                continue;
+            }
+
+            if argument.as_os_str() == OsStr::new("--") {
+                break arguments
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| CliError::usage("FILE is required after --"))?;
+            }
+
+            if argument
+                .to_str()
+                .is_some_and(|value| value.starts_with("--"))
+            {
+                return Err(CliError::usage(format!(
+                    "unsupported find option {argument:?}"
+                )));
+            }
+
+            break PathBuf::from(argument);
+        };
+
         let table_selector = required_utf8(arguments.next(), "SCHEMA.TABLE")?;
         let column = required_utf8(arguments.next(), "COLUMN")?;
         let value = required_utf8(arguments.next(), "VALUE")?;
@@ -303,14 +347,39 @@ impl FindArguments {
         }
 
         let (schema, table) = parse_table_selector(&table_selector)?;
+        let mut scan_limits = ScanLimits::unlimited();
+        if let Some(value) = max_rows {
+            scan_limits = scan_limits.with_max_rows(value);
+        }
+        if let Some(value) = max_decompressed_bytes {
+            scan_limits = scan_limits.with_max_decompressed_bytes(value);
+        }
+
         Ok(Self {
             file,
             schema: schema.to_owned(),
             table: table.to_owned(),
             column,
             value,
+            scan_limits,
         })
     }
+}
+
+fn parse_positive_limit<I>(arguments: &mut I, option: &str) -> Result<u64, CliError>
+where
+    I: Iterator<Item = OsString>,
+{
+    let value = required_utf8(arguments.next(), option)?;
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| CliError::usage(format!("{option} must be a positive u64 integer")))?;
+    if parsed == 0 {
+        return Err(CliError::usage(format!(
+            "{option} must be greater than zero"
+        )));
+    }
+    Ok(parsed)
 }
 
 fn required_utf8(argument: Option<OsString>, name: &str) -> Result<String, CliError> {

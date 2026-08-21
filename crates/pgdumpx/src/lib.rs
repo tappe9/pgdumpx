@@ -11,6 +11,7 @@ mod copy_metadata;
 mod custom;
 mod entry;
 mod error;
+mod error_taxonomy;
 mod io;
 mod limits;
 mod model;
@@ -21,7 +22,11 @@ mod archive_primitives_tests;
 #[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
+mod error_tests;
+#[cfg(test)]
 mod metadata_open_tests;
+#[cfg(test)]
+mod scan_limits_tests;
 #[cfg(test)]
 mod table_rows_tests;
 
@@ -30,7 +35,8 @@ pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
-pub use limits::Limits;
+pub use error_taxonomy::{ErrorCategory, LimitContext, ResourceLimit};
+pub use limits::{Limits, ScanLimits};
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,

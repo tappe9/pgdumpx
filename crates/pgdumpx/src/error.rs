@@ -1,5 +1,5 @@
 use crate::copy_metadata::TableDataRepresentation;
-use std::{error::Error, fmt, io};
+use std::{error::Error, fmt, io, str::Utf8Error};
 
 /// Errors produced while reading PostgreSQL dump archives.
 #[derive(Debug)]
@@ -190,6 +190,15 @@ pub enum PgDumpError {
         actual: u64,
         byte_offset: u64,
     },
+    /// One scan attempted to consume more complete rows than its configured budget.
+    ScanRowLimitExceeded { row: u64, limit: u64, consumed: u64 },
+    /// One scan consumed more decompressed COPY bytes than its configured budget.
+    ScanDecompressedByteLimitExceeded {
+        row: u64,
+        limit: u64,
+        consumed: u64,
+        byte_offset: u64,
+    },
     /// Memory for bounded current-row byte storage could not be reserved.
     CopyRowAllocationFailed { row: u64, requested: u64 },
     /// Memory for bounded current-row field metadata could not be reserved.
@@ -202,6 +211,13 @@ pub enum PgDumpError {
     },
     /// Checked COPY row-number accounting overflowed.
     CopyRowNumberOverflow { row: u64 },
+    /// Checked total scan row accounting overflowed.
+    ScanRowCountOverflow { row: u64, consumed: u64 },
+    /// Explicit conversion from arbitrary bytes to UTF-8 failed.
+    InvalidUtf8 {
+        context: &'static str,
+        source: Utf8Error,
+    },
     /// Checked arithmetic or conversion overflowed.
     ArithmeticOverflow { offset: u64 },
 }
@@ -494,6 +510,23 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "COPY row {row} reached {actual} fields at offset {byte_offset}, exceeding limit {limit}"
             ),
+            Self::ScanRowLimitExceeded {
+                row,
+                limit,
+                consumed,
+            } => write!(
+                formatter,
+                "row scan reached row {row} and {consumed} complete rows, exceeding limit {limit}"
+            ),
+            Self::ScanDecompressedByteLimitExceeded {
+                row,
+                limit,
+                consumed,
+                byte_offset,
+            } => write!(
+                formatter,
+                "row scan reached {consumed} decompressed bytes in row {row} at offset {byte_offset}, exceeding limit {limit}"
+            ),
             Self::CopyRowAllocationFailed { row, requested } => write!(
                 formatter,
                 "could not reserve {requested} bytes for COPY row {row}"
@@ -516,6 +549,13 @@ impl fmt::Display for PgDumpError {
                     "COPY row-number counter overflow after row {row}"
                 )
             }
+            Self::ScanRowCountOverflow { row, consumed } => write!(
+                formatter,
+                "row-scan counter overflow while counting row {row} after {consumed} rows"
+            ),
+            Self::InvalidUtf8 { context, source } => {
+                write!(formatter, "invalid UTF-8 in {context}: {source}")
+            }
             Self::ArithmeticOverflow { offset } => {
                 write!(
                     formatter,
@@ -532,6 +572,7 @@ impl Error for PgDumpError {
             Self::Io { source, .. }
             | Self::DecompressionFailed { source, .. }
             | Self::CopyIo { source, .. } => Some(source),
+            Self::InvalidUtf8 { source, .. } => Some(source),
             _ => None,
         }
     }
