@@ -1,5 +1,5 @@
 use crate::{
-    Column, CopyRowReader, DumpId, EntryDataReader, OwnedRow, PgDumpError, Row,
+    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row,
     copy_metadata::TableDataMetadata,
 };
 use std::io::Read;
@@ -20,11 +20,12 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         data_id: DumpId,
         metadata: &'a TableDataMetadata,
         entry: EntryDataReader<'a, R>,
+        limits: Limits,
     ) -> Self {
         Self {
             data_id,
             metadata,
-            rows: CopyRowReader::new(entry),
+            rows: CopyRowReader::with_limits(entry, limits),
         }
     }
 

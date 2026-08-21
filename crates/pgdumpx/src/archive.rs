@@ -1,6 +1,6 @@
 use crate::{
-    ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, PgDumpError, TableRef,
-    TableRowReader, TocEntry,
+    ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, Limits, PgDumpError,
+    TableRef, TableRowReader, TocEntry,
     copy_metadata::{TableDataMetadata, parse_table_data_metadata},
     custom::{
         data::{BLK_DATA, CustomChunkReader},
@@ -9,7 +9,6 @@ use crate::{
         toc::read_toc,
     },
     io::archive_reader::ArchiveReader,
-    limits::ALPHA1_METADATA_LIMITS,
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -22,27 +21,34 @@ pub struct Archive<R> {
     reader: R,
     header: ArchiveHeader,
     integer_size: crate::custom::primitives::ArchiveIntegerSize,
+    limits: Limits,
     entries: Vec<TocEntry>,
     index: ArchiveIndex,
 }
 
 impl<R: Read + Seek> Archive<R> {
-    /// Opens an exact archive-format 1.16 custom archive and parses metadata only.
+    /// Opens an exact archive-format 1.16 custom archive with finite default limits.
     pub fn open(reader: R) -> Result<Self, PgDumpError> {
+        Self::open_with_limits(reader, Limits::default())
+    }
+
+    /// Opens an exact archive-format 1.16 custom archive with caller-supplied limits.
+    pub fn open_with_limits(reader: R, limits: Limits) -> Result<Self, PgDumpError> {
         let mut reader = ArchiveReader::new(reader);
-        let parsed_header = read_header(&mut reader, ALPHA1_METADATA_LIMITS)?;
+        let parsed_header = read_header(&mut reader, limits)?;
         let entries = read_toc(
             &mut reader,
             parsed_header.integer_size,
             parsed_header.offset_size,
-            ALPHA1_METADATA_LIMITS,
+            limits,
         )?;
-        let index = ArchiveIndex::build(&entries)?;
+        let index = ArchiveIndex::build(&entries, limits)?;
 
         Ok(Self {
             reader: reader.into_inner(),
             header: parsed_header.header,
             integer_size: parsed_header.integer_size,
+            limits,
             entries,
             index,
         })
@@ -109,7 +115,12 @@ impl<R: Read + Seek> Archive<R> {
             self.integer_size,
             entry,
         )?;
-        Ok(TableRowReader::new(data_id, metadata, entry_reader))
+        Ok(TableRowReader::new(
+            data_id,
+            metadata,
+            entry_reader,
+            self.limits,
+        ))
     }
 }
 
@@ -212,7 +223,7 @@ struct ArchiveIndex {
 }
 
 impl ArchiveIndex {
-    fn build(entries: &[TocEntry]) -> Result<Self, PgDumpError> {
+    fn build(entries: &[TocEntry], limits: Limits) -> Result<Self, PgDumpError> {
         let mut by_dump_id = HashMap::new();
         reserve_map(&mut by_dump_id, entries.len(), "dump-ID index")?;
         for (index, entry) in entries.iter().enumerate() {
@@ -263,7 +274,8 @@ impl ArchiveIndex {
         )?;
 
         for data in entries.iter().filter(|entry| entry.is_table_data()) {
-            let metadata = parse_table_data_metadata(data.id(), data.copy_statement_bytes())?;
+            let metadata =
+                parse_table_data_metadata(data.id(), data.copy_statement_bytes(), limits)?;
             table_data_metadata.insert(data.id(), metadata);
 
             let mut table_id = None;
