@@ -2,6 +2,8 @@ use crate::{
     Compression, DumpId, PgDumpError, custom::data::CustomChunkReader, error::into_io_error,
 };
 use flate2::{Decompress, FlushDecompress, Status};
+#[cfg(feature = "lz4")]
+use lz4_flex::frame::FrameDecoder;
 use std::{
     fmt,
     io::{self, Read},
@@ -21,6 +23,8 @@ pub struct EntryDataReader<'a, R> {
 enum EntryBackend<'a, R> {
     None(CustomChunkReader<'a, R>),
     Gzip(ZlibEntryDecoder<'a, R>),
+    #[cfg(feature = "lz4")]
+    Lz4(Lz4EntryDecoder<'a, R>),
 }
 
 impl<'a, R: Read> EntryDataReader<'a, R> {
@@ -33,10 +37,17 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
             Compression::None => EntryBackend::None(chunks),
             Compression::Gzip => EntryBackend::Gzip(ZlibEntryDecoder::new(dump_id, chunks)?),
             Compression::Lz4 => {
-                return Err(PgDumpError::UnsupportedEntryCompression {
-                    dump_id: dump_id.as_i32(),
-                    algorithm: "lz4",
-                });
+                #[cfg(feature = "lz4")]
+                {
+                    EntryBackend::Lz4(Lz4EntryDecoder::new(dump_id, chunks))
+                }
+                #[cfg(not(feature = "lz4"))]
+                {
+                    return Err(PgDumpError::UnsupportedEntryCompression {
+                        dump_id: dump_id.as_i32(),
+                        algorithm: "lz4",
+                    });
+                }
             }
             Compression::Zstd => {
                 return Err(PgDumpError::UnsupportedEntryCompression {
@@ -52,6 +63,8 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
         match &self.backend {
             EntryBackend::None(_) => "none",
             EntryBackend::Gzip(_) => "gzip",
+            #[cfg(feature = "lz4")]
+            EntryBackend::Lz4(_) => "lz4",
         }
     }
 }
@@ -71,6 +84,8 @@ impl<R: Read> Read for EntryDataReader<'_, R> {
         match &mut self.backend {
             EntryBackend::None(reader) => reader.read(output),
             EntryBackend::Gzip(reader) => reader.read(output),
+            #[cfg(feature = "lz4")]
+            EntryBackend::Lz4(reader) => reader.read(output),
         }
     }
 }
@@ -205,6 +220,80 @@ impl<R: Read> Read for ZlibEntryDecoder<'_, R> {
                     ));
                     return self.fail_or_defer(error, written);
                 }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "lz4")]
+struct Lz4EntryDecoder<'a, R> {
+    dump_id: DumpId,
+    decoder: FrameDecoder<TrackedCompressedSource<'a, R>>,
+}
+
+#[cfg(feature = "lz4")]
+impl<'a, R> Lz4EntryDecoder<'a, R> {
+    fn new(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Self {
+        Self {
+            dump_id,
+            decoder: FrameDecoder::new(TrackedCompressedSource::new(source)),
+        }
+    }
+
+    fn decompression_error(&self, source: io::Error) -> io::Error {
+        into_io_error(PgDumpError::DecompressionFailed {
+            dump_id: self.dump_id.as_i32(),
+            algorithm: "lz4",
+            source,
+        })
+    }
+}
+
+#[cfg(feature = "lz4")]
+impl<R: Read> Read for Lz4EntryDecoder<'_, R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        match self.decoder.read(output) {
+            Ok(read) => Ok(read),
+            Err(source) => {
+                if let Some(source) = self.decoder.get_mut().take_error() {
+                    Err(source)
+                } else {
+                    Err(self.decompression_error(source))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "lz4")]
+struct TrackedCompressedSource<'a, R> {
+    inner: CustomChunkReader<'a, R>,
+    error: Option<io::Error>,
+}
+
+#[cfg(feature = "lz4")]
+impl<'a, R> TrackedCompressedSource<'a, R> {
+    fn new(inner: CustomChunkReader<'a, R>) -> Self {
+        Self { inner, error: None }
+    }
+
+    fn take_error(&mut self) -> Option<io::Error> {
+        self.error.take()
+    }
+}
+
+#[cfg(feature = "lz4")]
+impl<R: Read> Read for TrackedCompressedSource<'_, R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        match self.inner.read(output) {
+            Ok(read) => Ok(read),
+            Err(source) => {
+                let kind = source.kind();
+                self.error = Some(source);
+                Err(io::Error::new(
+                    kind,
+                    "compressed entry source read failed",
+                ))
             }
         }
     }

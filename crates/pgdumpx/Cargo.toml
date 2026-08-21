@@ -10,10 +10,11 @@ readme.workspace = true
 
 [features]
 default = ["lz4"]
-lz4 = []
+lz4 = ["dep:lz4_flex"]
 
 [dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+lz4_flex = { version = "0.14", optional = true, default-features = false, features = ["frame", "safe-decode"] }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
