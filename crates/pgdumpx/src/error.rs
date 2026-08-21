@@ -114,6 +114,8 @@ pub enum PgDumpError {
     },
     /// Memory for bounded COPY column metadata could not be reserved.
     CopyColumnMetadataAllocationFailed { dump_id: i32, requested: u64 },
+    /// The requested dump ID is not present in the archive TOC.
+    EntryNotFound { dump_id: i32 },
     /// The selected TOC entry explicitly has no data block.
     EntryHasNoData { dump_id: i32 },
     /// The selected TOC entry has no recorded direct-seek position.
@@ -164,6 +166,24 @@ pub enum PgDumpError {
     DecompressionFailed {
         dump_id: i32,
         algorithm: &'static str,
+        source: io::Error,
+    },
+    /// A bounded raw-entry reader attempted to expose more decompressed bytes than allowed.
+    EntryDecompressedByteLimitExceeded {
+        dump_id: i32,
+        limit: u64,
+        consumed: u64,
+    },
+    /// Checked raw-entry decompressed-byte accounting overflowed.
+    EntryDecompressedByteCountOverflow {
+        dump_id: i32,
+        consumed: u64,
+        increment: u64,
+    },
+    /// Writing decompressed raw-entry bytes to the requested destination failed.
+    EntryOutputIo {
+        dump_id: i32,
+        written: u64,
         source: io::Error,
     },
     /// An underlying decompressed COPY stream I/O operation failed.
@@ -225,18 +245,14 @@ pub enum PgDumpError {
 impl fmt::Display for PgDumpError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { offset, source } => {
-                write!(
-                    formatter,
-                    "I/O error at archive byte offset {offset}: {source}"
-                )
-            }
-            Self::UnexpectedEof { offset } => {
-                write!(
-                    formatter,
-                    "unexpected end of archive at byte offset {offset}"
-                )
-            }
+            Self::Io { offset, source } => write!(
+                formatter,
+                "I/O error at archive byte offset {offset}: {source}"
+            ),
+            Self::UnexpectedEof { offset } => write!(
+                formatter,
+                "unexpected end of archive at byte offset {offset}"
+            ),
             Self::InvalidArchiveMagic { offset } => {
                 write!(formatter, "invalid archive magic at byte offset {offset}")
             }
@@ -404,6 +420,9 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "could not reserve {requested} elements or bytes for COPY metadata of dump ID {dump_id}"
             ),
+            Self::EntryNotFound { dump_id } => {
+                write!(formatter, "TOC dump ID {dump_id} was not found")
+            }
             Self::EntryHasNoData { dump_id } => {
                 write!(formatter, "TOC dump ID {dump_id} has no data block")
             }
@@ -476,6 +495,30 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "could not decompress dump ID {dump_id} with {algorithm}: {source}"
             ),
+            Self::EntryDecompressedByteLimitExceeded {
+                dump_id,
+                limit,
+                consumed,
+            } => write!(
+                formatter,
+                "raw entry dump ID {dump_id} reached {consumed} decompressed bytes, exceeding limit {limit}"
+            ),
+            Self::EntryDecompressedByteCountOverflow {
+                dump_id,
+                consumed,
+                increment,
+            } => write!(
+                formatter,
+                "raw entry decompressed-byte counter overflow for dump ID {dump_id}: {consumed} + {increment}"
+            ),
+            Self::EntryOutputIo {
+                dump_id,
+                written,
+                source,
+            } => write!(
+                formatter,
+                "I/O error while writing dump ID {dump_id} after {written} decompressed bytes: {source}"
+            ),
             Self::CopyIo {
                 row,
                 consumed,
@@ -543,12 +586,10 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "COPY consumed-byte counter overflow in row {row}: {consumed} + {increment}"
             ),
-            Self::CopyRowNumberOverflow { row } => {
-                write!(
-                    formatter,
-                    "COPY row-number counter overflow after row {row}"
-                )
-            }
+            Self::CopyRowNumberOverflow { row } => write!(
+                formatter,
+                "COPY row-number counter overflow after row {row}"
+            ),
             Self::ScanRowCountOverflow { row, consumed } => write!(
                 formatter,
                 "row-scan counter overflow while counting row {row} after {consumed} rows"
@@ -556,12 +597,10 @@ impl fmt::Display for PgDumpError {
             Self::InvalidUtf8 { context, source } => {
                 write!(formatter, "invalid UTF-8 in {context}: {source}")
             }
-            Self::ArithmeticOverflow { offset } => {
-                write!(
-                    formatter,
-                    "arithmetic overflow at archive byte offset {offset}"
-                )
-            }
+            Self::ArithmeticOverflow { offset } => write!(
+                formatter,
+                "arithmetic overflow at archive byte offset {offset}"
+            ),
         }
     }
 }
@@ -571,6 +610,7 @@ impl Error for PgDumpError {
         match self {
             Self::Io { source, .. }
             | Self::DecompressionFailed { source, .. }
+            | Self::EntryOutputIo { source, .. }
             | Self::CopyIo { source, .. } => Some(source),
             Self::InvalidUtf8 { source, .. } => Some(source),
             _ => None,
