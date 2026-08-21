@@ -3,7 +3,7 @@ use std::{error::Error as _, io};
 
 #[test]
 fn callers_can_classify_representative_errors_without_display_parsing() {
-    let utf8_source = std::str::from_utf8(b"\xff").unwrap_err();
+    let utf8_source = String::from_utf8(vec![0xff]).unwrap_err().utf8_error();
     let cases = [
         (
             PgDumpError::Io {

@@ -336,19 +336,19 @@ impl PgDumpError {
                 *limit,
                 *length,
             )),
-            Self::TocEntryLimitExceeded { count, limit, .. } => Some(LimitContext::new(
-                ResourceLimit::TocEntries,
-                *limit,
-                *count,
-            )),
+            Self::TocEntryLimitExceeded { count, limit, .. } => {
+                Some(LimitContext::new(ResourceLimit::TocEntries, *limit, *count))
+            }
             Self::DependencyLimitExceeded { count, limit, .. } => Some(LimitContext::new(
                 ResourceLimit::DependenciesPerEntry,
                 *limit,
                 *count,
             )),
-            Self::CopyColumnCountLimitExceeded { limit, actual, .. } => Some(
-                LimitContext::new(ResourceLimit::CopyColumns, *limit, *actual),
-            ),
+            Self::CopyColumnCountLimitExceeded { limit, actual, .. } => Some(LimitContext::new(
+                ResourceLimit::CopyColumns,
+                *limit,
+                *actual,
+            )),
             Self::CopyRowByteLimitExceeded { limit, actual, .. } => Some(LimitContext::new(
                 ResourceLimit::CopyRowBytes,
                 *limit,
