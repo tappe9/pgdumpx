@@ -1,10 +1,9 @@
 use crate::{
+    Limits,
     error::PgDumpError,
     model::{ArchiveString, DumpId},
 };
 use std::{collections::HashMap, str::Utf8Error};
-
-const PROVISIONAL_MAX_COPY_COLUMNS: u64 = 4 * 1024;
 
 /// A supported or explicitly rejected table-data representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,9 +130,19 @@ pub(crate) struct CopyColumnLayout {
     by_name: HashMap<Vec<u8>, usize>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn parse_table_data_metadata(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
+) -> Result<TableDataMetadata, PgDumpError> {
+    parse_table_data_metadata_with_limits(dump_id, copy_statement, Limits::default())
+}
+
+pub(crate) fn parse_table_data_metadata_with_limits(
+    dump_id: DumpId,
+    copy_statement: Option<&[u8]>,
+    limits: Limits,
 ) -> Result<TableDataMetadata, PgDumpError> {
     let Some(statement) = copy_statement else {
         return Ok(TableDataMetadata::Unsupported(
@@ -144,13 +153,14 @@ pub(crate) fn parse_table_data_metadata(
         return Ok(TableDataMetadata::Unavailable);
     }
 
-    let parsed = match CopyStatementParser::new(statement, dump_id).parse() {
-        Ok(parsed) => parsed,
-        Err(MetadataParseError::Malformed(reason)) => {
-            return Ok(TableDataMetadata::Malformed { reason });
-        }
-        Err(MetadataParseError::Fatal(error)) => return Err(error),
-    };
+    let parsed =
+        match CopyStatementParser::new(statement, dump_id, limits.max_fields_per_row()).parse() {
+            Ok(parsed) => parsed,
+            Err(MetadataParseError::Malformed(reason)) => {
+                return Ok(TableDataMetadata::Malformed { reason });
+            }
+            Err(MetadataParseError::Fatal(error)) => return Err(error),
+        };
 
     match parsed {
         ParsedStatement::Copy(columns) => match CopyColumnLayout::new(columns, dump_id)? {
@@ -208,14 +218,16 @@ struct CopyStatementParser<'a> {
     input: &'a [u8],
     position: usize,
     dump_id: DumpId,
+    max_columns: usize,
 }
 
 impl<'a> CopyStatementParser<'a> {
-    const fn new(input: &'a [u8], dump_id: DumpId) -> Self {
+    const fn new(input: &'a [u8], dump_id: DumpId, max_columns: usize) -> Self {
         Self {
             input,
             position: 0,
             dump_id,
+            max_columns,
         }
     }
 
@@ -293,10 +305,10 @@ impl<'a> CopyStatementParser<'a> {
                 .checked_add(1)
                 .ok_or(PgDumpError::ArithmeticOverflow { offset: 0 })?;
             let actual_u64 = to_u64(actual)?;
-            if actual_u64 > PROVISIONAL_MAX_COPY_COLUMNS {
+            if actual > self.max_columns {
                 return Err(PgDumpError::CopyColumnCountLimitExceeded {
                     dump_id: self.dump_id.as_i32(),
-                    limit: PROVISIONAL_MAX_COPY_COLUMNS,
+                    limit: to_u64(self.max_columns)?,
                     actual: actual_u64,
                 }
                 .into());

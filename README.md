@@ -99,7 +99,7 @@ The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/CO
 
 ## Intended Rust API
 
-The public API is still a design contract, not an implemented interface.
+The current Alpha 2 slice implements the metadata, row-streaming, first-match, and public structural-limit APIs shown below. Later v0.1 APIs remain subject to the roadmap.
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -150,11 +150,13 @@ The API includes separate concepts for:
 - total row-scan work limits;
 - decompressed-byte limits for raw entry extraction.
 
+The implemented structural configuration is `Limits`. `Limits::default()` is finite and compatibility-oriented, `Archive::open` uses those defaults, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds through the same parser path.
+
 See [docs/API-DESIGN.md](docs/API-DESIGN.md).
 
-## Intended CLI
+## CLI
 
-The CLI consumes the same public Rust library API. It is also an early end-to-end acceptance path rather than a separate parser implementation.
+`inspect`, `list`, and `find` are implemented and consume the same public Rust library API rather than maintaining separate archive or COPY parsers. `extract` remains planned for a later Alpha 2 issue.
 
 ```bash
 pgdumpx inspect backup.dump
@@ -163,7 +165,11 @@ pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
 ```
 
-### `extract`
+### `inspect` / `list`
+
+`inspect <FILE>` prints archive version, compression, and entry/table/table-data counts as deterministic `key=value` lines. `list <FILE>` prints TOC entries in archive order as tab-separated dump ID, object type, schema, and name columns. Both commands stop at the library metadata-open path: they do not seek into TABLE DATA payloads, decompress entry data, or invoke the COPY row parser. Diagnostics are written to stderr and malformed archives exit non-zero.
+
+### `extract` (planned)
 
 `extract` writes the selected entry's **decompressed table-data body** to stdout as binary-safe bytes. It does not add schema DDL, a `COPY` statement wrapper, or a complete restorable SQL script.
 

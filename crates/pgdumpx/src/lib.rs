@@ -30,6 +30,7 @@ pub use copy::{CopyRowReader, FieldRef, OwnedField, OwnedRow, Row};
 pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
+pub use limits::Limits;
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,

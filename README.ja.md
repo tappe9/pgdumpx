@@ -99,7 +99,7 @@ unsupported representationはCOPY textとして推測せず、row APIからtyped
 
 ## 想定Rust API
 
-public APIはまだ設計契約であり、実装済みinterfaceではありません。
+現在のAlpha 2 sliceでは、以下のmetadata、row streaming、first-match、public structural-limit APIまで実装済みです。後続のv0.1 APIはROADMAPに従って追加します。
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -150,11 +150,13 @@ APIでは次を別のlimitとして扱います。
 - row scan全体のwork limits
 - raw entry extractionのdecompressed-byte limit
 
+実装済みのstructural configurationは`Limits`です。`Limits::default()`はfiniteなcompatibility-oriented defaultで、`Archive::open`はこれを利用します。`Archive::open_with_limits`では同じparser pathに対してTOC / string / dependency / row / fieldのより厳しいlimitをcallerが指定できます。
+
 詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。
 
-## 想定CLI
+## CLI
 
-CLIはpublic Rust APIのconsumerであり、別のparser実装にはしません。また、Core完成後に付け足すのではなく、早期のend-to-end acceptance pathとして実装します。
+`inspect`、`list`、`find`は実装済みで、archive / COPY parserをCLI側へ重複実装せずpublic Rust APIを利用します。`extract`は後続のAlpha 2 Issueで実装予定です。
 
 ```bash
 pgdumpx inspect backup.dump
@@ -163,7 +165,11 @@ pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
 ```
 
-### `extract`
+### `inspect` / `list`
+
+`inspect <FILE>`はarchive version、compression、entry / table / table-data件数をdeterministicな`key=value`形式で表示します。`list <FILE>`はTOC orderを維持し、dump ID、object type、schema、nameをtab区切りで表示します。どちらもlibraryのmetadata-open pathだけを使い、TABLE DATA payloadへのseek、entry decompression、COPY row parserには到達しません。diagnosticはstderrへ出力し、malformed archiveはnon-zero exitになります。
+
+### `extract`（planned）
 
 選択したentryの**decompressed table-data body**をbinary-safeなbytesとしてstdoutへ出力します。schema DDL、`COPY` statement wrapper、restore可能な完全SQLは追加しません。
 

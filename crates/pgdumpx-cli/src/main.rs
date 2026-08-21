@@ -1,25 +1,25 @@
-use pgdumpx::{Archive, FieldRef, OwnedField, OwnedRow};
+use pgdumpx::{Archive, Compression, FieldRef, OwnedField, OwnedRow};
 use std::{
     env,
     ffi::OsString,
     fmt,
     fs::File,
     io::{self, BufReader, BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
 const NO_MATCH_EXIT: u8 = 1;
 const FAILURE_EXIT: u8 = 2;
-const USAGE: &str = "usage: pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>";
+const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>";
 
 fn main() -> ExitCode {
     let stdout = io::stdout();
     let mut stdout = BufWriter::new(stdout.lock());
 
     match run(env::args_os(), &mut stdout) {
-        Ok(FindOutcome::Matched) => ExitCode::SUCCESS,
-        Ok(FindOutcome::NoMatch) => ExitCode::from(NO_MATCH_EXIT),
+        Ok(CliOutcome::Success) => ExitCode::SUCCESS,
+        Ok(CliOutcome::NoMatch) => ExitCode::from(NO_MATCH_EXIT),
         Err(error) => {
             eprintln!("pgdumpx: {error}");
             ExitCode::from(FAILURE_EXIT)
@@ -27,21 +27,130 @@ fn main() -> ExitCode {
     }
 }
 
-fn run<I, W>(arguments: I, stdout: &mut W) -> Result<FindOutcome, CliError>
+fn run<I, W>(arguments: I, stdout: &mut W) -> Result<CliOutcome, CliError>
 where
     I: IntoIterator<Item = OsString>,
     W: Write,
 {
-    let arguments = FindArguments::parse(arguments)?;
-    let matched = find(&arguments)?;
-    let Some(row) = matched else {
-        return Ok(FindOutcome::NoMatch);
-    };
+    match Command::parse(arguments)? {
+        Command::Inspect { file } => {
+            let archive = open_archive(&file)?;
+            write_inspect(stdout, &archive)?;
+            flush_stdout(stdout)?;
+            Ok(CliOutcome::Success)
+        }
+        Command::List { file } => {
+            let archive = open_archive(&file)?;
+            write_list(stdout, &archive)?;
+            flush_stdout(stdout)?;
+            Ok(CliOutcome::Success)
+        }
+        Command::Find(arguments) => {
+            let matched = find(&arguments)?;
+            let Some(row) = matched else {
+                return Ok(CliOutcome::NoMatch);
+            };
 
-    write_row(stdout, &row)
-        .and_then(|()| stdout.flush())
+            write_row(stdout, &row)
+                .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+            flush_stdout(stdout)?;
+            Ok(CliOutcome::Success)
+        }
+    }
+}
+
+fn open_archive(path: &Path) -> Result<Archive<BufReader<File>>, CliError> {
+    let file = File::open(path).map_err(|source| {
+        CliError::runtime(format!(
+            "failed to open archive {}: {source}",
+            path.display()
+        ))
+    })?;
+    Archive::open(BufReader::new(file))
+        .map_err(|source| CliError::runtime(format!("archive error: {source}")))
+}
+
+fn write_inspect<W: Write, R>(output: &mut W, archive: &Archive<R>) -> Result<(), CliError> {
+    let header = archive.header();
+    let version = header.version();
+    let mut tables = 0_usize;
+    let mut table_data = 0_usize;
+    for entry in archive.entries() {
+        match entry.description_bytes() {
+            b"TABLE" => tables += 1,
+            b"TABLE DATA" => table_data += 1,
+            _ => {}
+        }
+    }
+
+    writeln!(
+        output,
+        "archive_version={}.{}.{}",
+        version.major(),
+        version.minor(),
+        version.revision()
+    )
+    .and_then(|()| {
+        writeln!(
+            output,
+            "compression={}",
+            compression_name(header.compression())
+        )
+    })
+    .and_then(|()| writeln!(output, "entries={}", archive.entries().len()))
+    .and_then(|()| writeln!(output, "tables={tables}"))
+    .and_then(|()| writeln!(output, "table_data={table_data}"))
+    .map_err(|source| CliError::runtime(format!("stdout error: {source}")))
+}
+
+fn write_list<W: Write, R>(output: &mut W, archive: &Archive<R>) -> Result<(), CliError> {
+    output
+        .write_all(b"dump_id\tobject_type\tschema\tname\n")
         .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
-    Ok(FindOutcome::Matched)
+
+    for entry in archive.entries() {
+        write!(output, "{}\t", entry.id().as_i32())
+            .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+        write_metadata_bytes(output, entry.description_bytes())?;
+        output
+            .write_all(b"\t")
+            .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+        match entry.namespace_bytes() {
+            Some(schema) => write_metadata_bytes(output, schema)?,
+            None => output
+                .write_all(b"-")
+                .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?,
+        }
+        output
+            .write_all(b"\t")
+            .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+        write_metadata_bytes(output, entry.name_bytes())?;
+        output
+            .write_all(b"\n")
+            .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+    }
+    Ok(())
+}
+
+fn compression_name(compression: Compression) -> &'static str {
+    match compression {
+        Compression::None => "none",
+        Compression::Gzip => "gzip",
+        Compression::Lz4 => "lz4",
+        Compression::Zstd => "zstd",
+        _ => "unknown",
+    }
+}
+
+fn write_metadata_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> Result<(), CliError> {
+    write_escaped_bytes(output, bytes)
+        .map_err(|source| CliError::runtime(format!("stdout error: {source}")))
+}
+
+fn flush_stdout<W: Write>(stdout: &mut W) -> Result<(), CliError> {
+    stdout
+        .flush()
+        .map_err(|source| CliError::runtime(format!("stdout error: {source}")))
 }
 
 fn find(arguments: &FindArguments) -> Result<Option<OwnedRow>, CliError> {
@@ -86,6 +195,10 @@ fn write_row<W: Write>(output: &mut W, row: &OwnedRow) -> io::Result<()> {
 }
 
 fn write_field_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()> {
+    write_escaped_bytes(output, bytes)
+}
+
+fn write_escaped_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()> {
     let mut plain_start = 0;
     for (index, &byte) in bytes.iter().enumerate() {
         if matches!(byte, 0x20..=0x7e) && byte != b'\\' {
@@ -120,6 +233,48 @@ fn write_field_bytes<W: Write>(output: &mut W, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[derive(Debug)]
+enum Command {
+    Inspect { file: PathBuf },
+    List { file: PathBuf },
+    Find(FindArguments),
+}
+
+impl Command {
+    fn parse<I>(arguments: I) -> Result<Self, CliError>
+    where
+        I: IntoIterator<Item = OsString>,
+    {
+        let mut arguments = arguments.into_iter();
+        let _program = arguments.next();
+        let command = required_utf8(arguments.next(), "command")?;
+        match command.as_str() {
+            "inspect" => Ok(Self::Inspect {
+                file: parse_metadata_file(arguments)?,
+            }),
+            "list" => Ok(Self::List {
+                file: parse_metadata_file(arguments)?,
+            }),
+            "find" => Ok(Self::Find(FindArguments::parse_remaining(arguments)?)),
+            _ => Err(CliError::usage(format!("unsupported command {command:?}"))),
+        }
+    }
+}
+
+fn parse_metadata_file<I>(mut arguments: I) -> Result<PathBuf, CliError>
+where
+    I: Iterator<Item = OsString>,
+{
+    let file = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::usage("FILE is required"))?;
+    if arguments.next().is_some() {
+        return Err(CliError::usage("too many arguments"));
+    }
+    Ok(file)
+}
+
+#[derive(Debug)]
 struct FindArguments {
     file: PathBuf,
     schema: String,
@@ -129,17 +284,10 @@ struct FindArguments {
 }
 
 impl FindArguments {
-    fn parse<I>(arguments: I) -> Result<Self, CliError>
+    fn parse_remaining<I>(mut arguments: I) -> Result<Self, CliError>
     where
-        I: IntoIterator<Item = OsString>,
+        I: Iterator<Item = OsString>,
     {
-        let mut arguments = arguments.into_iter();
-        let _program = arguments.next();
-        let command = required_utf8(arguments.next(), "command")?;
-        if command != "find" {
-            return Err(CliError::usage("only the find command is supported"));
-        }
-
         let file = arguments
             .next()
             .map(PathBuf::from)
@@ -191,8 +339,8 @@ fn parse_table_selector(selector: &str) -> Result<(&str, &str), CliError> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FindOutcome {
-    Matched,
+enum CliOutcome {
+    Success,
     NoMatch,
 }
 
@@ -216,5 +364,77 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{write_inspect, write_list};
+    use pgdumpx::Archive;
+    use std::{
+        cell::Cell,
+        io::{self, Cursor, Read, Seek, SeekFrom},
+        path::PathBuf,
+        rc::Rc,
+    };
+
+    #[test]
+    fn metadata_rendering_never_reads_or_seeks_after_archive_open() {
+        for fixture_name in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
+            let bytes = std::fs::read(fixture_path(fixture_name)).unwrap();
+            let reads = Rc::new(Cell::new(0_u64));
+            let seeks = Rc::new(Cell::new(0_u64));
+            let reader = TrackingReader::new(bytes, Rc::clone(&reads), Rc::clone(&seeks));
+            let archive = Archive::open(reader).unwrap();
+            let after_open_reads = reads.get();
+            let after_open_seeks = seeks.get();
+
+            let mut inspect = Vec::new();
+            write_inspect(&mut inspect, &archive).unwrap();
+            let mut list = Vec::new();
+            write_list(&mut list, &archive).unwrap();
+
+            assert_eq!(reads.get(), after_open_reads, "fixture={fixture_name}");
+            assert_eq!(seeks.get(), after_open_seeks, "fixture={fixture_name}");
+            assert_eq!(after_open_seeks, 0, "metadata open must not seek");
+        }
+    }
+
+    fn fixture_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/archives")
+            .join(name)
+    }
+
+    struct TrackingReader {
+        inner: Cursor<Vec<u8>>,
+        reads: Rc<Cell<u64>>,
+        seeks: Rc<Cell<u64>>,
+    }
+
+    impl TrackingReader {
+        fn new(bytes: Vec<u8>, reads: Rc<Cell<u64>>, seeks: Rc<Cell<u64>>) -> Self {
+            Self {
+                inner: Cursor::new(bytes),
+                reads,
+                seeks,
+            }
+        }
+    }
+
+    impl Read for TrackingReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            let read = self.inner.read(output)?;
+            self.reads
+                .set(self.reads.get() + u64::try_from(read).unwrap());
+            Ok(read)
+        }
+    }
+
+    impl Seek for TrackingReader {
+        fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+            self.seeks.set(self.seeks.get() + 1);
+            self.inner.seek(position)
+        }
     }
 }

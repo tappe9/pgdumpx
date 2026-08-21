@@ -1,4 +1,4 @@
-use crate::{PgDumpError, io::archive_reader::ArchiveReader, limits::ArchiveStringLimit};
+use crate::{PgDumpError, io::archive_reader::ArchiveReader};
 use std::io::Read;
 
 const POSITION_NOT_SET: u8 = 1;
@@ -150,7 +150,7 @@ pub(crate) fn read_archive_offset<R: Read>(
 pub(crate) fn read_archive_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
-    limit: ArchiveStringLimit,
+    max_bytes: usize,
 ) -> Result<Option<Vec<u8>>, PgDumpError> {
     let length_offset = reader.offset();
     let encoded_length = read_archive_integer(reader, integer_size)?;
@@ -164,12 +164,11 @@ pub(crate) fn read_archive_string<R: Read>(
     let length_u64 = u64::try_from(length).map_err(|_| PgDumpError::ArithmeticOverflow {
         offset: length_offset,
     })?;
-    let limit_u64 =
-        u64::try_from(limit.max_bytes()).map_err(|_| PgDumpError::ArithmeticOverflow {
-            offset: length_offset,
-        })?;
+    let limit_u64 = u64::try_from(max_bytes).map_err(|_| PgDumpError::ArithmeticOverflow {
+        offset: length_offset,
+    })?;
 
-    if length > limit.max_bytes() {
+    if length > max_bytes {
         return Err(PgDumpError::ArchiveStringLimitExceeded {
             length: length_u64,
             limit: limit_u64,

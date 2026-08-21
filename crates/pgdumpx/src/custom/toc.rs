@@ -1,11 +1,10 @@
 use crate::{
-    PgDumpError,
+    Limits, PgDumpError,
     custom::primitives::{
         ArchiveIntegerSize, ArchiveOffset, ArchiveOffsetSize, read_archive_integer,
         read_archive_offset, read_archive_string,
     },
     io::archive_reader::ArchiveReader,
-    limits::MetadataLimits,
     model::{ArchiveString, DataLocation, DumpId, Section, TocEntry},
 };
 use std::io::Read;
@@ -14,7 +13,7 @@ pub(crate) fn read_toc<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
-    limits: MetadataLimits,
+    limits: Limits,
 ) -> Result<Vec<TocEntry>, PgDumpError> {
     let count_offset = reader.offset();
     let encoded_count = read_archive_integer(reader, integer_size)?;
@@ -56,7 +55,7 @@ fn read_toc_entry<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
-    limits: MetadataLimits,
+    limits: Limits,
 ) -> Result<TocEntry, PgDumpError> {
     let id_offset = reader.offset();
     let id_value = read_archive_integer(reader, integer_size)?;
@@ -132,14 +131,15 @@ fn read_toc_entry<R: Read>(
 fn read_dependencies<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
-    limits: MetadataLimits,
+    limits: Limits,
     entry_id: DumpId,
 ) -> Result<Vec<DumpId>, PgDumpError> {
     let mut dependencies = Vec::new();
 
     loop {
         let offset = reader.offset();
-        let Some(bytes) = read_archive_string(reader, integer_size, limits.string())? else {
+        let Some(bytes) = read_archive_string(reader, integer_size, limits.max_string_bytes())?
+        else {
             return Ok(dependencies);
         };
 
@@ -216,11 +216,11 @@ fn parse_dependency(bytes: &[u8], entry_id: DumpId, offset: u64) -> Result<DumpI
 fn read_required_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
-    limits: MetadataLimits,
+    limits: Limits,
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.string())?
+    let bytes = read_archive_string(reader, integer_size, limits.max_string_bytes())?
         .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
@@ -228,9 +228,12 @@ fn read_required_string<R: Read>(
 fn read_optional_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
-    limits: MetadataLimits,
+    limits: Limits,
 ) -> Result<Option<ArchiveString>, PgDumpError> {
-    Ok(read_archive_string(reader, integer_size, limits.string())?.map(ArchiveString::from_bytes))
+    Ok(
+        read_archive_string(reader, integer_size, limits.max_string_bytes())?
+            .map(ArchiveString::from_bytes),
+    )
 }
 
 fn to_u64(value: usize, offset: u64) -> Result<u64, PgDumpError> {

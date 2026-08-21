@@ -1,7 +1,4 @@
-use crate::{
-    FieldRef, PgDumpError,
-    copy::{CopyParserLimits, CopyRowReader},
-};
+use crate::{CopyRowReader, FieldRef, Limits, PgDumpError};
 use std::{
     cell::Cell,
     io::{self, Cursor, Read},
@@ -10,7 +7,9 @@ use std::{
 
 #[test]
 fn row_byte_limit_accepts_below_and_exact_and_rejects_above() {
-    let limits = CopyParserLimits::new(4, 8);
+    let limits = Limits::default()
+        .with_max_row_bytes(4)
+        .with_max_fields_per_row(8);
 
     for input in [b"abc\n".as_slice(), b"abcd\n".as_slice()] {
         let mut rows = CopyRowReader::with_limits(Cursor::new(input), limits);
@@ -32,7 +31,9 @@ fn row_byte_limit_accepts_below_and_exact_and_rejects_above() {
 
 #[test]
 fn field_count_limit_accepts_below_and_exact_and_rejects_above() {
-    let limits = CopyParserLimits::new(64, 3);
+    let limits = Limits::default()
+        .with_max_row_bytes(64)
+        .with_max_fields_per_row(3);
 
     for (input, expected_fields) in [(b"a\tb\n".as_slice(), 2), (b"a\tb\tc\n".as_slice(), 3)] {
         let mut rows = CopyRowReader::with_limits(Cursor::new(input), limits);
@@ -56,7 +57,9 @@ fn consumed_bytes_count_physical_spellings_and_not_read_ahead() {
     let input = b"a\\tb\tc\n\\.\nTAIL";
     let bytes_read = Rc::new(Cell::new(0_u64));
     let tracking = TrackingReader::new(input.as_slice(), Rc::clone(&bytes_read));
-    let limits = CopyParserLimits::new(64, 8);
+    let limits = Limits::default()
+        .with_max_row_bytes(64)
+        .with_max_fields_per_row(8);
     let mut rows = CopyRowReader::with_limits(tracking, limits);
 
     {
@@ -75,7 +78,9 @@ fn consumed_bytes_count_physical_spellings_and_not_read_ahead() {
 #[test]
 fn consumed_bytes_are_independent_of_source_segmentation() {
     let input = b"a\\tb\tc\n\\.\nTAIL";
-    let limits = CopyParserLimits::new(64, 8);
+    let limits = Limits::default()
+        .with_max_row_bytes(64)
+        .with_max_fields_per_row(8);
 
     let contiguous = accounting_checkpoints(CopyRowReader::with_limits(
         Cursor::new(input.as_slice()),
@@ -92,7 +97,9 @@ fn consumed_bytes_are_independent_of_source_segmentation() {
 
 #[test]
 fn consumed_byte_counter_overflow_is_typed_and_controlled() {
-    let limits = CopyParserLimits::new(64, 8);
+    let limits = Limits::default()
+        .with_max_row_bytes(64)
+        .with_max_fields_per_row(8);
     let mut rows =
         CopyRowReader::with_limits_and_consumed(Cursor::new(b"a\n".as_slice()), limits, u64::MAX);
 

@@ -1,10 +1,10 @@
 use crate::{
-    ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, PgDumpError,
+    ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, Limits,
+    PgDumpError,
     custom::primitives::{
         ArchiveIntegerSize, ArchiveOffsetSize, read_archive_integer, read_archive_string,
     },
     io::archive_reader::ArchiveReader,
-    limits::MetadataLimits,
 };
 use std::io::Read;
 
@@ -21,7 +21,7 @@ pub(crate) struct ParsedHeader {
 
 pub(crate) fn read_header<R: Read>(
     reader: &mut ArchiveReader<R>,
-    limits: MetadataLimits,
+    limits: Limits,
 ) -> Result<ParsedHeader, PgDumpError> {
     let magic_offset = reader.offset();
     let mut magic = [0_u8; ARCHIVE_MAGIC.len()];
@@ -112,11 +112,11 @@ pub(crate) fn read_header<R: Read>(
 fn read_required_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
-    limits: MetadataLimits,
+    limits: Limits,
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.string())?
+    let bytes = read_archive_string(reader, integer_size, limits.max_string_bytes())?
         .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
