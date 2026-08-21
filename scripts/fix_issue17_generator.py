@@ -23,6 +23,24 @@ if start < 0 or end < 0:
     raise RuntimeError("could not locate the copy.rs provisional block replacement")
 content = content[:start] + content[end:]
 
+for obsolete in [
+    '''replace_once(
+    "crates/pgdumpx/src/copy.rs",
+    "    limits: CopyParserLimits,\\n",
+    "    limits: Limits,\\n",
+)
+''',
+    '''replace_once(
+    "crates/pgdumpx/src/copy.rs",
+    "        limits: CopyParserLimits,\\n",
+    "        limits: Limits,\\n",
+)
+''',
+]:
+    if content.count(obsolete) != 1:
+        raise RuntimeError("could not locate a redundant CopyParserLimits replacement")
+    content = content.replace(obsolete, "", 1)
+
 old_count = '''    "limits.string()",
     "limits.max_string_bytes()",
     expected=2,
