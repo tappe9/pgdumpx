@@ -30,21 +30,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Emit resolved lockfile for backend TDD
-        run: |
-          echo CARGO_LOCK_BASE64_BEGIN
-          base64 -w 0 Cargo.lock
-          echo
-          echo CARGO_LOCK_BASE64_END
-
-      - name: Generate official Zstandard fixture for backend TDD
-        run: |
-          ./scripts/generate-alpha3-compression-fixture.sh zstd
-          echo ZSTD_FIXTURE_BASE64_BEGIN
-          base64 -w 0 tests/fixtures/archives/pg18-zstd-copy-basic.dump
-          echo
-          echo ZSTD_FIXTURE_BASE64_END
-
       - name: Test
         run: cargo test --workspace --all-features
 
@@ -79,9 +64,6 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
-
-      - name: Generate official Zstandard fixture
-        run: ./scripts/generate-alpha3-compression-fixture.sh zstd
 
       - name: Verify metadata-only behavior without Zstandard backend
         run: cargo test -p pgdumpx --no-default-features --features lz4 --test zstd_backend
