@@ -60,10 +60,7 @@ fn truncated_archive_1_15_compression_algorithm_is_typed_eof() {
     bytes.push(1); // custom format; compression algorithm byte is missing
 
     let error = Archive::open(Cursor::new(bytes)).expect_err("truncated algorithm must fail");
-    assert!(matches!(
-        error,
-        PgDumpError::UnexpectedEof { offset: 11 }
-    ));
+    assert!(matches!(error, PgDumpError::UnexpectedEof { offset: 11 }));
 }
 
 #[test]
