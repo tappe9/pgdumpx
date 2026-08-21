@@ -8,8 +8,15 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 
+[features]
+default = ["lz4", "zstd"]
+lz4 = ["dep:lz4_flex"]
+zstd = ["dep:ruzstd"]
+
 [dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+lz4_flex = { version = "0.14", optional = true, default-features = false, features = ["frame", "safe-decode"] }
+ruzstd = { version = "=0.8.1", optional = true }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }

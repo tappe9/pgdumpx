@@ -1,10 +1,10 @@
 # pgdumpx Compatibility Matrix
 
-Status: **Archive 1.14–1.16 metadata opening and none/gzip selected-entry streaming are fixture-verified**
+Status: **Archive 1.14–1.16 metadata opening and supported selected-entry compression paths are fixture-verified**
 
 This document separates intended v0.1 compatibility from compatibility that has actually been demonstrated by official fixtures and production-path tests.
 
-The public production path now verifies archive 1.14, 1.15, and 1.16 header/TOC parsing, metadata indexes, validated selected-entry seeking, custom chunk framing, and selected-entry streaming for none/gzip. The complete version-aware FR-006 public metadata-surface audit remains tracked separately, so this evidence does not imply that every version-conditional TOC field is already public.
+The public production path verifies archive 1.14, 1.15, and 1.16 header/TOC parsing, metadata indexes, validated selected-entry seeking, custom chunk framing, and selected-entry streaming for the compression algorithms covered below. The complete version-aware FR-006 public metadata-surface audit remains tracked separately, so this evidence does not imply that every version-conditional TOC field is already public.
 
 ## Archive format versions
 
@@ -12,7 +12,7 @@ The public production path now verifies archive 1.14, 1.15, and 1.16 header/TOC 
 |---|---:|---:|---|
 | 1.14 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 15.19 fixtures verify the legacy compression-level header representation and the minimum version-aware TOC path. |
 | 1.15 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 16.15 fixtures verify explicit compression-algorithm metadata and the minimum version-aware TOC path. |
-| 1.16 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 18.4 fixtures verify the 1.16 header/TOC path and selected-entry streaming. |
+| 1.16 | Yes | Metadata + none/gzip/LZ4/Zstandard selected entry | Official PostgreSQL 18.4 fixtures verify the 1.16 header/TOC path, all four v0.1 compression algorithms, and the established COPY row/search path. |
 | < 1.14 | No | N/A | Rejected explicitly; deferred until real demand justifies compatibility work. |
 | > 1.16 | No | N/A | Rejected explicitly until upstream format changes are reviewed and fixtures are added. |
 
@@ -26,20 +26,26 @@ The implemented version gates mirror the supported upstream layouts: archive 1.1
 |---|---:|---:|---:|---|
 | none | Yes | Selected-entry streaming | Yes | First vertical slice / version compatibility |
 | gzip | Yes | Selected-entry streaming | Yes | First vertical slice / version compatibility |
-| LZ4 | Yes | Not yet | Yes | Compatibility expansion |
-| Zstandard | Yes | Not yet | Yes | Compatibility expansion |
+| LZ4 | Yes | Selected-entry streaming + COPY rows/search | Yes | Compatibility expansion |
+| Zstandard | Yes | Selected-entry streaming + COPY rows/search | Yes | Compatibility expansion |
 
-For none and gzip, committed official fixtures now cover archive 1.14, 1.15, and 1.16 and stream the selected `TABLE DATA` entry through the same production reader path. The archive 1.14 fixtures additionally verify the pre-1.15 numeric compression-level representation. LZ4 and Zstandard algorithm IDs are recognized by modern header parsing, but require official fixtures and production decoder paths before compatibility is claimed.
+Committed official PostgreSQL fixtures now exercise all four v0.1 compression algorithms through the public selected-entry reader. none/gzip additionally cover archive 1.14 and 1.15, while PostgreSQL 18.4 archive 1.16 fixtures cover none, gzip, LZ4, and Zstandard. The LZ4/Zstandard acceptance tests also verify one-byte source reads, one-byte custom-chunk segmentation, malformed/truncated compressed streams, exact raw-output limits, row iteration, and first-match early termination.
 
 A compression algorithm is only marked fully verified after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library.
 
 Version-specific compression representation is tested independently from the decompressor implementation.
 
+### Compression backend and feature policy
+
+Compression backend types and decoder settings remain private implementation details. The library exposes `lz4` and `zstd` Cargo features; both are enabled by default, and the CLI default feature set forwards both features to the library. Disabling a backend feature does not prevent metadata parsing: `Compression::Lz4` and `Compression::Zstd` remain recognizable, while attempting to read a selected entry that requires a disabled backend returns the typed unsupported-compression error.
+
+The LZ4 backend uses `lz4_flex` 0.14 with its frame and safe-decode support. The Zstandard backend uses `ruzstd` 0.8.1, pinned to preserve the workspace Rust 1.85 MSRV. These choices do not add a PostgreSQL runtime dependency or a native compression-library build requirement. Backend-specific dependencies remain optional at the library boundary.
+
 ## Table-data representations
 
 | Representation | Raw entry access | Row-aware v0.1 access | Notes |
 |---|---:|---:|---|
-| pg_dump COPY text | Implemented for supported none/gzip entry paths | Implemented on the established 1.16 row path | Version-expansion row-matrix evidence is completed separately. |
+| pg_dump COPY text | Implemented for supported none/gzip/LZ4/Zstandard entry paths | Implemented on the established 1.16 row path | Version-expansion row-matrix evidence is completed separately. |
 | Binary COPY | Depends on readable entry | No | Explicitly deferred. |
 | `--inserts` | Depends on readable entry | No | Must not be misparsed as COPY text. |
 | `--column-inserts` | Depends on readable entry | No | Must return an explicit unsupported-representation error for row APIs. |
@@ -103,16 +109,16 @@ archive version 1.15 — PostgreSQL 16.15
 archive version 1.16 — PostgreSQL 18.4
   - none
   - gzip level 6
+  - LZ4 level 1
+  - Zstandard level 3
 ```
 
-All six archives contain the same deterministic `public.orders` table. The 1.14/1.15 fixtures are exercised through metadata open, table/table-data lookup, validated seek, custom framing, and selected-entry none/gzip streaming. The established 1.16 corpus additionally covers the existing COPY row/search paths.
+All eight archives contain the same deterministic `public.orders` table. The 1.14/1.15 fixtures are exercised through metadata open, table/table-data lookup, validated seek, custom framing, and selected-entry none/gzip streaming. The 1.16 corpus covers the existing COPY row/search paths, including LZ4 and Zstandard streaming.
 
 Remaining Alpha 3 compatibility expansion includes:
 
 ```text
 archive version 1.16
-  - LZ4
-  - Zstandard
   - INSERT-based fixture proving row APIs reject unsupported representation
 
 archive versions 1.14–1.16

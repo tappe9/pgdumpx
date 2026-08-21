@@ -38,6 +38,36 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
+  lz4-disabled:
+    name: LZ4 backend disabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Verify metadata-only behavior without LZ4 backend
+        run: cargo test -p pgdumpx --no-default-features --test lz4_backend
+
+  zstd-disabled:
+    name: Zstandard backend disabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Verify metadata-only behavior without Zstandard backend
+        run: cargo test -p pgdumpx --no-default-features --features lz4 --test zstd_backend
+
   msrv:
     name: MSRV (Rust 1.85.0)
     runs-on: ubuntu-latest
