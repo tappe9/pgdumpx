@@ -100,11 +100,8 @@ fn consumed_byte_counter_overflow_is_typed_and_controlled() {
     let limits = Limits::default()
         .with_max_row_bytes(64)
         .with_max_fields_per_row(8);
-    let mut rows = CopyRowReader::with_limits_and_consumed(
-        Cursor::new(b"a\n".as_slice()),
-        limits,
-        u64::MAX,
-    );
+    let mut rows =
+        CopyRowReader::with_limits_and_consumed(Cursor::new(b"a\n".as_slice()), limits, u64::MAX);
 
     assert!(matches!(
         rows.next_row().unwrap_err(),

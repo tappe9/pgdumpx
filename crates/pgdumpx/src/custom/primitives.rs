@@ -164,10 +164,9 @@ pub(crate) fn read_archive_string<R: Read>(
     let length_u64 = u64::try_from(length).map_err(|_| PgDumpError::ArithmeticOverflow {
         offset: length_offset,
     })?;
-    let limit_u64 =
-        u64::try_from(max_bytes).map_err(|_| PgDumpError::ArithmeticOverflow {
-            offset: length_offset,
-        })?;
+    let limit_u64 = u64::try_from(max_bytes).map_err(|_| PgDumpError::ArithmeticOverflow {
+        offset: length_offset,
+    })?;
 
     if length > max_bytes {
         return Err(PgDumpError::ArchiveStringLimitExceeded {

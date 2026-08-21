@@ -153,19 +153,14 @@ pub(crate) fn parse_table_data_metadata_with_limits(
         return Ok(TableDataMetadata::Unavailable);
     }
 
-    let parsed = match CopyStatementParser::new(
-        statement,
-        dump_id,
-        limits.max_fields_per_row(),
-    )
-    .parse()
-    {
-        Ok(parsed) => parsed,
-        Err(MetadataParseError::Malformed(reason)) => {
-            return Ok(TableDataMetadata::Malformed { reason });
-        }
-        Err(MetadataParseError::Fatal(error)) => return Err(error),
-    };
+    let parsed =
+        match CopyStatementParser::new(statement, dump_id, limits.max_fields_per_row()).parse() {
+            Ok(parsed) => parsed,
+            Err(MetadataParseError::Malformed(reason)) => {
+                return Ok(TableDataMetadata::Malformed { reason });
+            }
+            Err(MetadataParseError::Fatal(error)) => return Err(error),
+        };
 
     match parsed {
         ParsedStatement::Copy(columns) => match CopyColumnLayout::new(columns, dump_id)? {
