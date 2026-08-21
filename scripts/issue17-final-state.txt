@@ -1,6 +1,0 @@
-From https://github.com/tappe9/pgdumpx
- * branch            main       -> FETCH_HEAD
-Traceback (most recent call last):
-  File "/home/runner/work/pgdumpx/pgdumpx/scripts/apply_issue17_final.py", line 298, in <module>
-    raise RuntimeError("COPY column parse marker was not found")
-RuntimeError: COPY column parse marker was not found
