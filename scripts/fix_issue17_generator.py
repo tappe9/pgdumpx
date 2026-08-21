@@ -44,4 +44,16 @@ const COPY_TERMINATOR: &[u8] = b"\\.";
 """,
 )
 '''
-path.write_text(content[:start] + replacement + content[end:], encoding="utf-8")
+content = content[:start] + replacement + content[end:]
+old_count = '''    "limits.string()",
+    "limits.max_string_bytes()",
+    expected=2,
+'''
+new_count = '''    "limits.string()",
+    "limits.max_string_bytes()",
+    expected=3,
+'''
+if content.count(old_count) != 1:
+    raise RuntimeError("could not locate the TOC archive-string replacement count")
+content = content.replace(old_count, new_count, 1)
+path.write_text(content, encoding="utf-8")
