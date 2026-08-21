@@ -6,12 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      apply_issue17:
-        description: Apply the temporary Issue 17 development patch
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -61,36 +55,51 @@ jobs:
 
   apply-issue17:
     name: Apply Issue 17 development patch
-    if: github.event_name == 'workflow_dispatch' && inputs.apply_issue17
+    if: github.event_name == 'pull_request'
     permissions:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout dispatched branch
+      - name: Checkout pull-request branch
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
+      - name: Detect unapplied patch
+        id: guard
+        run: |
+          if grep -q "ALPHA1_METADATA_LIMITS" crates/pgdumpx/src/archive.rs; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Rust stable
+        if: steps.guard.outputs.apply == 'true'
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Apply checked replacements
+        if: steps.guard.outputs.apply == 'true'
         run: python3 scripts/apply_issue17.py
 
       - name: Format
+        if: steps.guard.outputs.apply == 'true'
         run: cargo fmt
 
       - name: Test library
+        if: steps.guard.outputs.apply == 'true'
         run: cargo test -p pgdumpx --all-features
 
       - name: Clippy library
+        if: steps.guard.outputs.apply == 'true'
         run: cargo clippy -p pgdumpx --all-targets --all-features -- -D warnings
 
       - name: Commit and push
+        if: steps.guard.outputs.apply == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -109,4 +118,4 @@ jobs:
             crates/pgdumpx/src/metadata_open_tests.rs \
             crates/pgdumpx/src/table_rows.rs
           git commit -m "feat: add public structural limits"
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin HEAD:${{ github.head_ref }}
