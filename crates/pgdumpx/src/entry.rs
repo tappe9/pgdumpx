@@ -30,7 +30,7 @@ enum EntryBackend<'a, R> {
     #[cfg(feature = "lz4")]
     Lz4(Lz4EntryDecoder<'a>),
     #[cfg(feature = "zstd")]
-    Zstd(ZstdEntryDecoder<'a>),
+    Zstd(Box<ZstdEntryDecoder<'a>>),
 }
 
 impl<'a, R: Read> EntryDataReader<'a, R> {
@@ -58,7 +58,7 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
             Compression::Zstd => {
                 #[cfg(feature = "zstd")]
                 {
-                    EntryBackend::Zstd(ZstdEntryDecoder::new(dump_id, chunks))
+                    EntryBackend::Zstd(Box::new(ZstdEntryDecoder::new(dump_id, chunks)))
                 }
                 #[cfg(not(feature = "zstd"))]
                 {
@@ -252,7 +252,7 @@ struct ZstdEntryDecoder<'a> {
 #[cfg(feature = "zstd")]
 enum ZstdDecoderState<'a> {
     Uninitialized(Option<Box<dyn Read + 'a>>),
-    Decoding(StreamingDecoder<Box<dyn Read + 'a>, ZstdFrameDecoder>),
+    Decoding(Box<StreamingDecoder<Box<dyn Read + 'a>, ZstdFrameDecoder>>),
     Failed,
 }
 
@@ -299,7 +299,7 @@ impl<'a> ZstdEntryDecoder<'a> {
 
         match StreamingDecoder::new(source) {
             Ok(decoder) => {
-                self.state = ZstdDecoderState::Decoding(decoder);
+                self.state = ZstdDecoderState::Decoding(Box::new(decoder));
                 Ok(())
             }
             Err(source) => {
