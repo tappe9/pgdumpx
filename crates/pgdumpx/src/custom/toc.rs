@@ -1,5 +1,5 @@
 use crate::{
-    Limits, PgDumpError,
+    ArchiveVersion, Limits, PgDumpError,
     custom::primitives::{
         ArchiveIntegerSize, ArchiveOffset, ArchiveOffsetSize, read_archive_integer,
         read_archive_offset, read_archive_string,
@@ -9,8 +9,11 @@ use crate::{
 };
 use std::io::Read;
 
+const ARCHIVE_VERSION_1_16: ArchiveVersion = ArchiveVersion::new(1, 16, 0);
+
 pub(crate) fn read_toc<R: Read>(
     reader: &mut ArchiveReader<R>,
+    version: ArchiveVersion,
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
     limits: Limits,
@@ -45,7 +48,13 @@ pub(crate) fn read_toc<R: Read>(
         })?;
 
     for _ in 0..count {
-        entries.push(read_toc_entry(reader, integer_size, offset_size, limits)?);
+        entries.push(read_toc_entry(
+            reader,
+            version,
+            integer_size,
+            offset_size,
+            limits,
+        )?);
     }
 
     Ok(entries)
@@ -53,6 +62,7 @@ pub(crate) fn read_toc<R: Read>(
 
 fn read_toc_entry<R: Read>(
     reader: &mut ArchiveReader<R>,
+    version: ArchiveVersion,
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
     limits: Limits,
@@ -96,7 +106,11 @@ fn read_toc_entry<R: Read>(
     let namespace = read_optional_string(reader, integer_size, limits)?;
     let tablespace = read_optional_string(reader, integer_size, limits)?;
     let table_access_method = read_optional_string(reader, integer_size, limits)?;
-    let relation_kind = read_archive_integer(reader, integer_size)?;
+    let relation_kind = if version >= ARCHIVE_VERSION_1_16 {
+        read_archive_integer(reader, integer_size)?
+    } else {
+        0
+    };
     let owner = read_optional_string(reader, integer_size, limits)?;
     let with_oids = read_required_string(reader, integer_size, limits, "TOC with-OIDs flag")?;
     let dependencies = read_dependencies(reader, integer_size, limits, id)?;
