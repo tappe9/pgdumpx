@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/runner/work/pgdumpx/pgdumpx/scripts/apply_issue17_v2.py", line 447, in <module>
+    raise RuntimeError(f"provisional limit tokens remain: {remaining}")
+RuntimeError: provisional limit tokens remain: {'ArchiveStringLimit': ['crates/pgdumpx/src/metadata_open_tests.rs', 'crates/pgdumpx/src/error.rs', 'crates/pgdumpx/src/archive_primitives_tests.rs', 'crates/pgdumpx/tests/limits.rs', 'crates/pgdumpx/src/custom/primitives.rs'], 'MetadataLimits': ['crates/pgdumpx/src/metadata_open_tests.rs']}
