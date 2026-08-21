@@ -1,0 +1,54 @@
+name: Issue 17 patch diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    name: Capture Issue 17 patch failure
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull-request branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Detect whether diagnostics are needed
+        id: guard
+        run: |
+          if [ -f scripts/issue17-error.txt ] || ! grep -q "ALPHA1_METADATA_LIMITS" crates/pgdumpx/src/archive.rs; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run checked patch generator
+        id: apply
+        if: steps.guard.outputs.run == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            python3 scripts/fix_issue17_generator.py
+            python3 scripts/apply_issue17.py
+          } > scripts/issue17-error.txt 2>&1
+
+      - name: Remove empty success log
+        if: steps.guard.outputs.run == 'true' && steps.apply.outcome == 'success'
+        run: rm -f scripts/issue17-error.txt
+
+      - name: Commit failure diagnostics
+        if: steps.guard.outputs.run == 'true' && steps.apply.outcome == 'failure'
+        run: |
+          cat scripts/issue17-error.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- scripts/issue17-error.txt
+          git commit -m "chore: capture Issue 17 patch failure"
+          git push origin HEAD:${{ github.head_ref }}
