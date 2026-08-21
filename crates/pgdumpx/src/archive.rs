@@ -224,6 +224,7 @@ struct ArchiveIndex {
 
 impl ArchiveIndex {
     #[cfg(test)]
+#[allow(dead_code)]
     fn build(entries: &[TocEntry]) -> Result<Self, PgDumpError> {
         Self::build_with_limits(entries, Limits::default())
     }

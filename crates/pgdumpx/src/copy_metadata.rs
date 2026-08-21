@@ -131,6 +131,7 @@ pub(crate) struct CopyColumnLayout {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn parse_table_data_metadata(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
