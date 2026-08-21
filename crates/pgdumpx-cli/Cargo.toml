@@ -14,8 +14,9 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["lz4"]
+default = ["lz4", "zstd"]
 lz4 = ["pgdumpx/lz4"]
+zstd = ["pgdumpx/zstd"]
 
 [dependencies]
 pgdumpx = { path = "../pgdumpx", version = "0.1.0", default-features = false }
