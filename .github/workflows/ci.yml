@@ -18,6 +18,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Generate LZ4 fixture for backend TDD
+        run: bash scripts/generate-alpha3-compression-fixture.sh lz4
+
+      - name: Emit LZ4 fixture evidence
+        run: |
+          sha256sum tests/fixtures/archives/pg18-lz4-copy-basic.dump
+          echo LZ4_FIXTURE_BASE64_BEGIN
+          base64 -w 0 tests/fixtures/archives/pg18-lz4-copy-basic.dump
+          echo
+          echo LZ4_FIXTURE_BASE64_END
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
@@ -37,6 +48,24 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
+
+  lz4-disabled:
+    name: LZ4 backend disabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Generate LZ4 fixture
+        run: bash scripts/generate-alpha3-compression-fixture.sh lz4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Verify metadata-only behavior without LZ4 backend
+        run: cargo test -p pgdumpx --no-default-features --test lz4_backend
 
   msrv:
     name: MSRV (Rust 1.85.0)

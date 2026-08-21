@@ -13,8 +13,12 @@ name = "pgdumpx"
 path = "src/main.rs"
 doc = false
 
+[features]
+default = ["lz4"]
+lz4 = ["pgdumpx/lz4"]
+
 [dependencies]
-pgdumpx = { path = "../pgdumpx", version = "0.1.0" }
+pgdumpx = { path = "../pgdumpx", version = "0.1.0", default-features = false }
 
 [lints]
 workspace = true
