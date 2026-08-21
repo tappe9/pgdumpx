@@ -1,11 +1,10 @@
 use crate::{
-    Archive, Compression, PgDumpError, TocEntry,
+    Archive, Compression, Limits, PgDumpError, TocEntry,
     custom::{
         primitives::{ArchiveIntegerSize, ArchiveOffsetSize},
         toc::read_toc,
     },
     io::archive_reader::ArchiveReader,
-    limits::{ArchiveStringLimit, MetadataLimits},
 };
 use std::{
     cell::Cell,
@@ -17,7 +16,7 @@ const POSITION_SET: u8 = 2;
 const NO_DATA: u8 = 3;
 const SECTION_PRE_DATA: i32 = 2;
 const SECTION_DATA: i32 = 3;
-const MAX_PROVISIONAL_ARCHIVE_STRING_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_MAX_ARCHIVE_STRING_BYTES: usize = 16 * 1024 * 1024;
 
 #[test]
 fn opens_zero_entry_archives_and_decodes_known_compression_metadata() {
@@ -76,7 +75,7 @@ fn public_open_rejects_oversized_header_string_before_payload_read() {
     write_timestamp(&mut bytes);
     write_int(
         &mut bytes,
-        i32::try_from(MAX_PROVISIONAL_ARCHIVE_STRING_BYTES + 1).unwrap(),
+        i32::try_from(DEFAULT_MAX_ARCHIVE_STRING_BYTES + 1).unwrap(),
     );
     bytes.extend_from_slice(b"payload-must-not-be-read");
 
@@ -90,8 +89,8 @@ fn public_open_rejects_oversized_header_string_before_payload_read() {
             length,
             limit,
             offset: 47,
-        } if length == u64::try_from(MAX_PROVISIONAL_ARCHIVE_STRING_BYTES + 1).unwrap()
-            && limit == u64::try_from(MAX_PROVISIONAL_ARCHIVE_STRING_BYTES).unwrap()
+        } if length == u64::try_from(DEFAULT_MAX_ARCHIVE_STRING_BYTES + 1).unwrap()
+            && limit == u64::try_from(DEFAULT_MAX_ARCHIVE_STRING_BYTES).unwrap()
     ));
     assert_eq!(bytes_read.get(), 52);
 }
@@ -169,7 +168,7 @@ fn dependency_limit_accepts_below_and_exact_and_rejects_above() {
     ));
 }
 
-fn parse_toc(bytes: Vec<u8>, limits: MetadataLimits) -> Result<Vec<TocEntry>, PgDumpError> {
+fn parse_toc(bytes: Vec<u8>, limits: Limits) -> Result<Vec<TocEntry>, PgDumpError> {
     let mut reader = ArchiveReader::new(Cursor::new(bytes));
     read_toc(
         &mut reader,
@@ -179,12 +178,11 @@ fn parse_toc(bytes: Vec<u8>, limits: MetadataLimits) -> Result<Vec<TocEntry>, Pg
     )
 }
 
-fn metadata_limits(max_toc_entries: usize, max_dependencies: usize) -> MetadataLimits {
-    MetadataLimits::new(
-        ArchiveStringLimit::new(1_024),
-        max_toc_entries,
-        max_dependencies,
-    )
+fn metadata_limits(max_toc_entries: usize, max_dependencies: usize) -> Limits {
+    Limits::default()
+        .with_max_string_bytes(1_024)
+        .with_max_toc_entries(max_toc_entries)
+        .with_max_dependencies_per_entry(max_dependencies)
 }
 
 fn build_archive(entry_count: i32, write_entries: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
