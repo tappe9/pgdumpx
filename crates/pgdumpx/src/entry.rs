@@ -347,10 +347,7 @@ impl<R: Read> Read for TrackedLz4Source<R> {
             Err(source) => {
                 let kind = source.kind();
                 self.state.borrow_mut().source_error = Some(source);
-                Err(io::Error::new(
-                    kind,
-                    "compressed entry source read failed",
-                ))
+                Err(io::Error::new(kind, "compressed entry source read failed"))
             }
         }
     }
@@ -398,8 +395,8 @@ impl Lz4FrameTracker {
                         let flg = bytes[4];
                         self.block_checksum = flg & 0x10 != 0;
                         self.content_checksum = flg & 0x04 != 0;
-                        *required = 7 + usize::from(flg & 0x08 != 0) * 8
-                            + usize::from(flg & 0x01 != 0) * 4;
+                        *required =
+                            7 + usize::from(flg & 0x08 != 0) * 8 + usize::from(flg & 0x01 != 0) * 4;
                     }
                     if *filled == *required {
                         self.phase = Lz4FramePhase::BlockHeader {
