@@ -90,7 +90,7 @@ impl PgDumpError {
     /// Returns a stable high-level error category.
     pub const fn category(&self) -> ErrorCategory {
         match self {
-            Self::Io { .. } | Self::CopyIo { .. } => ErrorCategory::Io,
+            Self::Io { .. } | Self::EntryOutputIo { .. } | Self::CopyIo { .. } => ErrorCategory::Io,
             Self::UnexpectedEof { .. }
             | Self::InvalidArchiveMagic { .. }
             | Self::UnsupportedArchiveVersion { .. }
@@ -137,18 +137,21 @@ impl PgDumpError {
             | Self::CopyColumnCountLimitExceeded { .. }
             | Self::CopyColumnMetadataAllocationFailed { .. }
             | Self::EntryBufferAllocationFailed { .. }
+            | Self::EntryDecompressedByteLimitExceeded { .. }
             | Self::CopyRowByteLimitExceeded { .. }
             | Self::CopyFieldCountLimitExceeded { .. }
             | Self::ScanRowLimitExceeded { .. }
             | Self::ScanDecompressedByteLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. } => ErrorCategory::Resource,
-            Self::CopyConsumedByteCountOverflow { .. }
+            Self::EntryDecompressedByteCountOverflow { .. }
+            | Self::CopyConsumedByteCountOverflow { .. }
             | Self::CopyRowNumberOverflow { .. }
             | Self::ScanRowCountOverflow { .. }
             | Self::ArithmeticOverflow { .. } => ErrorCategory::Arithmetic,
             Self::TableNotFound
             | Self::TableDataEntryUnavailable { .. }
+            | Self::EntryNotFound { .. }
             | Self::EntryHasNoData { .. }
             | Self::EntryDataOffsetUnavailable { .. } => ErrorCategory::Lookup,
         }
@@ -207,6 +210,7 @@ impl PgDumpError {
             }
             | Self::ArithmeticOverflow { offset } => Some(*offset),
             Self::EntrySeekPositionMismatch { expected, .. } => Some(*expected),
+            Self::EntryOutputIo { written, .. } => Some(*written),
             Self::CopyIo { consumed, .. } => Some(*consumed),
             Self::DuplicateDumpId { .. }
             | Self::ArchiveIndexAllocationFailed { .. }
@@ -221,11 +225,14 @@ impl PgDumpError {
             | Self::UnsupportedTableDataRepresentation { .. }
             | Self::CopyColumnCountLimitExceeded { .. }
             | Self::CopyColumnMetadataAllocationFailed { .. }
+            | Self::EntryNotFound { .. }
             | Self::EntryHasNoData { .. }
             | Self::EntryDataOffsetUnavailable { .. }
             | Self::UnsupportedEntryCompression { .. }
             | Self::EntryBufferAllocationFailed { .. }
             | Self::DecompressionFailed { .. }
+            | Self::EntryDecompressedByteLimitExceeded { .. }
+            | Self::EntryDecompressedByteCountOverflow { .. }
             | Self::ScanRowLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. }
@@ -249,6 +256,7 @@ impl PgDumpError {
             | Self::UnsupportedTableDataRepresentation { dump_id, .. }
             | Self::CopyColumnCountLimitExceeded { dump_id, .. }
             | Self::CopyColumnMetadataAllocationFailed { dump_id, .. }
+            | Self::EntryNotFound { dump_id }
             | Self::EntryHasNoData { dump_id }
             | Self::EntryDataOffsetUnavailable { dump_id }
             | Self::InvalidDataOffset { dump_id, .. }
@@ -259,7 +267,10 @@ impl PgDumpError {
             | Self::TruncatedDataChunk { dump_id, .. }
             | Self::UnsupportedEntryCompression { dump_id, .. }
             | Self::EntryBufferAllocationFailed { dump_id, .. }
-            | Self::DecompressionFailed { dump_id, .. } => *dump_id,
+            | Self::DecompressionFailed { dump_id, .. }
+            | Self::EntryDecompressedByteLimitExceeded { dump_id, .. }
+            | Self::EntryDecompressedByteCountOverflow { dump_id, .. }
+            | Self::EntryOutputIo { dump_id, .. } => *dump_id,
             Self::DuplicateTableIdentity { first_table_id, .. } => *first_table_id,
             Self::AmbiguousTableDataRelationship { data_id }
             | Self::ConflictingTableDataRelationship { data_id, .. } => *data_id,
@@ -385,6 +396,13 @@ impl PgDumpError {
                 limit, consumed, ..
             } => Some(LimitContext::new(
                 ResourceLimit::ScanDecompressedBytes,
+                *limit,
+                *consumed,
+            )),
+            Self::EntryDecompressedByteLimitExceeded {
+                limit, consumed, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::EntryDecompressedBytes,
                 *limit,
                 *consumed,
             )),

@@ -15,6 +15,7 @@ mod error_taxonomy;
 mod io;
 mod limits;
 mod model;
+mod raw_entry;
 mod table_rows;
 
 #[cfg(test)]
@@ -25,6 +26,8 @@ mod copy_tests;
 mod error_tests;
 #[cfg(test)]
 mod metadata_open_tests;
+#[cfg(test)]
+mod raw_entry_tests;
 #[cfg(test)]
 mod scan_limits_tests;
 #[cfg(test)]
@@ -41,4 +44,5 @@ pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
 };
+pub use raw_entry::{BoundedEntryDataReader, EntryReadLimits};
 pub use table_rows::TableRowReader;
