@@ -134,7 +134,6 @@ pub(crate) struct CopyColumnLayout {
 pub(crate) fn parse_table_data_metadata(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
-    limits: Limits,
 ) -> Result<TableDataMetadata, PgDumpError> {
     parse_table_data_metadata_with_limits(dump_id, copy_statement, Limits::default())
 }
