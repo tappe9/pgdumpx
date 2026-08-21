@@ -8,9 +8,13 @@ use std::{
 };
 
 const MANIFEST_PATH: &str = "tests/fixtures/manifest.toml";
-const REQUIRED_FIXTURES: [(&str, &str); 2] = [
-    ("pg18-none-copy-basic", "none"),
-    ("pg18-gzip-copy-basic", "gzip"),
+const REQUIRED_FIXTURES: [(&str, &str, &str); 6] = [
+    ("pg18-none-copy-basic", "1.16.0", "none"),
+    ("pg18-gzip-copy-basic", "1.16.0", "gzip"),
+    ("pg16-none-copy-basic", "1.15.0", "none"),
+    ("pg16-gzip-copy-basic", "1.15.0", "gzip"),
+    ("pg15-none-copy-basic", "1.14.0", "none"),
+    ("pg15-gzip-copy-basic", "1.14.0", "gzip"),
 ];
 const EXPECTED_COLUMNS: [&str; 5] = [
     "order_id",
@@ -19,7 +23,6 @@ const EXPECTED_COLUMNS: [&str; 5] = [
     "note",
     "empty_text",
 ];
-const REQUIRED_PURPOSES: [&str; 5] = ["header", "toc", "copy-text", "column-layout", "find-first"];
 
 #[derive(Debug, Deserialize)]
 struct FixtureManifest {
@@ -48,17 +51,19 @@ struct FixtureRecord {
 }
 
 #[test]
-fn alpha1_fixture_manifest_contract_is_satisfied() {
+fn official_fixture_manifest_contract_is_satisfied() {
     let root = repository_root();
 
     assert!(
         root.join("tests/fixtures/README.md").is_file(),
         "fixture inventory and regeneration documentation is missing"
     );
-    assert!(
-        root.join("scripts/generate-alpha1-fixtures.sh").is_file(),
-        "fixture regeneration script is missing"
-    );
+    for script in [
+        "scripts/generate-alpha1-fixtures.sh",
+        "scripts/generate-alpha3-version-fixtures.sh",
+    ] {
+        assert!(root.join(script).is_file(), "fixture regeneration script is missing: {script}");
+    }
 
     let manifest = load_manifest(&root);
     assert_eq!(manifest.manifest_version, 1, "unsupported manifest version");
@@ -79,12 +84,13 @@ fn alpha1_fixture_manifest_contract_is_satisfied() {
         validate_fixture(&root, fixture);
     }
 
-    for (required_name, required_compression) in REQUIRED_FIXTURES {
+    for (required_name, required_version, required_compression) in REQUIRED_FIXTURES {
         let fixture = manifest
             .fixture
             .iter()
             .find(|fixture| fixture.name == required_name)
             .unwrap_or_else(|| panic!("required fixture entry missing: {required_name}"));
+        assert_eq!(fixture.archive_version, required_version);
         assert_eq!(fixture.compression, required_compression);
     }
 }
@@ -129,13 +135,33 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
     assert_non_empty("command", &fixture.command, &fixture.name);
     assert_non_empty("sha256", &fixture.sha256, &fixture.name);
 
-    assert_eq!(fixture.archive_version, "1.16.0", "{}", fixture.name);
+    let (version_bytes, generator_prefix, image, version_purpose) = match fixture.archive_version.as_str() {
+        "1.16.0" => (
+            [1, 16, 0],
+            "pg_dump (PostgreSQL) 18.4",
+            "postgres:18.4-bookworm",
+            None,
+        ),
+        "1.15.0" => (
+            [1, 15, 0],
+            "pg_dump (PostgreSQL) 16.15",
+            "postgres:16.15-bookworm",
+            Some("archive-1.15"),
+        ),
+        "1.14.0" => (
+            [1, 14, 0],
+            "pg_dump (PostgreSQL) 15.19",
+            "postgres:15.19-bookworm",
+            Some("archive-1.14"),
+        ),
+        other => panic!("{} has unexpected archive version {other:?}", fixture.name),
+    };
     assert!(
-        fixture.generator.starts_with("pg_dump (PostgreSQL) 18.4"),
-        "{} must record the exact PostgreSQL 18.4 pg_dump version output",
+        fixture.generator.starts_with(generator_prefix),
+        "{} must record the expected pg_dump version output",
         fixture.name
     );
-    assert_eq!(fixture.generator_image, "postgres:18.4-bookworm");
+    assert_eq!(fixture.generator_image, image);
     assert_eq!(fixture.generator_platform, "linux/amd64");
     assert!(
         fixture
@@ -151,40 +177,26 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
         fixture.name
     );
 
-    let expected_compression_detail = match fixture.compression.as_str() {
-        "none" => {
-            assert!(fixture.command.contains("--compress=none"));
-            "none"
-        }
-        "gzip" => {
-            assert!(fixture.command.contains("--compress=gzip:6"));
-            "level=6"
-        }
-        other => panic!("unexpected Alpha 1 compression {other:?}"),
-    };
-    assert_eq!(fixture.compression_detail, expected_compression_detail);
+    validate_compression(fixture);
     assert!(fixture.command.contains("--format=custom"));
     assert!(fixture.command.contains("--dbname=pgdumpx_fixture"));
     assert!(fixture.command.contains("--table=public.orders"));
 
-    for required_purpose in REQUIRED_PURPOSES {
-        assert!(
-            fixture
-                .purpose
-                .iter()
-                .any(|purpose| purpose == required_purpose),
-            "{} is missing purpose {required_purpose}",
-            fixture.name
-        );
+    for required_purpose in ["header", "toc", "copy-text"] {
+        assert_has_purpose(fixture, required_purpose);
     }
-    assert!(
-        fixture
-            .purpose
-            .iter()
-            .any(|purpose| purpose == &fixture.compression),
-        "{} is missing its compression purpose",
-        fixture.name
-    );
+    assert_has_purpose(fixture, &fixture.compression);
+    if let Some(version_purpose) = version_purpose {
+        assert_has_purpose(fixture, version_purpose);
+        assert_has_purpose(fixture, "selected-entry");
+    } else {
+        assert_has_purpose(fixture, "column-layout");
+        assert_has_purpose(fixture, "find-first");
+    }
+    if fixture.archive_version == "1.14.0" {
+        assert_has_purpose(fixture, "legacy-compression");
+    }
+
     assert!(
         fixture
             .expected_tables
@@ -218,14 +230,44 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
     assert_eq!(&bytes[..5], b"PGDMP", "{} has invalid magic", fixture.name);
     assert_eq!(
         &bytes[5..8],
-        &[1, 16, 0],
-        "{} is not archive version 1.16.0",
+        version_bytes.as_slice(),
+        "{} archive-version bytes do not match its manifest record",
         fixture.name
     );
     assert_eq!(
         sha256_hex(&bytes),
         fixture.sha256,
         "{} checksum mismatch",
+        fixture.name
+    );
+}
+
+fn validate_compression(fixture: &FixtureRecord) {
+    match (fixture.archive_version.as_str(), fixture.compression.as_str()) {
+        ("1.14.0", "none") => {
+            assert!(fixture.command.contains("--compress=0"));
+            assert_eq!(fixture.compression_detail, "legacy-level=0");
+        }
+        ("1.14.0", "gzip") => {
+            assert!(fixture.command.contains("--compress=6"));
+            assert_eq!(fixture.compression_detail, "legacy-level=6");
+        }
+        (_, "none") => {
+            assert!(fixture.command.contains("--compress=none"));
+            assert_eq!(fixture.compression_detail, "none");
+        }
+        (_, "gzip") => {
+            assert!(fixture.command.contains("--compress=gzip:6"));
+            assert_eq!(fixture.compression_detail, "level=6");
+        }
+        (_, other) => panic!("unexpected fixture compression {other:?}"),
+    }
+}
+
+fn assert_has_purpose(fixture: &FixtureRecord, purpose: &str) {
+    assert!(
+        fixture.purpose.iter().any(|candidate| candidate == purpose),
+        "{} is missing purpose {purpose}",
         fixture.name
     );
 }
