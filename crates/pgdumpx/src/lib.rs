@@ -26,6 +26,8 @@ mod error_tests;
 #[cfg(test)]
 mod metadata_open_tests;
 #[cfg(test)]
+mod scan_limits_tests;
+#[cfg(test)]
 mod table_rows_tests;
 
 pub use archive::Archive;
@@ -34,7 +36,7 @@ pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
 pub use error_taxonomy::{ErrorCategory, LimitContext, ResourceLimit};
-pub use limits::Limits;
+pub use limits::{Limits, ScanLimits};
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
