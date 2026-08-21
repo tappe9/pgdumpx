@@ -115,6 +115,15 @@ fn copy_entry_to_retries_short_writes_and_preserves_writer_errors() {
         .unwrap_err();
     assert_eq!(failing.bytes, b"ab");
     assert_eq!(error.category(), ErrorCategory::Io);
+    assert_eq!(error.byte_offset(), Some(2));
+    assert!(matches!(
+        &error,
+        PgDumpError::EntryOutputIo {
+            dump_id: 1,
+            written: 2,
+            ..
+        }
+    ));
     assert!(error.source().is_some());
 }
 
