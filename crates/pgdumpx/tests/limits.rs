@@ -48,7 +48,8 @@ fn toc_entry_limit_accepts_below_and_exact_and_rejects_above_before_entries() {
     let mut bytes = complete_header(b"database", b"18.4", b"18.4");
     write_int(&mut bytes, 2);
     bytes.extend_from_slice(b"entry-bytes-must-not-be-read");
-    let expected_read = u64::try_from(bytes.len() - b"entry-bytes-must-not-be-read".len()).unwrap();
+    let expected_read =
+        u64::try_from(bytes.len() - b"entry-bytes-must-not-be-read".len()).unwrap();
     let bytes_read = Rc::new(Cell::new(0));
     let error = Archive::open_with_limits(
         TrackingReader::new(bytes, Rc::clone(&bytes_read)),
@@ -195,7 +196,10 @@ fn field_count_limit_has_identical_standalone_and_integrated_boundaries() {
 fn fields_per_row_limit_also_bounds_copy_column_metadata_before_index_growth() {
     let limits = Limits::default().with_max_fields_per_row(3);
 
-    for columns in [&[b"a".as_slice(), b"b".as_slice()][..], &[b"a".as_slice(), b"b".as_slice(), b"c".as_slice()][..]] {
+    for columns in [
+        &[b"a".as_slice(), b"b".as_slice()][..],
+        &[b"a".as_slice(), b"b".as_slice(), b"c".as_slice()][..],
+    ] {
         let bytes = archive_with_copy_columns(columns);
         Archive::open_with_limits(Cursor::new(bytes), limits).unwrap();
     }
@@ -221,11 +225,8 @@ fn official_none_and_gzip_table_rows_use_configured_finite_limits() {
     for fixture_name in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
         for row_limit in [exact_row_bytes + 1, exact_row_bytes] {
             let limits = Limits::default().with_max_row_bytes(row_limit);
-            let mut archive = Archive::open_with_limits(
-                Cursor::new(fixture(fixture_name)),
-                limits,
-            )
-            .unwrap();
+            let mut archive =
+                Archive::open_with_limits(Cursor::new(fixture(fixture_name)), limits).unwrap();
             let mut rows = archive.table_rows(b"public", b"orders").unwrap();
             assert!(rows.next_row().unwrap().is_some());
         }
@@ -416,7 +417,11 @@ fn write_dependencies(output: &mut Vec<u8>, dependencies: &[i32]) {
     write_string(output, None);
 }
 
-fn complete_header(database_name: &[u8], server_version: &[u8], dump_version: &[u8]) -> Vec<u8> {
+fn complete_header(
+    database_name: &[u8],
+    server_version: &[u8],
+    dump_version: &[u8],
+) -> Vec<u8> {
     let mut output = fixed_header();
     write_timestamp(&mut output);
     write_string(&mut output, Some(database_name));
