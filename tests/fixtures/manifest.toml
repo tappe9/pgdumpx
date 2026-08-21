@@ -37,6 +37,42 @@ expected_row_count = 7
 expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
 
 [[fixture]]
+name = "pg18-lz4-copy-basic"
+path = "tests/fixtures/archives/pg18-lz4-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.16.0"
+generator = "pg_dump (PostgreSQL) 18.4 (Debian 18.4-1.pgdg12+1)"
+generator_image = "postgres:18.4-bookworm"
+generator_image_digest = "postgres@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg18-alpha3-compression pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=lz4:1 --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg18-lz4-copy-basic.dump"
+compression = "lz4"
+compression_detail = "level=1"
+sha256 = "be58c9eabe436cc11c48665124877445edc53d7c50f9d2973cae244c3c31d01b"
+purpose = ["header", "toc", "lz4", "copy-text", "column-layout", "find-first", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
+name = "pg18-zstd-copy-basic"
+path = "tests/fixtures/archives/pg18-zstd-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.16.0"
+generator = "pg_dump (PostgreSQL) 18.4 (Debian 18.4-1.pgdg12+1)"
+generator_image = "postgres:18.4-bookworm"
+generator_image_digest = "postgres@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg18-alpha3-compression pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=zstd:3 --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg18-zstd-copy-basic.dump"
+compression = "zstd"
+compression_detail = "level=3"
+sha256 = "0da0fe7d204710a53b08aa0df555413fe6e8e968d27f1025d46976ddaba031d5"
+purpose = ["header", "toc", "zstd", "copy-text", "column-layout", "find-first", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
 name = "pg16-none-copy-basic"
 path = "tests/fixtures/archives/pg16-none-copy-basic.dump"
 source = "tests/fixtures/source/alpha1-copy-basic.sql"
