@@ -98,9 +98,7 @@ pub(crate) fn read_header<R: Read>(
 }
 
 fn is_supported_version(version: ArchiveVersion) -> bool {
-    version.major() == 1
-        && version.revision() == 0
-        && matches!(version.minor(), 14 | 15 | 16)
+    version.major() == 1 && version.revision() == 0 && matches!(version.minor(), 14 | 15 | 16)
 }
 
 fn read_compression<R: Read>(
