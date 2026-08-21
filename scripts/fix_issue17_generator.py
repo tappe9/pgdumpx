@@ -41,6 +41,18 @@ for obsolete in [
         raise RuntimeError("could not locate a redundant CopyParserLimits replacement")
     content = content.replace(obsolete, "", 1)
 
+constructor_start_marker = '''replace_once(
+    "crates/pgdumpx/src/copy.rs",
+    "    /// Creates a COPY text row reader using provisional finite v0.1 bounds.\\n'''
+constructor_end_marker = '''replace_once(
+    "crates/pgdumpx/src/copy.rs",
+    "        let field_count =\\n'''
+constructor_start = content.find(constructor_start_marker)
+constructor_end = content.find(constructor_end_marker, constructor_start)
+if constructor_start < 0 or constructor_end < 0:
+    raise RuntimeError("could not locate the copy.rs constructor replacement")
+content = content[:constructor_start] + content[constructor_end:]
+
 old_count = '''    "limits.string()",
     "limits.max_string_bytes()",
     expected=2,
@@ -70,6 +82,19 @@ if "PROVISIONAL_MAX_ROW_BYTES" in copy_content:
         + copy_content[block_end:]
     )
 copy_content = copy_content.replace("CopyParserLimits", "Limits")
+constructor_start = copy_content.index(
+    "    /// Creates a COPY text row reader using provisional finite v0.1 bounds."
+)
+constructor_body = copy_content.index("        Self {", constructor_start)
+constructor = '''    /// Creates a COPY text row reader using finite compatibility-oriented defaults.
+    pub fn new(reader: R) -> Self {
+        Self::with_limits(reader, Limits::default())
+    }
+
+    /// Creates a COPY text row reader using caller-supplied structural limits.
+    pub fn with_limits(reader: R, limits: Limits) -> Self {
+'''
+copy_content = copy_content[:constructor_start] + constructor + copy_content[constructor_body:]
 write(copy_path, copy_content)
 
 copy_tests_path = "crates/pgdumpx/src/copy_tests.rs"
