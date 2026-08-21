@@ -78,13 +78,23 @@ fn clean_no_match_remains_exit_one_but_limit_exhaustion_is_failure() {
 fn malformed_zero_overflowing_duplicate_and_unknown_options_are_usage_errors() {
     let fixture = fixture_path("pg18-none-copy-basic.dump");
     let cases: &[&[&str]] = &[
+        &["--max-rows"],
         &["--max-rows", "0"],
+        &["--max-rows", "-1"],
         &["--max-rows", "not-a-number"],
         &["--max-rows", "18446744073709551616"],
+        &["--max-decompressed-bytes"],
         &["--max-decompressed-bytes", "0"],
+        &["--max-decompressed-bytes", "-1"],
         &["--max-decompressed-bytes", "not-a-number"],
         &["--max-decompressed-bytes", "18446744073709551616"],
         &["--max-rows", "1", "--max-rows", "2"],
+        &[
+            "--max-decompressed-bytes",
+            "1",
+            "--max-decompressed-bytes",
+            "2",
+        ],
         &["--unknown-limit", "1"],
     ];
 
