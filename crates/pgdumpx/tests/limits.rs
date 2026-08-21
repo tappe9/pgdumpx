@@ -48,14 +48,11 @@ fn toc_entry_limit_accepts_below_and_exact_and_rejects_above_before_entries() {
     let mut bytes = complete_header(b"database", b"18.4", b"18.4");
     write_int(&mut bytes, 2);
     bytes.extend_from_slice(b"entry-bytes-must-not-be-read");
-    let expected_read =
-        u64::try_from(bytes.len() - b"entry-bytes-must-not-be-read".len()).unwrap();
+    let expected_read = u64::try_from(bytes.len() - b"entry-bytes-must-not-be-read".len()).unwrap();
     let bytes_read = Rc::new(Cell::new(0));
-    let error = Archive::open_with_limits(
-        TrackingReader::new(bytes, Rc::clone(&bytes_read)),
-        limits,
-    )
-    .unwrap_err();
+    let error =
+        Archive::open_with_limits(TrackingReader::new(bytes, Rc::clone(&bytes_read)), limits)
+            .unwrap_err();
 
     assert!(matches!(
         error,
@@ -82,11 +79,9 @@ fn archive_string_limit_accepts_below_and_exact_and_rejects_above_before_payload
     write_int(&mut bytes, 5);
     bytes.extend_from_slice(b"payload-must-not-be-read");
     let bytes_read = Rc::new(Cell::new(0));
-    let error = Archive::open_with_limits(
-        TrackingReader::new(bytes, Rc::clone(&bytes_read)),
-        limits,
-    )
-    .unwrap_err();
+    let error =
+        Archive::open_with_limits(TrackingReader::new(bytes, Rc::clone(&bytes_read)), limits)
+            .unwrap_err();
 
     assert!(matches!(
         error,
@@ -108,7 +103,10 @@ fn dependency_limit_accepts_below_and_exact_and_rejects_above() {
             write_metadata_entry(output, 1, b"entry", dependencies);
         });
         let archive = Archive::open_with_limits(Cursor::new(bytes), limits).unwrap();
-        assert_eq!(archive.entries()[0].dependencies().len(), dependencies.len());
+        assert_eq!(
+            archive.entries()[0].dependencies().len(),
+            dependencies.len()
+        );
     }
 
     let bytes = metadata_archive(1, |output| {
@@ -382,11 +380,7 @@ fn write_table_entry(bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(&[0; 8]);
 }
 
-fn write_table_data_entry(
-    bytes: &mut Vec<u8>,
-    copy_statement: Option<&[u8]>,
-    position_set: bool,
-) {
+fn write_table_data_entry(bytes: &mut Vec<u8>, copy_statement: Option<&[u8]>, position_set: bool) {
     write_int(bytes, 2);
     write_int(bytes, 1);
     write_string(bytes, Some(b"1259"));
@@ -417,11 +411,7 @@ fn write_dependencies(output: &mut Vec<u8>, dependencies: &[i32]) {
     write_string(output, None);
 }
 
-fn complete_header(
-    database_name: &[u8],
-    server_version: &[u8],
-    dump_version: &[u8],
-) -> Vec<u8> {
+fn complete_header(database_name: &[u8], server_version: &[u8], dump_version: &[u8]) -> Vec<u8> {
     let mut output = fixed_header();
     write_timestamp(&mut output);
     write_string(&mut output, Some(database_name));
