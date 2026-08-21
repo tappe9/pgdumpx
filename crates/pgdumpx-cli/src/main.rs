@@ -61,7 +61,10 @@ where
 
 fn open_archive(path: &Path) -> Result<Archive<BufReader<File>>, CliError> {
     let file = File::open(path).map_err(|source| {
-        CliError::runtime(format!("failed to open archive {}: {source}", path.display()))
+        CliError::runtime(format!(
+            "failed to open archive {}: {source}",
+            path.display()
+        ))
     })?;
     Archive::open(BufReader::new(file))
         .map_err(|source| CliError::runtime(format!("archive error: {source}")))
@@ -87,7 +90,13 @@ fn write_inspect<W: Write, R>(output: &mut W, archive: &Archive<R>) -> Result<()
         version.minor(),
         version.revision()
     )
-    .and_then(|()| writeln!(output, "compression={}", compression_name(header.compression())))
+    .and_then(|()| {
+        writeln!(
+            output,
+            "compression={}",
+            compression_name(header.compression())
+        )
+    })
     .and_then(|()| writeln!(output, "entries={}", archive.entries().len()))
     .and_then(|()| writeln!(output, "tables={tables}"))
     .and_then(|()| writeln!(output, "table_data={table_data}"))
