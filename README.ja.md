@@ -99,7 +99,7 @@ unsupported representationはCOPY textとして推測せず、row APIからtyped
 
 ## 想定Rust API
 
-現在のAlpha 2 sliceでは、以下のmetadata、row streaming、first-match、public structural-limit APIまで実装済みです。後続のv0.1 APIはROADMAPに従って追加します。
+現在のAlpha 2 sliceでは、以下のmetadata、row streaming、first-match、public structural-limit、scan-limit、error-taxonomy APIまで実装済みです。後続のv0.1 APIはROADMAPに従って追加します。
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -121,18 +121,26 @@ while let Some(row) = rows.next_row()? {
 
 `next_row(&mut self)`を通常の`Iterator`にしないのは意図的です。borrowed `Row`は再利用可能な内部bufferを参照し、次のmutable operationまでだけ有効です。
 
-最初に一致する1行を取得する使い方をv0.1のprimary use caseとします。
+明示的なtotal-work budgetの下で、最初に一致する1行を取得できます。
 
 ```rust
+use pgdumpx::ScanLimits;
+
 let mut rows = archive.table_rows(b"public", b"orders")?;
 let order_number = rows
     .column_index(b"order_number")?
     .ok_or(/* application error */)?;
 
-let row = rows.find_first(|row| {
+let scan_limits = ScanLimits::unlimited()
+    .with_max_rows(100_000)
+    .with_max_decompressed_bytes(64 * 1024 * 1024);
+
+let row = rows.find_first_with_limits(scan_limits, |row| {
     row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
 })?;
 ```
+
+`find_first`は追加のtotal-work budgetを適用しないconvenience pathとして維持します。`find_first_with_limits`は同じstreaming parser / predicate loopへ`ScanLimits`を適用します。
 
 `column_index()`は次を区別します。
 
@@ -142,7 +150,7 @@ Ok(None)         metadataは正常だがrequested columnが存在しない
 Err(...)         column layoutを利用できない、またはmalformed
 ```
 
-`find_first`はDBのindex lookupではなく**streaming sequential scan**です。TOCによって対象table-data entryへ直接seekできますが、entry内のrowは先頭からdecompress / parseします。早い位置で一致すれば即終了できますが、late matchやno matchでは、configured budgetが停止させない限り対象entry全体を処理する可能性があります。
+どちらのfirst-match methodもDBのindex lookupではなく**streaming sequential scan**です。TOCによって対象table-data entryへ直接seekできますが、entry内のrowは先頭からdecompress / parseします。早い位置で一致すれば即終了できますが、late matchやno matchでは、configured budgetが停止させない限り対象entry全体を処理する可能性があります。
 
 APIでは次を別のlimitとして扱います。
 
@@ -151,6 +159,8 @@ APIでは次を別のlimitとして扱います。
 - raw entry extractionのdecompressed-byte limit
 
 実装済みのstructural configurationは`Limits`です。`Limits::default()`はfiniteなcompatibility-oriented defaultで、`Archive::open`はこれを利用します。`Archive::open_with_limits`では同じparser pathに対してTOC / string / dependency / row / fieldのより厳しいlimitをcallerが指定できます。
+
+実装済みのtotal-work configurationは`ScanLimits`です。`ScanLimits::default()`と`ScanLimits::unlimited()`は2つのoptional budgetを未設定にします。`max_rows = N`では、一致rowを含めて最大`N`件のcomplete rowだけをyield / evaluateできます。decompressed-byte budgetは、field separator、row terminator、escape spelling、消費したCOPY terminatorを含む、parserが消費した物理COPY byteを数えます。logical fieldのdecode後lengthや、decoder / `BufRead`が先読みした未消費byteは数えません。budgetをcrossするrowはyieldもpredicate評価もされず、limit / consumed-work contextを持つtyped resource errorを返します。
 
 詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。
 
@@ -163,6 +173,8 @@ pgdumpx inspect backup.dump
 pgdumpx list backup.dump
 pgdumpx extract backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
+pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
+  backup.dump public.orders order_number 123456
 ```
 
 ### `inspect` / `list`
@@ -182,18 +194,22 @@ CLIはlibraryのbounded raw-extraction pathを利用します。limit到達時�
 v0.1の形式は次のとおりです。
 
 ```text
-pgdumpx find <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
+
+optionalなscan-limit flagは`<FILE>`より前に指定します。各flagは正の10進`u64`を1回まで指定でき、互いに独立しています。省略したbudgetはunlimitedです。`--max-rows <N>`はlibraryのsearch pathがevaluateしたcomplete rowを数え、一致rowも含みます。`--max-decompressed-bytes <N>`はRust APIと同じparser-consumed physical COPY-byte会計を使います。separator、row terminator、escape spelling、消費したCOPY terminatorを含みますが、decompressor / bufferの未消費lookaheadやlogical decodeによるlength変化は含みません。
 
 `<SCHEMA.TABLE>`はASCIIの`.`をちょうど1個含み、schema / tableの両componentをnon-emptyとします。SQL identifierのquote / escapeは未対応です。schema、table、column、value argumentはUTF-8で、Rust APIはbyte-orientedのままです。
 
 一致時はstdoutへ**正規化したCOPY text 1 record**だけを出力します。fieldはCOPY column順のASCII tab区切りで、record末尾はLFです。NULLは`\N`、empty bytesはempty fieldです。backslash / tab / LF / CRは`\\` / `\t` / `\n` / `\r`、その他のnon-printableまたはnon-ASCII byteは`\377`のような3桁octal escapeで出力します。lossy UTF-8変換を行わず、stdoutをdeterministicかつASCII-safeに保ちます。no matchでは何も出力せず、diagnosticはstderrだけへ出力します。
 
+resource limit到達はclean no-matchではなくoperation failureです。一致rowへ到達する前にbudgetを使い切った場合も、stderrへdiagnosticを出し、`2+`で終了します。
+
 stable exit behavior:
 
 ```text
 0  match found
-1  no matching row
+1  scan完了、matching rowなし
 2+ usage / I/O / format / integrity / decompression / COPY / encoding / resource error
 ```
 
