@@ -210,10 +210,8 @@ struct TempArchive {
 impl TempArchive {
     fn new(bytes: Vec<u8>) -> Self {
         let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "pgdumpx-extract-{}-{id}.dump",
-            process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("pgdumpx-extract-{}-{id}.dump", process::id()));
         fs::write(&path, bytes).unwrap();
         Self { path }
     }
@@ -230,25 +228,15 @@ impl Drop for TempArchive {
 }
 
 fn archive_with_table_data(payload: &[u8]) -> Vec<u8> {
-    let mut data_offset_start = None;
     let mut output = complete_header();
     write_int(&mut output, 2);
     write_table_entry(&mut output, 1, b"public", b"orders", b"41");
-    write_table_data_entry(
-        &mut output,
-        2,
-        b"public",
-        b"orders",
-        b"41",
-        1,
-        0,
-    );
+    write_table_data_entry(&mut output, 2, b"public", b"orders", b"41", 1, 0);
 
     // The data offset is the final eight bytes of the TABLE DATA TOC entry.
-    data_offset_start = Some(output.len() - 8);
+    let data_offset_start = output.len() - 8;
     let data_offset = u64::try_from(output.len()).unwrap();
-    let start = data_offset_start.unwrap();
-    output[start..start + 8].copy_from_slice(&data_offset.to_le_bytes());
+    output[data_offset_start..data_offset_start + 8].copy_from_slice(&data_offset.to_le_bytes());
     output.extend_from_slice(&data_block(2, payload));
     output
 }
@@ -316,10 +304,7 @@ fn write_table_data_entry(
     write_int(output, SECTION_DATA);
     write_string(output, None);
     write_string(output, None);
-    write_string(
-        output,
-        Some(b"COPY public.orders (value) FROM stdin;\n"),
-    );
+    write_string(output, Some(b"COPY public.orders (value) FROM stdin;\n"));
     write_string(output, Some(schema));
     write_string(output, None);
     write_string(output, None);
