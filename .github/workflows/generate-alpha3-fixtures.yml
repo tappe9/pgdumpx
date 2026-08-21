@@ -1,9 +1,7 @@
 name: Generate Alpha 3 fixtures
 
 on:
-  push:
-    branches:
-      - feat/archive-compat-1.14-1.15
+  pull_request:
     paths:
       - .github/workflows/generate-alpha3-fixtures.yml
       - scripts/generate-alpha3-version-fixtures.sh
