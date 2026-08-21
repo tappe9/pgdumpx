@@ -53,11 +53,7 @@ fn explicit_byte_limit_allows_exact_and_above_boundary_match() {
 #[test]
 fn byte_limit_rejects_a_row_that_crosses_the_parser_consumed_budget() {
     let fixture = fixture_path("pg18-none-copy-basic.dump");
-    let output = run_find(
-        &fixture,
-        &["--max-decompressed-bytes", "67"],
-        "SECOND-200",
-    );
+    let output = run_find(&fixture, &["--max-decompressed-bytes", "67"], "SECOND-200");
 
     assert_resource_failure(
         output,
@@ -87,10 +83,7 @@ fn malformed_zero_overflowing_duplicate_and_unknown_options_are_usage_errors() {
         &["--max-rows", "18446744073709551616"],
         &["--max-decompressed-bytes", "0"],
         &["--max-decompressed-bytes", "not-a-number"],
-        &[
-            "--max-decompressed-bytes",
-            "18446744073709551616",
-        ],
+        &["--max-decompressed-bytes", "18446744073709551616"],
         &["--max-rows", "1", "--max-rows", "2"],
         &["--unknown-limit", "1"],
     ];
@@ -113,12 +106,7 @@ fn both_limits_are_delegated_to_the_same_search_operation() {
     let fixture = fixture_path("pg18-gzip-copy-basic.dump");
     let output = run_find(
         &fixture,
-        &[
-            "--max-rows",
-            "2",
-            "--max-decompressed-bytes",
-            "68",
-        ],
+        &["--max-rows", "2", "--max-decompressed-bytes", "68"],
         "SECOND-200",
     );
 
