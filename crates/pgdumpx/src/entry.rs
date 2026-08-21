@@ -3,8 +3,10 @@ use crate::{
 };
 use flate2::{Decompress, FlushDecompress, Status};
 #[cfg(feature = "lz4")]
-use lz4_flex::frame::FrameDecoder;
-#[cfg(feature = "lz4")]
+use lz4_flex::frame::FrameDecoder as Lz4FrameDecoder;
+#[cfg(feature = "zstd")]
+use ruzstd::decoding::{FrameDecoder as ZstdFrameDecoder, StreamingDecoder};
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 use std::{cell::RefCell, rc::Rc};
 use std::{
     fmt,
@@ -27,6 +29,8 @@ enum EntryBackend<'a, R> {
     Gzip(ZlibEntryDecoder<'a, R>),
     #[cfg(feature = "lz4")]
     Lz4(Lz4EntryDecoder<'a>),
+    #[cfg(feature = "zstd")]
+    Zstd(ZstdEntryDecoder<'a>),
 }
 
 impl<'a, R: Read> EntryDataReader<'a, R> {
@@ -52,10 +56,17 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
                 }
             }
             Compression::Zstd => {
-                return Err(PgDumpError::UnsupportedEntryCompression {
-                    dump_id: dump_id.as_i32(),
-                    algorithm: "zstandard",
-                });
+                #[cfg(feature = "zstd")]
+                {
+                    EntryBackend::Zstd(ZstdEntryDecoder::new(dump_id, chunks))
+                }
+                #[cfg(not(feature = "zstd"))]
+                {
+                    return Err(PgDumpError::UnsupportedEntryCompression {
+                        dump_id: dump_id.as_i32(),
+                        algorithm: "zstandard",
+                    });
+                }
             }
         };
         Ok(Self { dump_id, backend })
@@ -67,6 +78,8 @@ impl<'a, R: Read> EntryDataReader<'a, R> {
             EntryBackend::Gzip(_) => "gzip",
             #[cfg(feature = "lz4")]
             EntryBackend::Lz4(_) => "lz4",
+            #[cfg(feature = "zstd")]
+            EntryBackend::Zstd(_) => "zstandard",
         }
     }
 }
@@ -88,6 +101,8 @@ impl<R: Read> Read for EntryDataReader<'_, R> {
             EntryBackend::Gzip(reader) => reader.read(output),
             #[cfg(feature = "lz4")]
             EntryBackend::Lz4(reader) => reader.read(output),
+            #[cfg(feature = "zstd")]
+            EntryBackend::Zstd(reader) => reader.read(output),
         }
     }
 }
@@ -227,10 +242,131 @@ impl<R: Read> Read for ZlibEntryDecoder<'_, R> {
     }
 }
 
+#[cfg(feature = "zstd")]
+struct ZstdEntryDecoder<'a> {
+    dump_id: DumpId,
+    state: ZstdDecoderState<'a>,
+    source_error: Rc<RefCell<Option<io::Error>>>,
+}
+
+#[cfg(feature = "zstd")]
+enum ZstdDecoderState<'a> {
+    Uninitialized(Option<Box<dyn Read + 'a>>),
+    Decoding(StreamingDecoder<Box<dyn Read + 'a>, ZstdFrameDecoder>),
+    Failed,
+}
+
+#[cfg(feature = "zstd")]
+impl<'a> ZstdEntryDecoder<'a> {
+    fn new<R: Read + 'a>(dump_id: DumpId, source: CustomChunkReader<'a, R>) -> Self {
+        let source_error = Rc::new(RefCell::new(None));
+        let tracked = TrackedCompressedSource {
+            inner: source,
+            error: Rc::clone(&source_error),
+        };
+        Self {
+            dump_id,
+            state: ZstdDecoderState::Uninitialized(Some(Box::new(tracked))),
+            source_error,
+        }
+    }
+
+    fn decompression_error(&self, source: io::Error) -> io::Error {
+        into_io_error(PgDumpError::DecompressionFailed {
+            dump_id: self.dump_id.as_i32(),
+            algorithm: "zstandard",
+            source,
+        })
+    }
+
+    fn take_source_error(&self) -> Option<io::Error> {
+        self.source_error.borrow_mut().take()
+    }
+
+    fn initialize(&mut self) -> io::Result<()> {
+        let source = match &mut self.state {
+            ZstdDecoderState::Uninitialized(source) => source
+                .take()
+                .expect("uninitialized Zstandard decoder must own its source"),
+            ZstdDecoderState::Decoding(_) => return Ok(()),
+            ZstdDecoderState::Failed => {
+                return Err(self.decompression_error(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Zstandard decoder is unavailable after an earlier failure",
+                )));
+            }
+        };
+
+        match StreamingDecoder::new(source) {
+            Ok(decoder) => {
+                self.state = ZstdDecoderState::Decoding(decoder);
+                Ok(())
+            }
+            Err(source) => {
+                self.state = ZstdDecoderState::Failed;
+                if let Some(source) = self.take_source_error() {
+                    Err(source)
+                } else {
+                    Err(self.decompression_error(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        source.to_string(),
+                    )))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "zstd")]
+impl Read for ZstdEntryDecoder<'_> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        self.initialize()?;
+
+        let result = match &mut self.state {
+            ZstdDecoderState::Decoding(decoder) => decoder.read(output),
+            ZstdDecoderState::Uninitialized(_) => unreachable!("decoder was initialized above"),
+            ZstdDecoderState::Failed => unreachable!("failed initialization returned above"),
+        };
+        match result {
+            Ok(read) => Ok(read),
+            Err(source) => {
+                if let Some(source) = self.take_source_error() {
+                    Err(source)
+                } else {
+                    Err(self.decompression_error(source))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "zstd")]
+struct TrackedCompressedSource<R> {
+    inner: R,
+    error: Rc<RefCell<Option<io::Error>>>,
+}
+
+#[cfg(feature = "zstd")]
+impl<R: Read> Read for TrackedCompressedSource<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        match self.inner.read(output) {
+            Ok(read) => Ok(read),
+            Err(source) => {
+                let kind = source.kind();
+                *self.error.borrow_mut() = Some(source);
+                Err(io::Error::new(kind, "compressed entry source read failed"))
+            }
+        }
+    }
+}
+
 #[cfg(feature = "lz4")]
 struct Lz4EntryDecoder<'a> {
     dump_id: DumpId,
-    decoder: FrameDecoder<Box<dyn Read + 'a>>,
+    decoder: Lz4FrameDecoder<Box<dyn Read + 'a>>,
     source_state: Rc<RefCell<Lz4SourceState>>,
     stream_end: bool,
 }
@@ -246,7 +382,7 @@ impl<'a> Lz4EntryDecoder<'a> {
         let reader: Box<dyn Read + 'a> = Box::new(tracked);
         Self {
             dump_id,
-            decoder: FrameDecoder::new(reader),
+            decoder: Lz4FrameDecoder::new(reader),
             source_state,
             stream_end: false,
         }
