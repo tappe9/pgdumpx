@@ -46,16 +46,18 @@ fn bounded_reader_distinguishes_exact_eof_from_limit_exceeded() {
 
 #[test]
 fn copy_entry_to_handles_below_exact_and_above_limits() {
-    for (limit, expected) in [(4, Ok(3)), (3, Ok(3))] {
+    for limit in [4, 3] {
         let mut archive = Archive::open(Cursor::new(archive_with_payload(b"abc"))).unwrap();
         let id = archive.entries()[0].id();
         let mut output = Vec::new();
-        let result = archive.copy_entry_to(
-            id,
-            &mut output,
-            EntryReadLimits::unlimited().with_max_decompressed_bytes(limit),
-        );
-        assert_eq!(result, expected);
+        let copied = archive
+            .copy_entry_to(
+                id,
+                &mut output,
+                EntryReadLimits::unlimited().with_max_decompressed_bytes(limit),
+            )
+            .unwrap();
+        assert_eq!(copied, 3);
         assert_eq!(output, b"abc");
     }
 
