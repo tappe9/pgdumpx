@@ -139,10 +139,13 @@ impl PgDumpError {
             | Self::EntryBufferAllocationFailed { .. }
             | Self::CopyRowByteLimitExceeded { .. }
             | Self::CopyFieldCountLimitExceeded { .. }
+            | Self::ScanRowLimitExceeded { .. }
+            | Self::ScanDecompressedByteLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. } => ErrorCategory::Resource,
             Self::CopyConsumedByteCountOverflow { .. }
             | Self::CopyRowNumberOverflow { .. }
+            | Self::ScanRowCountOverflow { .. }
             | Self::ArithmeticOverflow { .. } => ErrorCategory::Arithmetic,
             Self::TableNotFound
             | Self::TableDataEntryUnavailable { .. }
@@ -198,6 +201,10 @@ impl PgDumpError {
                 byte_offset: offset,
                 ..
             }
+            | Self::ScanDecompressedByteLimitExceeded {
+                byte_offset: offset,
+                ..
+            }
             | Self::ArithmeticOverflow { offset } => Some(*offset),
             Self::EntrySeekPositionMismatch { expected, .. } => Some(*expected),
             Self::CopyIo { consumed, .. } => Some(*consumed),
@@ -219,10 +226,12 @@ impl PgDumpError {
             | Self::UnsupportedEntryCompression { .. }
             | Self::EntryBufferAllocationFailed { .. }
             | Self::DecompressionFailed { .. }
+            | Self::ScanRowLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. }
             | Self::CopyConsumedByteCountOverflow { .. }
             | Self::CopyRowNumberOverflow { .. }
+            | Self::ScanRowCountOverflow { .. }
             | Self::InvalidUtf8 { .. } => None,
         }
     }
@@ -282,10 +291,13 @@ impl PgDumpError {
             | Self::MalformedCopyTerminator { .. }
             | Self::CopyRowByteLimitExceeded { .. }
             | Self::CopyFieldCountLimitExceeded { .. }
+            | Self::ScanRowLimitExceeded { .. }
+            | Self::ScanDecompressedByteLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. }
             | Self::CopyConsumedByteCountOverflow { .. }
             | Self::CopyRowNumberOverflow { .. }
+            | Self::ScanRowCountOverflow { .. }
             | Self::ArithmeticOverflow { .. }
             | Self::InvalidUtf8 { .. } => return None,
         };
@@ -304,10 +316,13 @@ impl PgDumpError {
             | Self::MalformedCopyTerminator { row, .. }
             | Self::CopyRowByteLimitExceeded { row, .. }
             | Self::CopyFieldCountLimitExceeded { row, .. }
+            | Self::ScanRowLimitExceeded { row, .. }
+            | Self::ScanDecompressedByteLimitExceeded { row, .. }
             | Self::CopyRowAllocationFailed { row, .. }
             | Self::CopyFieldAllocationFailed { row, .. }
             | Self::CopyConsumedByteCountOverflow { row, .. }
-            | Self::CopyRowNumberOverflow { row } => Some(*row),
+            | Self::CopyRowNumberOverflow { row }
+            | Self::ScanRowCountOverflow { row, .. } => Some(*row),
             _ => None,
         }
     }
@@ -358,6 +373,20 @@ impl PgDumpError {
                 ResourceLimit::CopyFieldsPerRow,
                 *limit,
                 *actual,
+            )),
+            Self::ScanRowLimitExceeded {
+                limit, consumed, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::ScanRows,
+                *limit,
+                *consumed,
+            )),
+            Self::ScanDecompressedByteLimitExceeded {
+                limit, consumed, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::ScanDecompressedBytes,
+                *limit,
+                *consumed,
             )),
             _ => None,
         }

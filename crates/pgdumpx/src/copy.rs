@@ -1,4 +1,4 @@
-use crate::{Limits, PgDumpError};
+use crate::{Limits, PgDumpError, ScanLimits};
 use std::{
     fmt,
     io::{BufRead, BufReader, Read},
@@ -134,6 +134,62 @@ impl FieldSpan {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ScanBudget {
+    limits: ScanLimits,
+    start_consumed: u64,
+    consumed_rows: u64,
+}
+
+impl ScanBudget {
+    const fn new(limits: ScanLimits, start_consumed: u64) -> Self {
+        Self {
+            limits,
+            start_consumed,
+            consumed_rows: 0,
+        }
+    }
+
+    fn check_bytes(&self, row: u64, current: u64) -> Result<(), PgDumpError> {
+        let consumed = current
+            .checked_sub(self.start_consumed)
+            .ok_or(PgDumpError::ArithmeticOverflow { offset: current })?;
+        if let Some(limit) = self.limits.max_decompressed_bytes() {
+            if consumed > limit {
+                return Err(PgDumpError::ScanDecompressedByteLimitExceeded {
+                    row,
+                    limit,
+                    consumed,
+                    byte_offset: current,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn next_row_count(&self, row: u64) -> Result<u64, PgDumpError> {
+        self.consumed_rows
+            .checked_add(1)
+            .ok_or(PgDumpError::ScanRowCountOverflow {
+                row,
+                consumed: self.consumed_rows,
+            })
+    }
+
+    fn check_rows(&self, row: u64, consumed: u64) -> Result<(), PgDumpError> {
+        if let Some(limit) = self.limits.max_rows() {
+            if consumed > limit {
+                return Err(PgDumpError::ScanRowLimitExceeded {
+                    row,
+                    limit,
+                    consumed,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A lending, byte-oriented parser for PostgreSQL COPY text rows.
 ///
 /// Input is consumed incrementally from any [`Read`] implementation. The
@@ -142,6 +198,7 @@ impl FieldSpan {
 pub struct CopyRowReader<R> {
     input: CopyInput<R>,
     limits: Limits,
+    scan_budget: ScanBudget,
     raw_row: Vec<u8>,
     logical_bytes: Vec<u8>,
     field_spans: Vec<FieldSpan>,
@@ -160,9 +217,26 @@ impl<R: Read> CopyRowReader<R> {
     /// Only the row-byte and fields-per-row members are used by this standalone
     /// parser. The same [`Limits`] values are used by [`crate::Archive::table_rows`].
     pub fn with_limits(reader: R, limits: Limits) -> Self {
+        Self::with_limits_and_scan_limits(reader, limits, ScanLimits::unlimited())
+    }
+
+    /// Creates a COPY text row reader using caller-supplied scan work budgets.
+    pub fn with_scan_limits(reader: R, scan_limits: ScanLimits) -> Self {
+        Self::with_limits_and_scan_limits(reader, Limits::default(), scan_limits)
+    }
+
+    /// Creates a COPY text row reader using structural and total-work limits.
+    pub fn with_limits_and_scan_limits(
+        reader: R,
+        limits: Limits,
+        scan_limits: ScanLimits,
+    ) -> Self {
+        let input = CopyInput::new(reader);
+        let scan_budget = ScanBudget::new(scan_limits, input.consumed());
         Self {
-            input: CopyInput::new(reader),
+            input,
             limits,
+            scan_budget,
             raw_row: Vec::new(),
             logical_bytes: Vec::new(),
             field_spans: Vec::new(),
@@ -175,6 +249,19 @@ impl<R: Read> CopyRowReader<R> {
     pub(crate) fn with_limits_and_consumed(reader: R, limits: Limits, consumed: u64) -> Self {
         let mut parser = Self::with_limits(reader, limits);
         parser.input.consumed = consumed;
+        parser.scan_budget.start_consumed = consumed;
+        parser
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_scan_state_for_test(
+        reader: R,
+        limits: Limits,
+        scan_limits: ScanLimits,
+        consumed_rows: u64,
+    ) -> Self {
+        let mut parser = Self::with_limits_and_scan_limits(reader, limits, scan_limits);
+        parser.scan_budget.consumed_rows = consumed_rows;
         parser
     }
 
@@ -185,6 +272,54 @@ impl<R: Read> CopyRowReader<R> {
     /// parser storage, so another call is rejected by the borrow checker until
     /// that row is no longer used.
     pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError> {
+        let mut operation_budget = None;
+        self.next_row_with_budget(&mut operation_budget)
+    }
+
+    /// Returns the first row for which `predicate` evaluates to `true`.
+    ///
+    /// This compatibility path has no additional operation-level scan budget;
+    /// constructor-level limits, if any, still apply.
+    pub fn find_first<F>(&mut self, predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool,
+    {
+        self.find_first_with_limits(ScanLimits::unlimited(), predicate)
+    }
+
+    /// Returns the first matching row while enforcing operation-level work budgets.
+    ///
+    /// The parser checks decompressed bytes immediately after consuming each
+    /// physical COPY byte and checks complete rows before decoding or invoking
+    /// the predicate. A crossing row is never exposed to `predicate`.
+    pub fn find_first_with_limits<F>(
+        &mut self,
+        scan_limits: ScanLimits,
+        mut predicate: F,
+    ) -> Result<Option<OwnedRow>, PgDumpError>
+    where
+        F: FnMut(&Row<'_>) -> bool,
+    {
+        let mut operation_budget = Some(ScanBudget::new(
+            scan_limits,
+            self.consumed_input_bytes(),
+        ));
+        while let Some(row) = self.next_row_with_budget(&mut operation_budget)? {
+            if predicate(&row) {
+                return OwnedRow::try_from_borrowed(&row).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) const fn consumed_input_bytes(&self) -> u64 {
+        self.input.consumed()
+    }
+
+    fn next_row_with_budget(
+        &mut self,
+        operation_budget: &mut Option<ScanBudget>,
+    ) -> Result<Option<Row<'_>>, PgDumpError> {
         if self.finished {
             return Ok(None);
         }
@@ -195,7 +330,7 @@ impl<R: Read> CopyRowReader<R> {
 
         let row = self.next_row_number;
         let row_start = self.consumed_input_bytes();
-        let record_end = self.read_record(row)?;
+        let record_end = self.read_record(row, operation_budget)?;
 
         if self.raw_row.is_empty() && record_end == RecordEnd::Eof {
             self.finished = true;
@@ -212,6 +347,8 @@ impl<R: Read> CopyRowReader<R> {
                 byte_offset: row_start,
             });
         }
+
+        self.count_scanned_row(row, operation_budget)?;
 
         let field_count = inspect_field_layout(
             &self.raw_row,
@@ -243,14 +380,14 @@ impl<R: Read> CopyRowReader<R> {
         }))
     }
 
-    pub(crate) const fn consumed_input_bytes(&self) -> u64 {
-        self.input.consumed()
-    }
-
-    fn read_record(&mut self, row: u64) -> Result<RecordEnd, PgDumpError> {
+    fn read_record(
+        &mut self,
+        row: u64,
+        operation_budget: &Option<ScanBudget>,
+    ) -> Result<RecordEnd, PgDumpError> {
         let mut escaped = false;
         loop {
-            let Some(byte) = self.input.next_byte(row)? else {
+            let Some(byte) = self.next_input_byte(row, operation_budget)? else {
                 if escaped {
                     return Err(PgDumpError::MalformedCopyEscape {
                         row,
@@ -274,7 +411,7 @@ impl<R: Read> CopyRowReader<R> {
                 b'\n' => return Ok(RecordEnd::Line),
                 b'\r' => {
                     if self.input.peek_byte(row)? == Some(b'\n') {
-                        let consumed = self.input.next_byte(row)?;
+                        let consumed = self.next_input_byte(row, operation_budget)?;
                         debug_assert_eq!(consumed, Some(b'\n'));
                     }
                     return Ok(RecordEnd::Line);
@@ -282,6 +419,73 @@ impl<R: Read> CopyRowReader<R> {
                 _ => self.push_raw_byte(row, byte)?,
             }
         }
+    }
+
+    fn next_input_byte(
+        &mut self,
+        row: u64,
+        operation_budget: &Option<ScanBudget>,
+    ) -> Result<Option<u8>, PgDumpError> {
+        let byte = self.input.next_byte(row)?;
+        if byte.is_some() {
+            if let Err(error) = self.check_scan_bytes(row, operation_budget) {
+                self.finished = true;
+                return Err(error);
+            }
+        }
+        Ok(byte)
+    }
+
+    fn check_scan_bytes(
+        &self,
+        row: u64,
+        operation_budget: &Option<ScanBudget>,
+    ) -> Result<(), PgDumpError> {
+        let current = self.input.consumed();
+        self.scan_budget.check_bytes(row, current)?;
+        if let Some(budget) = operation_budget {
+            budget.check_bytes(row, current)?;
+        }
+        Ok(())
+    }
+
+    fn count_scanned_row(
+        &mut self,
+        row: u64,
+        operation_budget: &mut Option<ScanBudget>,
+    ) -> Result<(), PgDumpError> {
+        let result = self.try_count_scanned_row(row, operation_budget);
+        if result.is_err() {
+            self.finished = true;
+        }
+        result
+    }
+
+    fn try_count_scanned_row(
+        &mut self,
+        row: u64,
+        operation_budget: &mut Option<ScanBudget>,
+    ) -> Result<(), PgDumpError> {
+        let next_reader_rows = self.scan_budget.next_row_count(row)?;
+        let next_operation_rows = operation_budget
+            .as_ref()
+            .map(|budget| budget.next_row_count(row))
+            .transpose()?;
+
+        self.scan_budget.check_rows(row, next_reader_rows)?;
+        if let (Some(budget), Some(consumed)) =
+            (operation_budget.as_ref(), next_operation_rows)
+        {
+            budget.check_rows(row, consumed)?;
+        }
+
+        self.scan_budget.consumed_rows = next_reader_rows;
+        if let (Some(budget), Some(consumed)) =
+            (operation_budget.as_mut(), next_operation_rows)
+        {
+            budget.consumed_rows = consumed;
+        }
+        Ok(())
     }
 
     fn push_raw_byte(&mut self, row: u64, byte: u8) -> Result<(), PgDumpError> {

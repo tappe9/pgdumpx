@@ -19,9 +19,7 @@ fn scan_limits_are_optional_opaque_operation_budgets() {
     assert_eq!(unlimited.max_rows(), None);
     assert_eq!(unlimited.max_decompressed_bytes(), None);
 
-    let bounded = unlimited
-        .with_max_rows(3)
-        .with_max_decompressed_bytes(17);
+    let bounded = unlimited.with_max_rows(3).with_max_decompressed_bytes(17);
     assert_eq!(bounded.max_rows(), Some(3));
     assert_eq!(bounded.max_decompressed_bytes(), Some(17));
 }
@@ -43,7 +41,7 @@ fn standalone_row_budget_accepts_below_and_exact_and_rejects_crossing_row() {
 
     let error = rows.next_row().unwrap_err();
     assert!(matches!(
-        error,
+        &error,
         PgDumpError::ScanRowLimitExceeded {
             row: 2,
             limit: 1,
@@ -78,7 +76,7 @@ fn decompressed_byte_budget_is_exact_and_counts_spelling_separators_and_terminat
     assert!(rows.next_row().unwrap().is_some());
     let error = rows.next_row().unwrap_err();
     assert!(matches!(
-        error,
+        &error,
         PgDumpError::ScanDecompressedByteLimitExceeded {
             row: 2,
             limit: 9,
@@ -224,7 +222,7 @@ fn checked_scan_row_counter_overflow_is_typed_and_controlled() {
 
     let error = rows.next_row().unwrap_err();
     assert!(matches!(
-        error,
+        &error,
         PgDumpError::ScanRowCountOverflow {
             row: 1,
             consumed: u64::MAX,
@@ -234,29 +232,30 @@ fn checked_scan_row_counter_overflow_is_typed_and_controlled() {
 }
 
 #[test]
-fn archive_integrated_iteration_and_search_use_the_same_scan_budget_path() {
+fn archive_integrated_search_uses_the_same_scan_budget_path() {
     let first_physical_row = b"1\tEARLY-100\tcustomer-a\tplain\t\n";
     let first_row_bytes = u64::try_from(first_physical_row.len()).unwrap();
 
     for fixture_name in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
         let file = File::open(fixture_path(fixture_name)).unwrap();
         let mut archive = Archive::open(BufReader::new(file)).unwrap();
-        let mut rows = archive
-            .table_rows_with_scan_limits(
-                b"public",
-                b"orders",
-                ScanLimits::unlimited().with_max_rows(1),
-            )
-            .unwrap();
-        assert!(rows.next_row().unwrap().is_some());
+        let mut rows = archive.table_rows(b"public", b"orders").unwrap();
+        let evaluated = Cell::new(0_u64);
+        let error = rows
+            .find_first_with_limits(ScanLimits::unlimited().with_max_rows(1), |_| {
+                evaluated.set(evaluated.get() + 1);
+                false
+            })
+            .unwrap_err();
         assert!(matches!(
-            rows.next_row().unwrap_err(),
+            error,
             PgDumpError::ScanRowLimitExceeded {
                 row: 2,
                 limit: 1,
                 consumed: 2,
             }
         ));
+        assert_eq!(evaluated.get(), 1);
 
         let file = File::open(fixture_path(fixture_name)).unwrap();
         let mut archive = Archive::open(BufReader::new(file)).unwrap();

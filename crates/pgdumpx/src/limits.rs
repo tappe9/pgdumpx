@@ -95,3 +95,54 @@ impl Default for Limits {
         Self::default_compatible()
     }
 }
+
+/// Optional total-work budgets for one streaming row scan.
+///
+/// Unlike [`Limits`], these values do not bound one allocation or one row.
+/// They bound parser-consumed work across an iteration or search operation.
+/// `None` means that the corresponding total-work budget is not applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanLimits {
+    max_rows: Option<u64>,
+    max_decompressed_bytes: Option<u64>,
+}
+
+impl ScanLimits {
+    /// Returns scan limits with neither total-work budget enabled.
+    pub const fn unlimited() -> Self {
+        Self {
+            max_rows: None,
+            max_decompressed_bytes: None,
+        }
+    }
+
+    /// Returns the optional maximum number of complete rows for this scan.
+    pub const fn max_rows(self) -> Option<u64> {
+        self.max_rows
+    }
+
+    /// Returns the optional maximum parser-consumed decompressed byte count.
+    pub const fn max_decompressed_bytes(self) -> Option<u64> {
+        self.max_decompressed_bytes
+    }
+
+    /// Returns a configuration with a maximum complete-row budget.
+    #[must_use]
+    pub const fn with_max_rows(mut self, value: u64) -> Self {
+        self.max_rows = Some(value);
+        self
+    }
+
+    /// Returns a configuration with a maximum decompressed-byte budget.
+    #[must_use]
+    pub const fn with_max_decompressed_bytes(mut self, value: u64) -> Self {
+        self.max_decompressed_bytes = Some(value);
+        self
+    }
+}
+
+impl Default for ScanLimits {
+    fn default() -> Self {
+        Self::unlimited()
+    }
+}
