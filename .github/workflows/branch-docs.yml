@@ -1,0 +1,81 @@
+name: Branch documentation sync
+
+on:
+  push:
+    branches: [feat/structural-limits-metadata-cli]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/structural-limits-metadata-cli
+      - name: Synchronize implementation docs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text()
+          text = text.replace(
+              "The public API is still a design contract, not an implemented interface.",
+              "The current Alpha 2 slice implements the metadata, row-streaming, first-match, and public structural-limit APIs shown below. Later v0.1 APIs remain subject to the roadmap.",
+          )
+          text = text.replace(
+              "See [docs/API-DESIGN.md](docs/API-DESIGN.md).\n\n## Intended CLI",
+              "The implemented structural configuration is `Limits`. `Limits::default()` is finite and compatibility-oriented, `Archive::open` uses those defaults, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds through the same parser path.\n\nSee [docs/API-DESIGN.md](docs/API-DESIGN.md).\n\n## CLI",
+          )
+          text = text.replace(
+              "The CLI consumes the same public Rust library API. It is also an early end-to-end acceptance path rather than a separate parser implementation.",
+              "`inspect`, `list`, and `find` are implemented and consume the same public Rust library API rather than maintaining separate archive or COPY parsers. `extract` remains planned for a later Alpha 2 issue.",
+          )
+          text = text.replace(
+              "### `extract`\n\n`extract` writes",
+              "### `inspect` / `list`\n\n`inspect <FILE>` prints archive version, compression, and entry/table/table-data counts as deterministic `key=value` lines. `list <FILE>` prints TOC entries in archive order as tab-separated dump ID, object type, schema, and name columns. Both commands stop at the library metadata-open path: they do not seek into TABLE DATA payloads, decompress entry data, or invoke the COPY row parser. Diagnostics are written to stderr and malformed archives exit non-zero.\n\n### `extract` (planned)\n\n`extract` writes",
+          )
+          path.write_text(text)
+
+          path = Path("README.ja.md")
+          text = path.read_text()
+          text = text.replace(
+              "public APIはまだ設計契約であり、実装済みinterfaceではありません。",
+              "現在のAlpha 2 sliceでは、以下のmetadata、row streaming、first-match、public structural-limit APIまで実装済みです。後続のv0.1 APIはROADMAPに従って追加します。",
+          )
+          text = text.replace(
+              "詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。\n\n## 想定CLI",
+              "実装済みのstructural configurationは`Limits`です。`Limits::default()`はfiniteなcompatibility-oriented defaultで、`Archive::open`はこれを利用します。`Archive::open_with_limits`では同じparser pathに対してTOC / string / dependency / row / fieldのより厳しいlimitをcallerが指定できます。\n\n詳細は[docs/API-DESIGN.md](docs/API-DESIGN.md)を参照してください。\n\n## CLI",
+          )
+          text = text.replace(
+              "CLIはpublic Rust APIのconsumerであり、別のparser実装にはしません。また、Core完成後に付け足すのではなく、早期のend-to-end acceptance pathとして実装します。",
+              "`inspect`、`list`、`find`は実装済みで、archive / COPY parserをCLI側へ重複実装せずpublic Rust APIを利用します。`extract`は後続のAlpha 2 Issueで実装予定です。",
+          )
+          text = text.replace(
+              "### `extract`\n\n選択したentryの",
+              "### `inspect` / `list`\n\n`inspect <FILE>`はarchive version、compression、entry / table / table-data件数をdeterministicな`key=value`形式で表示します。`list <FILE>`はTOC orderを維持し、dump ID、object type、schema、nameをtab区切りで表示します。どちらもlibraryのmetadata-open pathだけを使い、TABLE DATA payloadへのseek、entry decompression、COPY row parserには到達しません。diagnosticはstderrへ出力し、malformed archiveはnon-zero exitになります。\n\n### `extract`（planned）\n\n選択したentryの",
+          )
+          path.write_text(text)
+
+          path = Path("crates/pgdumpx/src/error.rs")
+          text = path.read_text()
+          text = text.replace("provisional finite bound", "configured finite bound")
+          text = text.replace("provisional finite column-count bound", "configured finite field-count bound")
+          text = text.replace("provisional finite row-byte bound", "configured finite row-byte bound")
+          text = text.replace("provisional finite field-count bound", "configured finite field-count bound")
+          path.write_text(text)
+          PY
+      - name: Commit synchronized documentation
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- README.md README.ja.md crates/pgdumpx/src/error.rs
+          git commit -m "docs: document limits and metadata commands"
+          git push origin HEAD:feat/structural-limits-metadata-cli
