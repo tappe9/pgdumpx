@@ -11,6 +11,7 @@ use std::io::Read;
 
 const ARCHIVE_VERSION_1_16: ArchiveVersion = ArchiveVersion::new(1, 16, 0);
 
+#[cfg(test)]
 pub(crate) fn read_toc<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
