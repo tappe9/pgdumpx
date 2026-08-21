@@ -49,6 +49,7 @@ impl Default for EntryReadLimits {
 /// The error is distinct from normal EOF; bytes beyond the configured limit are
 /// never returned to the caller.
 pub struct BoundedEntryDataReader<'a, R> {
+    dump_id: DumpId,
     inner: EntryDataReader<'a, R>,
     limits: EntryReadLimits,
     returned: u64,
@@ -82,8 +83,9 @@ impl TerminalError {
 }
 
 impl<'a, R> BoundedEntryDataReader<'a, R> {
-    fn new(inner: EntryDataReader<'a, R>, limits: EntryReadLimits) -> Self {
+    fn new(dump_id: DumpId, inner: EntryDataReader<'a, R>, limits: EntryReadLimits) -> Self {
         Self {
+            dump_id,
             inner,
             limits,
             returned: 0,
@@ -93,11 +95,7 @@ impl<'a, R> BoundedEntryDataReader<'a, R> {
 
     fn fail(&mut self, error: TerminalError) -> io::Error {
         self.terminal_error = Some(error);
-        into_io_error(error.into_pg_error(self.inner_dump_id()))
-    }
-
-    fn inner_dump_id(&self) -> i32 {
-        self.inner.dump_id().as_i32()
+        into_io_error(error.into_pg_error(self.dump_id.as_i32()))
     }
 }
 
@@ -105,6 +103,7 @@ impl<R: Read> fmt::Debug for BoundedEntryDataReader<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BoundedEntryDataReader")
+            .field("dump_id", &self.dump_id)
             .field("inner", &self.inner)
             .field("limits", &self.limits)
             .field("returned", &self.returned)
@@ -118,7 +117,7 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
             return Ok(0);
         }
         if let Some(error) = self.terminal_error {
-            return Err(into_io_error(error.into_pg_error(self.inner_dump_id())));
+            return Err(into_io_error(error.into_pg_error(self.dump_id.as_i32())));
         }
 
         let requested = match self.limits.max_decompressed_bytes() {
@@ -134,14 +133,17 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
                 match self.inner.read(&mut probe) {
                     Ok(0) => return Ok(0),
                     Ok(read) => {
-                        let increment = u64::try_from(read).map_err(|_| {
-                            self.fail(TerminalError::Overflow {
-                                consumed: self.returned,
-                                increment: u64::MAX,
-                            })
-                        })?;
+                        let increment = match u64::try_from(read) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Err(self.fail(TerminalError::Overflow {
+                                    consumed: self.returned,
+                                    increment: u64::MAX,
+                                }));
+                            }
+                        };
                         let consumed = match checked_decompressed_count(
-                            self.inner_dump_id(),
+                            self.dump_id.as_i32(),
                             self.returned,
                             increment,
                         ) {
@@ -161,14 +163,17 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
         };
 
         let read = self.inner.read(&mut output[..requested])?;
-        let increment = u64::try_from(read).map_err(|_| {
-            self.fail(TerminalError::Overflow {
-                consumed: self.returned,
-                increment: u64::MAX,
-            })
-        })?;
+        let increment = match u64::try_from(read) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(self.fail(TerminalError::Overflow {
+                    consumed: self.returned,
+                    increment: u64::MAX,
+                }));
+            }
+        };
         self.returned = match checked_decompressed_count(
-            self.inner_dump_id(),
+            self.dump_id.as_i32(),
             self.returned,
             increment,
         ) {
@@ -192,8 +197,9 @@ impl<R: Read + Seek> Archive<R> {
         id: DumpId,
         limits: EntryReadLimits,
     ) -> Result<Option<BoundedEntryDataReader<'_, R>>, PgDumpError> {
-        self.entry_reader(id)
-            .map(|reader| reader.map(|reader| BoundedEntryDataReader::new(reader, limits)))
+        self.entry_reader(id).map(|reader| {
+            reader.map(|reader| BoundedEntryDataReader::new(id, reader, limits))
+        })
     }
 
     /// Copies one selected entry's decompressed bytes to `writer` using the
