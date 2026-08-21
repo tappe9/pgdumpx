@@ -226,11 +226,7 @@ impl<R: Read> CopyRowReader<R> {
     }
 
     /// Creates a COPY text row reader using structural and total-work limits.
-    pub fn with_limits_and_scan_limits(
-        reader: R,
-        limits: Limits,
-        scan_limits: ScanLimits,
-    ) -> Self {
+    pub fn with_limits_and_scan_limits(reader: R, limits: Limits, scan_limits: ScanLimits) -> Self {
         let input = CopyInput::new(reader);
         let scan_budget = ScanBudget::new(scan_limits, input.consumed());
         Self {
@@ -300,10 +296,7 @@ impl<R: Read> CopyRowReader<R> {
     where
         F: FnMut(&Row<'_>) -> bool,
     {
-        let mut operation_budget = Some(ScanBudget::new(
-            scan_limits,
-            self.consumed_input_bytes(),
-        ));
+        let mut operation_budget = Some(ScanBudget::new(scan_limits, self.consumed_input_bytes()));
         while let Some(row) = self.next_row_with_budget(&mut operation_budget)? {
             if predicate(&row) {
                 return OwnedRow::try_from_borrowed(&row).map(Some);
@@ -473,16 +466,12 @@ impl<R: Read> CopyRowReader<R> {
             .transpose()?;
 
         self.scan_budget.check_rows(row, next_reader_rows)?;
-        if let (Some(budget), Some(consumed)) =
-            (operation_budget.as_ref(), next_operation_rows)
-        {
+        if let (Some(budget), Some(consumed)) = (operation_budget.as_ref(), next_operation_rows) {
             budget.check_rows(row, consumed)?;
         }
 
         self.scan_budget.consumed_rows = next_reader_rows;
-        if let (Some(budget), Some(consumed)) =
-            (operation_budget.as_mut(), next_operation_rows)
-        {
+        if let (Some(budget), Some(consumed)) = (operation_budget.as_mut(), next_operation_rows) {
             budget.consumed_rows = consumed;
         }
         Ok(())

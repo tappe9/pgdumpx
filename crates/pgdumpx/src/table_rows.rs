@@ -1,6 +1,6 @@
 use crate::{
-    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row,
-    ScanLimits, copy_metadata::TableDataMetadata,
+    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row, ScanLimits,
+    copy_metadata::TableDataMetadata,
 };
 use std::io::Read;
 
@@ -22,13 +22,7 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         entry: EntryDataReader<'a, R>,
         limits: Limits,
     ) -> Self {
-        Self::new_with_scan_limits(
-            data_id,
-            metadata,
-            entry,
-            limits,
-            ScanLimits::unlimited(),
-        )
+        Self::new_with_scan_limits(data_id, metadata, entry, limits, ScanLimits::unlimited())
     }
 
     pub(crate) fn new_with_scan_limits(

@@ -191,11 +191,7 @@ pub enum PgDumpError {
         byte_offset: u64,
     },
     /// One scan attempted to consume more complete rows than its configured budget.
-    ScanRowLimitExceeded {
-        row: u64,
-        limit: u64,
-        consumed: u64,
-    },
+    ScanRowLimitExceeded { row: u64, limit: u64, consumed: u64 },
     /// One scan consumed more decompressed COPY bytes than its configured budget.
     ScanDecompressedByteLimitExceeded {
         row: u64,
