@@ -13,6 +13,21 @@ const ARCHIVE_VERSION_1_16: ArchiveVersion = ArchiveVersion::new(1, 16, 0);
 
 pub(crate) fn read_toc<R: Read>(
     reader: &mut ArchiveReader<R>,
+    integer_size: ArchiveIntegerSize,
+    offset_size: ArchiveOffsetSize,
+    limits: Limits,
+) -> Result<Vec<TocEntry>, PgDumpError> {
+    read_toc_for_version(
+        reader,
+        ARCHIVE_VERSION_1_16,
+        integer_size,
+        offset_size,
+        limits,
+    )
+}
+
+pub(crate) fn read_toc_for_version<R: Read>(
+    reader: &mut ArchiveReader<R>,
     version: ArchiveVersion,
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
