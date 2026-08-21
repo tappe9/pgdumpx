@@ -138,8 +138,7 @@ fn read_dependencies<R: Read>(
 
     loop {
         let offset = reader.offset();
-        let Some(bytes) = read_archive_string(reader, integer_size, limits.max_string_bytes())?
-        else {
+        let Some(bytes) = read_archive_string(reader, integer_size, limits.max_string_bytes())? else {
             return Ok(dependencies);
         };
 
@@ -230,10 +229,7 @@ fn read_optional_string<R: Read>(
     integer_size: ArchiveIntegerSize,
     limits: Limits,
 ) -> Result<Option<ArchiveString>, PgDumpError> {
-    Ok(
-        read_archive_string(reader, integer_size, limits.max_string_bytes())?
-            .map(ArchiveString::from_bytes),
-    )
+    Ok(read_archive_string(reader, integer_size, limits.max_string_bytes())?.map(ArchiveString::from_bytes))
 }
 
 fn to_u64(value: usize, offset: u64) -> Result<u64, PgDumpError> {

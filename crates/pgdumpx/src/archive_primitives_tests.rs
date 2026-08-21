@@ -1,10 +1,11 @@
 use crate::{
-    Limits, PgDumpError,
+    PgDumpError,
     custom::primitives::{
         ArchiveIntegerSize, ArchiveOffset, ArchiveOffsetSize, read_archive_integer,
         read_archive_offset, read_archive_string,
     },
     io::archive_reader::ArchiveReader,
+    limits::{ALPHA1_ARCHIVE_STRING_LIMIT, ArchiveStringLimit},
 };
 use std::{
     cell::Cell,
@@ -209,10 +210,20 @@ fn archive_offset_truncation_is_typed() {
 #[test]
 fn archive_string_decodes_null_empty_non_utf8_and_exact_limit() {
     let cases = [
-        (-7_i64, Vec::new(), 3, None),
-        (0, Vec::new(), 0, Some(Vec::new())),
-        (2, b"ok".to_vec(), 3, Some(b"ok".to_vec())),
-        (3, vec![0xff, 0x00, 0xfe], 3, Some(vec![0xff, 0x00, 0xfe])),
+        (-7_i64, Vec::new(), ArchiveStringLimit::new(3), None),
+        (0, Vec::new(), ArchiveStringLimit::new(0), Some(Vec::new())),
+        (
+            2,
+            b"ok".to_vec(),
+            ArchiveStringLimit::new(3),
+            Some(b"ok".to_vec()),
+        ),
+        (
+            3,
+            vec![0xff, 0x00, 0xfe],
+            ArchiveStringLimit::new(3),
+            Some(vec![0xff, 0x00, 0xfe]),
+        ),
     ];
 
     for (length, payload, limit, expected) in cases {
@@ -234,7 +245,8 @@ fn archive_string_rejects_oversize_before_payload_read() {
     let source = CountingReader::new(&encoded, Rc::clone(&read_bytes));
     let mut reader = ArchiveReader::new(source);
 
-    let error = read_archive_string(&mut reader, integer_size(), 3).unwrap_err();
+    let error =
+        read_archive_string(&mut reader, integer_size(), ArchiveStringLimit::new(3)).unwrap_err();
 
     assert!(matches!(
         error,
@@ -254,15 +266,16 @@ fn archive_string_payload_truncation_is_typed() {
     encoded.extend_from_slice(b"ab");
     let mut reader = ArchiveReader::new(Cursor::new(encoded));
 
-    let error = read_archive_string(&mut reader, integer_size(), 3).unwrap_err();
+    let error =
+        read_archive_string(&mut reader, integer_size(), ArchiveStringLimit::new(3)).unwrap_err();
 
     assert!(matches!(error, PgDumpError::UnexpectedEof { offset: 7 }));
 }
 
 #[test]
 fn alpha1_archive_string_path_has_an_explicit_finite_limit() {
-    assert!(Limits::default().max_string_bytes().max_bytes() > 0);
-    assert!(Limits::default().max_string_bytes().max_bytes() < usize::MAX);
+    assert!(ALPHA1_ARCHIVE_STRING_LIMIT.max_bytes() > 0);
+    assert!(ALPHA1_ARCHIVE_STRING_LIMIT.max_bytes() < usize::MAX);
 }
 
 fn integer_size() -> ArchiveIntegerSize {

@@ -1,8 +1,7 @@
 /// Finite structural limits applied while opening archives and parsing COPY rows.
 ///
-/// Every field is finite and private. [`Default`] preserves the compatibility-oriented
-/// bounds used by the Alpha 1 implementation; callers can derive stricter configurations
-/// with the `with_*` methods.
+/// All fields are private and every configuration is finite. [`Default`] preserves
+/// the compatibility-oriented bounds used by the initial v0.1 implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     max_toc_entries: u64,
@@ -30,7 +29,7 @@ impl Limits {
         }
     }
 
-    /// Returns the maximum number of TOC entries accepted during archive open.
+    /// Returns the maximum number of TOC entries accepted while opening an archive.
     pub const fn max_toc_entries(self) -> u64 {
         self.max_toc_entries
     }
@@ -40,7 +39,7 @@ impl Limits {
         self.max_string_bytes
     }
 
-    /// Returns the maximum number of dependencies accepted for one TOC entry.
+    /// Returns the maximum dependency count accepted for one TOC entry.
     pub const fn max_dependencies_per_entry(self) -> u64 {
         self.max_dependencies_per_entry
     }
@@ -50,7 +49,7 @@ impl Limits {
         self.max_row_bytes
     }
 
-    /// Returns the maximum number of fields accepted in one COPY row and its metadata.
+    /// Returns the maximum field count accepted in one COPY row and its metadata.
     pub const fn max_fields_per_row(self) -> usize {
         self.max_fields_per_row
     }
