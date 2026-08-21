@@ -1,6 +1,4 @@
-use pgdumpx::{
-    Archive, Compression, EntryReadLimits, FieldRef, OwnedField, OwnedRow, ScanLimits,
-};
+use pgdumpx::{Archive, Compression, EntryReadLimits, FieldRef, OwnedField, OwnedRow, ScanLimits};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -166,7 +164,9 @@ fn extract<W: Write>(arguments: &ExtractArguments, stdout: &mut W) -> Result<(),
     let mut archive = open_archive(&arguments.file)?;
     let table = archive
         .table(arguments.schema.as_bytes(), arguments.table.as_bytes())
-        .ok_or_else(|| CliError::runtime("archive error: requested table was not found".to_owned()))?;
+        .ok_or_else(|| {
+            CliError::runtime("archive error: requested table was not found".to_owned())
+        })?;
     let table_id = table.table_entry_id();
     let data_id = table.data_entry_id().ok_or_else(|| {
         CliError::runtime(format!(
@@ -174,8 +174,8 @@ fn extract<W: Write>(arguments: &ExtractArguments, stdout: &mut W) -> Result<(),
             table_id.as_i32()
         ))
     })?;
-    let limits = EntryReadLimits::unlimited()
-        .with_max_decompressed_bytes(arguments.max_decompressed_bytes);
+    let limits =
+        EntryReadLimits::unlimited().with_max_decompressed_bytes(arguments.max_decompressed_bytes);
 
     archive
         .copy_entry_to(data_id, stdout, limits)
