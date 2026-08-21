@@ -19,11 +19,7 @@ fn official_archive_1_15_none_and_gzip_open_and_stream_selected_entry() {
         ("pg16-none-copy-basic.dump", Compression::None),
         ("pg16-gzip-copy-basic.dump", Compression::Gzip),
     ] {
-        assert_version_fixture(
-            fixture_name,
-            ArchiveVersion::new(1, 15, 0),
-            compression,
-        );
+        assert_version_fixture(fixture_name, ArchiveVersion::new(1, 15, 0), compression);
     }
 }
 
@@ -33,11 +29,7 @@ fn official_archive_1_14_legacy_none_and_gzip_open_and_stream_selected_entry() {
         ("pg15-none-copy-basic.dump", Compression::None),
         ("pg15-gzip-copy-basic.dump", Compression::Gzip),
     ] {
-        assert_version_fixture(
-            fixture_name,
-            ArchiveVersion::new(1, 14, 0),
-            compression,
-        );
+        assert_version_fixture(fixture_name, ArchiveVersion::new(1, 14, 0), compression);
     }
 }
 
@@ -74,13 +66,7 @@ fn truncated_archive_1_14_legacy_compression_integer_is_typed_eof() {
 
 #[test]
 fn unsupported_versions_and_revisions_remain_explicit_errors() {
-    for version in [
-        [1, 13, 0],
-        [1, 14, 1],
-        [1, 15, 1],
-        [1, 16, 1],
-        [1, 17, 0],
-    ] {
+    for version in [[1, 13, 0], [1, 14, 1], [1, 15, 1], [1, 16, 1], [1, 17, 0]] {
         let mut bytes = b"PGDMP".to_vec();
         bytes.extend_from_slice(&version);
         let error = Archive::open(Cursor::new(bytes)).expect_err("version must be rejected");
@@ -114,7 +100,9 @@ fn assert_version_fixture(
         .expect("orders table must be indexed")
         .data_entry_id()
         .expect("orders table must have TABLE DATA");
-    let data_entry = archive.entry(data_id).expect("TABLE DATA entry must resolve");
+    let data_entry = archive
+        .entry(data_id)
+        .expect("TABLE DATA entry must resolve");
     assert_eq!(data_entry.description_bytes(), b"TABLE DATA");
 
     let mut reader = archive
