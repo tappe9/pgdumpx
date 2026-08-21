@@ -204,23 +204,51 @@ impl<R: Read + Seek> Archive<R> {
             if read == 0 {
                 return Ok(copied);
             }
-            writer
-                .write_all(&buffer[..read])
-                .map_err(|source| PgDumpError::EntryOutputIo {
-                    dump_id: id.as_i32(),
-                    written: copied,
-                    source,
-                })?;
-            let increment = u64::try_from(read).map_err(|_| {
-                PgDumpError::EntryDecompressedByteCountOverflow {
-                    dump_id: id.as_i32(),
-                    consumed: copied,
-                    increment: u64::MAX,
-                }
-            })?;
-            copied = checked_decompressed_count(id.as_i32(), copied, increment)?;
+            write_all_counted(writer, id, &buffer[..read], &mut copied)?;
         }
     }
+}
+
+fn write_all_counted<W: Write>(
+    writer: &mut W,
+    id: DumpId,
+    mut bytes: &[u8],
+    written: &mut u64,
+) -> Result<(), PgDumpError> {
+    while !bytes.is_empty() {
+        match writer.write(bytes) {
+            Ok(0) => {
+                return Err(PgDumpError::EntryOutputIo {
+                    dump_id: id.as_i32(),
+                    written: *written,
+                    source: io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write the complete raw entry buffer",
+                    ),
+                });
+            }
+            Ok(count) => {
+                let increment = u64::try_from(count).map_err(|_| {
+                    PgDumpError::EntryDecompressedByteCountOverflow {
+                        dump_id: id.as_i32(),
+                        consumed: *written,
+                        increment: u64::MAX,
+                    }
+                })?;
+                *written = checked_decompressed_count(id.as_i32(), *written, increment)?;
+                bytes = &bytes[count..];
+            }
+            Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+            Err(source) => {
+                return Err(PgDumpError::EntryOutputIo {
+                    dump_id: id.as_i32(),
+                    written: *written,
+                    source,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn checked_decompressed_count(
