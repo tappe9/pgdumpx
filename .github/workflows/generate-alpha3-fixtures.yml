@@ -1,0 +1,33 @@
+name: Generate Alpha 3 fixtures
+
+on:
+  push:
+    branches:
+      - feat/archive-compat-1.14-1.15
+    paths:
+      - .github/workflows/generate-alpha3-fixtures.yml
+      - scripts/generate-alpha3-version-fixtures.sh
+      - tests/fixtures/source/alpha1-copy-basic.sql
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Generate PostgreSQL 15 and 16 fixtures
+        run: bash scripts/generate-alpha3-version-fixtures.sh | tee alpha3-fixture-metadata.txt
+
+      - name: Upload generated fixtures
+        uses: actions/upload-artifact@v6
+        with:
+          name: alpha3-version-fixtures
+          path: |
+            tests/fixtures/archives/pg16-none-copy-basic.dump
+            tests/fixtures/archives/pg16-gzip-copy-basic.dump
+            tests/fixtures/archives/pg15-none-copy-basic.dump
+            tests/fixtures/archives/pg15-gzip-copy-basic.dump
+            alpha3-fixture-metadata.txt
+          if-no-files-found: error
+          retention-days: 1
