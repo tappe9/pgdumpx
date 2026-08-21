@@ -86,14 +86,14 @@ constructor_start = copy_content.index(
     "    /// Creates a COPY text row reader using provisional finite v0.1 bounds."
 )
 constructor_body = copy_content.index("        Self {", constructor_start)
-constructor = '''    /// Creates a COPY text row reader using finite compatibility-oriented defaults.
+constructor = """    /// Creates a COPY text row reader using finite compatibility-oriented defaults.
     pub fn new(reader: R) -> Self {
         Self::with_limits(reader, Limits::default())
     }
 
     /// Creates a COPY text row reader using caller-supplied structural limits.
     pub fn with_limits(reader: R, limits: Limits) -> Self {
-'''
+"""
 copy_content = copy_content[:constructor_start] + constructor + copy_content[constructor_body:]
 write(copy_path, copy_content)
 
