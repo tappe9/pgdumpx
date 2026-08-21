@@ -26,6 +26,8 @@ mod error_tests;
 #[cfg(test)]
 mod metadata_open_tests;
 #[cfg(test)]
+mod raw_entry_tests;
+#[cfg(test)]
 mod scan_limits_tests;
 #[cfg(test)]
 mod table_rows_tests;
