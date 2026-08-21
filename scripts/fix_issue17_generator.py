@@ -64,4 +64,43 @@ new_count = '''    "limits.string()",
 if content.count(old_count) != 1:
     raise RuntimeError("could not locate the TOC archive-string replacement count")
 content = content.replace(old_count, new_count, 1)
+
+scan_marker = "\nfor token in [\n"
+if content.count(scan_marker) != 1:
+    raise RuntimeError("could not locate the provisional-token residual scan")
+normalization = r'''
+# Normalize residual COPY-limit references before the final provisional-token scan.
+copy_path = "crates/pgdumpx/src/copy.rs"
+copy_content = read(copy_path)
+if "PROVISIONAL_MAX_ROW_BYTES" in copy_content:
+    block_start = copy_content.index("const PROVISIONAL_MAX_ROW_BYTES")
+    block_end = copy_content.index("/// A borrowed logical field", block_start)
+    copy_content = (
+        copy_content[:block_start]
+        + 'const INITIAL_ROW_CAPACITY_BYTES: usize = 8 * 1024;\n'
+        + 'const COPY_TERMINATOR: &[u8] = b"\\\\.";\n\n'
+        + copy_content[block_end:]
+    )
+copy_content = copy_content.replace("CopyParserLimits", "Limits")
+write(copy_path, copy_content)
+
+copy_tests_path = "crates/pgdumpx/src/copy_tests.rs"
+copy_tests_content = read(copy_tests_path)
+copy_tests_content = re.sub(
+    r"CopyParserLimits::new\((\d+), (\d+)\)",
+    r"Limits::default().with_max_row_bytes(\1).with_max_fields_per_row(\2)",
+    copy_tests_content,
+)
+copy_tests_content = copy_tests_content.replace("CopyParserLimits, ", "")
+copy_tests_content = copy_tests_content.replace(", CopyParserLimits", "")
+use_block = copy_tests_content.split("};", 1)[0]
+if "Limits" not in use_block:
+    copy_tests_content = copy_tests_content.replace(
+        "use crate::{\n",
+        "use crate::{\n    Limits,\n",
+        1,
+    )
+write(copy_tests_path, copy_tests_content)
+'''
+content = content.replace(scan_marker, normalization + scan_marker, 1)
 path.write_text(content, encoding="utf-8")
