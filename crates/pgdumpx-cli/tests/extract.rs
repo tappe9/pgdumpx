@@ -16,10 +16,7 @@ const STREAM_BYTES: u64 = 270;
 
 #[test]
 fn extract_streams_only_selected_table_data_for_none_and_gzip() {
-    for fixture in [
-        "pg18-none-copy-basic.dump",
-        "pg18-gzip-copy-basic.dump",
-    ] {
+    for fixture in ["pg18-none-copy-basic.dump", "pg18-gzip-copy-basic.dump"] {
         let output = run_extract(&fixture_path(fixture), &[], "public.orders");
         assert_success(output, EXPECTED_COPY_STREAM);
     }
@@ -104,9 +101,19 @@ fn malformed_zero_overflowing_duplicate_and_unknown_options_are_usage_errors() {
 fn extract_reuses_exact_schema_table_selector_grammar() {
     let fixture = fixture_path("pg18-none-copy-basic.dump");
 
-    for selector in ["orders", ".orders", "public.", "public.orders.extra", "\"public\".orders"] {
+    for selector in [
+        "orders",
+        ".orders",
+        "public.",
+        "public.orders.extra",
+        "\"public\".orders",
+    ] {
         let output = run_extract(&fixture, &[], selector);
-        assert_eq!(output.status.code(), Some(USAGE_EXIT), "selector={selector:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(USAGE_EXIT),
+            "selector={selector:?}"
+        );
         assert!(output.stdout.is_empty());
         assert!(!output.stderr.is_empty());
     }
@@ -120,7 +127,10 @@ fn missing_table_is_runtime_failure_not_clean_eof() {
     assert_eq!(output.status.code(), Some(USAGE_EXIT));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("requested table was not found"), "stderr={stderr:?}");
+    assert!(
+        stderr.contains("requested table was not found"),
+        "stderr={stderr:?}"
+    );
 }
 
 fn run_extract(path: &Path, options: &[&str], selector: &str) -> Output {
