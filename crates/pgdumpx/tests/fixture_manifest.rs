@@ -62,7 +62,10 @@ fn official_fixture_manifest_contract_is_satisfied() {
         "scripts/generate-alpha1-fixtures.sh",
         "scripts/generate-alpha3-version-fixtures.sh",
     ] {
-        assert!(root.join(script).is_file(), "fixture regeneration script is missing: {script}");
+        assert!(
+            root.join(script).is_file(),
+            "fixture regeneration script is missing: {script}"
+        );
     }
 
     let manifest = load_manifest(&root);
@@ -135,27 +138,28 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
     assert_non_empty("command", &fixture.command, &fixture.name);
     assert_non_empty("sha256", &fixture.sha256, &fixture.name);
 
-    let (version_bytes, generator_prefix, image, version_purpose) = match fixture.archive_version.as_str() {
-        "1.16.0" => (
-            [1, 16, 0],
-            "pg_dump (PostgreSQL) 18.4",
-            "postgres:18.4-bookworm",
-            None,
-        ),
-        "1.15.0" => (
-            [1, 15, 0],
-            "pg_dump (PostgreSQL) 16.15",
-            "postgres:16.15-bookworm",
-            Some("archive-1.15"),
-        ),
-        "1.14.0" => (
-            [1, 14, 0],
-            "pg_dump (PostgreSQL) 15.19",
-            "postgres:15.19-bookworm",
-            Some("archive-1.14"),
-        ),
-        other => panic!("{} has unexpected archive version {other:?}", fixture.name),
-    };
+    let (version_bytes, generator_prefix, image, version_purpose) =
+        match fixture.archive_version.as_str() {
+            "1.16.0" => (
+                [1, 16, 0],
+                "pg_dump (PostgreSQL) 18.4",
+                "postgres:18.4-bookworm",
+                None,
+            ),
+            "1.15.0" => (
+                [1, 15, 0],
+                "pg_dump (PostgreSQL) 16.15",
+                "postgres:16.15-bookworm",
+                Some("archive-1.15"),
+            ),
+            "1.14.0" => (
+                [1, 14, 0],
+                "pg_dump (PostgreSQL) 15.19",
+                "postgres:15.19-bookworm",
+                Some("archive-1.14"),
+            ),
+            other => panic!("{} has unexpected archive version {other:?}", fixture.name),
+        };
     assert!(
         fixture.generator.starts_with(generator_prefix),
         "{} must record the expected pg_dump version output",
@@ -243,7 +247,10 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
 }
 
 fn validate_compression(fixture: &FixtureRecord) {
-    match (fixture.archive_version.as_str(), fixture.compression.as_str()) {
+    match (
+        fixture.archive_version.as_str(),
+        fixture.compression.as_str(),
+    ) {
         ("1.14.0", "none") => {
             assert!(fixture.command.contains("--compress=0"));
             assert_eq!(fixture.compression_detail, "legacy-level=0");
