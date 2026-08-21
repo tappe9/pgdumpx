@@ -35,3 +35,75 @@ purpose = ["header", "toc", "gzip", "copy-text", "column-layout", "find-first"]
 expected_tables = ["public.orders"]
 expected_row_count = 7
 expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
+name = "pg16-none-copy-basic"
+path = "tests/fixtures/archives/pg16-none-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.15.0"
+generator = "pg_dump (PostgreSQL) 16.15 (Debian 16.15-1.pgdg12+2)"
+generator_image = "postgres:16.15-bookworm"
+generator_image_digest = "postgres@sha256:60f4761b9035e0b8d5218f701a8c3382f641bf12b1604822574cf5be3baeb537"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg16-alpha3-fixtures pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=none --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg16-none-copy-basic.dump"
+compression = "none"
+compression_detail = "none"
+sha256 = "a41271600cc50df4b7934add35665b4b9c08ccd98425c39ac8269acaa7aadf6c"
+purpose = ["header", "toc", "archive-1.15", "none", "copy-text", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
+name = "pg16-gzip-copy-basic"
+path = "tests/fixtures/archives/pg16-gzip-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.15.0"
+generator = "pg_dump (PostgreSQL) 16.15 (Debian 16.15-1.pgdg12+2)"
+generator_image = "postgres:16.15-bookworm"
+generator_image_digest = "postgres@sha256:60f4761b9035e0b8d5218f701a8c3382f641bf12b1604822574cf5be3baeb537"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg16-alpha3-fixtures pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=gzip:6 --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg16-gzip-copy-basic.dump"
+compression = "gzip"
+compression_detail = "level=6"
+sha256 = "9c130a15b0dd8b53ceeaa872d6d4dc492a13328780dc5da97aee2e0296ecd608"
+purpose = ["header", "toc", "archive-1.15", "gzip", "copy-text", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
+name = "pg15-none-copy-basic"
+path = "tests/fixtures/archives/pg15-none-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.14.0"
+generator = "pg_dump (PostgreSQL) 15.19 (Debian 15.19-1.pgdg12+2)"
+generator_image = "postgres:15.19-bookworm"
+generator_image_digest = "postgres@sha256:cf7f8fb958c63e62875e30645dc4819ff0243a923f3c709e752b99dedd40bfcd"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg15-alpha3-fixtures pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=0 --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg15-none-copy-basic.dump"
+compression = "none"
+compression_detail = "legacy-level=0"
+sha256 = "e453fd3f0a33580df6f7a0108dcbf86eba90a75b720c2e8be830a263a1fad6e4"
+purpose = ["header", "toc", "archive-1.14", "legacy-compression", "none", "copy-text", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
+name = "pg15-gzip-copy-basic"
+path = "tests/fixtures/archives/pg15-gzip-copy-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.14.0"
+generator = "pg_dump (PostgreSQL) 15.19 (Debian 15.19-1.pgdg12+2)"
+generator_image = "postgres:15.19-bookworm"
+generator_image_digest = "postgres@sha256:cf7f8fb958c63e62875e30645dc4819ff0243a923f3c709e752b99dedd40bfcd"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg15-alpha3-fixtures pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=6 --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg15-gzip-copy-basic.dump"
+compression = "gzip"
+compression_detail = "legacy-level=6"
+sha256 = "0a5373a22cfbe9322d20aa659e70dc5256c6c7bde3469ce8719d9450cbf1b549"
+purpose = ["header", "toc", "archive-1.14", "legacy-compression", "gzip", "copy-text", "selected-entry"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]

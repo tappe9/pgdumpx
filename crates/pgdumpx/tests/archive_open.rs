@@ -204,8 +204,8 @@ fn rejects_bad_and_truncated_magic() {
 }
 
 #[test]
-fn rejects_versions_outside_the_exact_1_16_0_scope() {
-    for version in [[1, 15, 0], [1, 16, 1], [1, 17, 0]] {
+fn rejects_versions_outside_supported_1_14_through_1_16_scope() {
+    for version in [[1, 13, 0], [1, 14, 1], [1, 15, 1], [1, 16, 1], [1, 17, 0]] {
         let bytes = header_with(version, 1, 0);
         let error = Archive::open(Cursor::new(bytes)).unwrap_err();
         assert!(matches!(

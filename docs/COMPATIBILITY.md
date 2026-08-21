@@ -1,43 +1,45 @@
 # pgdumpx Compatibility Matrix
 
-Status: **Archive 1.16 metadata opening implemented; payload compatibility verification remains in progress**
+Status: **Archive 1.14–1.16 metadata opening and none/gzip selected-entry streaming are fixture-verified**
 
-This document separates intended v0.1 compatibility from compatibility that has actually been demonstrated by fixtures and tests.
+This document separates intended v0.1 compatibility from compatibility that has actually been demonstrated by official fixtures and production-path tests.
 
-The public production path currently verifies archive 1.16 header metadata, the complete known 1.16 TOC layout, custom data-location metadata, and metadata-only lookup indexes. Selected-entry seeking, chunk framing, decompression, and row comparison remain separate implementation stages, so metadata-opening evidence is not yet a full compression or row-access compatibility claim.
+The public production path now verifies archive 1.14, 1.15, and 1.16 header/TOC parsing, metadata indexes, validated selected-entry seeking, custom chunk framing, and selected-entry streaming for none/gzip. The complete version-aware FR-006 public metadata-surface audit remains tracked separately, so this evidence does not imply that every version-conditional TOC field is already public.
 
 ## Archive format versions
 
 | Archive version | v0.1 target | Fixture-verified | Notes |
 |---|---:|---:|---|
-| 1.14 | Yes | Not yet | Pre-1.15 compression representation must be handled explicitly. |
-| 1.15 | Yes | Not yet | Explicit compression-algorithm metadata is part of the supported header model. |
-| 1.16 | Yes | Metadata open | Official PostgreSQL 18.4 none/gzip fixtures open through `Archive::open`; payload streaming is not yet verified. |
-| < 1.14 | No | N/A | Deferred until real demand justifies the compatibility work. |
-| > 1.16 | No | N/A | Must fail explicitly until upstream format changes are reviewed and fixtures are added. |
+| 1.14 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 15.19 fixtures verify the legacy compression-level header representation and the minimum version-aware TOC path. |
+| 1.15 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 16.15 fixtures verify explicit compression-algorithm metadata and the minimum version-aware TOC path. |
+| 1.16 | Yes | Metadata + none/gzip selected entry | Official PostgreSQL 18.4 fixtures verify the 1.16 header/TOC path and selected-entry streaming. |
+| < 1.14 | No | N/A | Rejected explicitly; deferred until real demand justifies compatibility work. |
+| > 1.16 | No | N/A | Rejected explicitly until upstream format changes are reviewed and fixtures are added. |
 
 Archive format version and PostgreSQL server release are related but are not interchangeable identifiers. Compatibility claims are made against observed archive-format behavior and reference-generated fixtures.
+
+The implemented version gates mirror the supported upstream layouts: archive 1.14 stores a legacy compression level, archive 1.15 and newer store an explicit compression algorithm, table access method metadata is part of the supported 1.14+ TOC layout, and relkind is consumed only for archive 1.16 in the current target range. The broader public/model audit for version-conditional metadata remains separate work.
 
 ## Compression
 
 | Compression | v0.1 target | Fixture-verified | Streaming requirement | Delivery order |
 |---|---:|---:|---:|---|
-| none | Yes | Metadata open | Yes | First vertical slice |
-| gzip | Yes | Metadata open | Yes | First vertical slice |
+| none | Yes | Selected-entry streaming | Yes | First vertical slice / version compatibility |
+| gzip | Yes | Selected-entry streaming | Yes | First vertical slice / version compatibility |
 | LZ4 | Yes | Not yet | Yes | Compatibility expansion |
 | Zstandard | Yes | Not yet | Yes | Compatibility expansion |
 
-For none and gzip, the committed official fixtures verify that archive 1.16 compression metadata is decoded through the public metadata-opening path. This does not yet verify selected-entry streaming or decompression. LZ4 and Zstandard algorithm IDs are covered at the header-parser boundary, but require official fixtures and production decoder paths before compatibility is claimed.
+For none and gzip, committed official fixtures now cover archive 1.14, 1.15, and 1.16 and stream the selected `TABLE DATA` entry through the same production reader path. The archive 1.14 fixtures additionally verify the pre-1.15 numeric compression-level representation. LZ4 and Zstandard algorithm IDs are recognized by modern header parsing, but require official fixtures and production decoder paths before compatibility is claimed.
 
 A compression algorithm is only marked fully verified after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library.
 
-Version-specific compression representation must be tested independently from the decompressor implementation.
+Version-specific compression representation is tested independently from the decompressor implementation.
 
 ## Table-data representations
 
 | Representation | Raw entry access | Row-aware v0.1 access | Notes |
 |---|---:|---:|---|
-| pg_dump COPY text | Target | Target | Primary row-aware path. |
+| pg_dump COPY text | Implemented for supported none/gzip entry paths | Implemented on the established 1.16 row path | Version-expansion row-matrix evidence is completed separately. |
 | Binary COPY | Depends on readable entry | No | Explicitly deferred. |
 | `--inserts` | Depends on readable entry | No | Must not be misparsed as COPY text. |
 | `--column-inserts` | Depends on readable entry | No | Must return an explicit unsupported-representation error for row APIs. |
@@ -69,7 +71,7 @@ A compatibility cell should move from “Not yet” to a concrete verified state
 6. decompressed bytes/rows are compared with `pg_restore` output where practical;
 7. the case runs in CI or in a reproducible compatibility job.
 
-A “Metadata open” cell records evidence for steps 1–4 and CI coverage for that metadata path. It deliberately does not imply steps 5–6.
+A “Metadata + selected entry” cell records evidence for steps 1–5 plus CI coverage. It deliberately does not imply the full differential matrix in step 6 or completion of every public metadata accessor.
 
 The repository should avoid broad claims such as “supports PostgreSQL X–Y” when the actual evidence is narrower than that statement.
 
@@ -85,46 +87,40 @@ Rules:
 - large benchmark datasets should be generated reproducibly rather than committed by default;
 - fixture updates that change a checksum must explain why the generator input or command changed.
 
-## Current and planned fixture inventory
+## Current fixture inventory
 
-The current metadata-opening corpus covers:
+The committed official compatibility corpus now includes:
 
 ```text
-archive version 1.16
+archive version 1.14 — PostgreSQL 15.19
+  - none (legacy compression level 0)
+  - gzip (legacy compression level 6)
+
+archive version 1.15 — PostgreSQL 16.15
   - none
-  - gzip
-  - one table with multiple columns
-  - complete header and TOC metadata
-  - table/table-data dump-ID relationships
+  - gzip level 6
+
+archive version 1.16 — PostgreSQL 18.4
+  - none
+  - gzip level 6
 ```
 
-The remaining first end-to-end corpus should cover:
+All six archives contain the same deterministic `public.orders` table. The 1.14/1.15 fixtures are exercised through metadata open, table/table-data lookup, validated seek, custom framing, and selected-entry none/gzip streaming. The established 1.16 corpus additionally covers the existing COPY row/search paths.
+
+Remaining Alpha 3 compatibility expansion includes:
 
 ```text
-archive version 1.16
-  - COPY NULL, empty values, escapes, and non-UTF-8 field bytes
-  - supported column metadata
-  - early/middle/late/no-match search positions
-```
-
-Compatibility expansion should then cover:
-
-```text
-archive version 1.14
-  - uncompressed
-  - gzip where supported by the selected generator
-
-archive version 1.15
-  - representative explicit compression metadata
-  - at least one non-gzip algorithm where supported
-
 archive version 1.16
   - LZ4
   - Zstandard
   - INSERT-based fixture proving row APIs reject unsupported representation
+
+archive versions 1.14–1.16
+  - complete public/version-conditional metadata audit
+  - final differential compatibility matrix
 ```
 
-Exact PostgreSQL generator releases must be selected from upstream behavior during implementation and recorded in the fixture manifest rather than guessed in advance.
+Exact PostgreSQL generator releases and image digests are recorded in the fixture manifest rather than inferred from server-version labels.
 
 ## Updating this document
 

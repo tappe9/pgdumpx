@@ -6,7 +6,7 @@ use crate::{
         data::{BLK_DATA, CustomChunkReader},
         header::read_header,
         primitives::read_archive_integer,
-        toc::read_toc,
+        toc::read_toc_for_version,
     },
     io::archive_reader::ArchiveReader,
 };
@@ -27,17 +27,18 @@ pub struct Archive<R> {
 }
 
 impl<R: Read + Seek> Archive<R> {
-    /// Opens an exact archive-format 1.16 custom archive with finite default limits.
+    /// Opens a supported archive-format 1.14–1.16 custom archive with finite default limits.
     pub fn open(reader: R) -> Result<Self, PgDumpError> {
         Self::open_with_limits(reader, Limits::default())
     }
 
-    /// Opens an exact archive-format 1.16 custom archive with caller-supplied limits.
+    /// Opens a supported archive-format 1.14–1.16 custom archive with caller-supplied limits.
     pub fn open_with_limits(reader: R, limits: Limits) -> Result<Self, PgDumpError> {
         let mut reader = ArchiveReader::new(reader);
         let parsed_header = read_header(&mut reader, limits)?;
-        let entries = read_toc(
+        let entries = read_toc_for_version(
             &mut reader,
+            parsed_header.header.version(),
             parsed_header.integer_size,
             parsed_header.offset_size,
             limits,
