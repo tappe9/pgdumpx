@@ -10,7 +10,7 @@ use std::io::Read;
 
 const ARCHIVE_MAGIC: &[u8; 5] = b"PGDMP";
 const CUSTOM_ARCHIVE_FORMAT: u8 = 1;
-const SUPPORTED_VERSION: ArchiveVersion = ArchiveVersion::new(1, 16, 0);
+const ARCHIVE_VERSION_1_15: ArchiveVersion = ArchiveVersion::new(1, 15, 0);
 
 #[derive(Debug)]
 pub(crate) struct ParsedHeader {
@@ -38,7 +38,7 @@ pub(crate) fn read_header<R: Read>(
         reader.read_byte()?,
         reader.read_byte()?,
     );
-    if version != SUPPORTED_VERSION {
+    if !is_supported_version(version) {
         return Err(PgDumpError::UnsupportedArchiveVersion {
             major: version.major(),
             minor: version.minor(),
@@ -64,19 +64,7 @@ pub(crate) fn read_header<R: Read>(
         });
     }
 
-    let compression_offset = reader.offset();
-    let compression = match reader.read_byte()? {
-        0 => Compression::None,
-        1 => Compression::Gzip,
-        2 => Compression::Lz4,
-        3 => Compression::Zstd,
-        algorithm => {
-            return Err(PgDumpError::UnsupportedCompressionAlgorithm {
-                algorithm,
-                offset: compression_offset,
-            });
-        }
-    };
+    let compression = read_compression(reader, integer_size, version)?;
 
     let created_at = ArchiveTimestamp::new(
         read_archive_integer(reader, integer_size)?,
@@ -106,6 +94,39 @@ pub(crate) fn read_header<R: Read>(
         ),
         integer_size,
         offset_size,
+    })
+}
+
+fn is_supported_version(version: ArchiveVersion) -> bool {
+    version.major() == 1
+        && version.revision() == 0
+        && matches!(version.minor(), 14 | 15 | 16)
+}
+
+fn read_compression<R: Read>(
+    reader: &mut ArchiveReader<R>,
+    integer_size: ArchiveIntegerSize,
+    version: ArchiveVersion,
+) -> Result<Compression, PgDumpError> {
+    if version >= ARCHIVE_VERSION_1_15 {
+        let compression_offset = reader.offset();
+        return match reader.read_byte()? {
+            0 => Ok(Compression::None),
+            1 => Ok(Compression::Gzip),
+            2 => Ok(Compression::Lz4),
+            3 => Ok(Compression::Zstd),
+            algorithm => Err(PgDumpError::UnsupportedCompressionAlgorithm {
+                algorithm,
+                offset: compression_offset,
+            }),
+        };
+    }
+
+    let compression_level = read_archive_integer(reader, integer_size)?;
+    Ok(if compression_level == 0 {
+        Compression::None
+    } else {
+        Compression::Gzip
     })
 }
 
