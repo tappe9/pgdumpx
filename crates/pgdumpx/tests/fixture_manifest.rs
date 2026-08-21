@@ -8,9 +8,11 @@ use std::{
 };
 
 const MANIFEST_PATH: &str = "tests/fixtures/manifest.toml";
-const REQUIRED_FIXTURES: [(&str, &str, &str); 6] = [
+const REQUIRED_FIXTURES: [(&str, &str, &str); 8] = [
     ("pg18-none-copy-basic", "1.16.0", "none"),
     ("pg18-gzip-copy-basic", "1.16.0", "gzip"),
+    ("pg18-lz4-copy-basic", "1.16.0", "lz4"),
+    ("pg18-zstd-copy-basic", "1.16.0", "zstd"),
     ("pg16-none-copy-basic", "1.15.0", "none"),
     ("pg16-gzip-copy-basic", "1.15.0", "gzip"),
     ("pg15-none-copy-basic", "1.14.0", "none"),
@@ -61,6 +63,7 @@ fn official_fixture_manifest_contract_is_satisfied() {
     for script in [
         "scripts/generate-alpha1-fixtures.sh",
         "scripts/generate-alpha3-version-fixtures.sh",
+        "scripts/generate-alpha3-compression-fixture.sh",
     ] {
         assert!(
             root.join(script).is_file(),
@@ -258,6 +261,14 @@ fn validate_compression(fixture: &FixtureRecord) {
         ("1.14.0", "gzip") => {
             assert!(fixture.command.contains("--compress=6"));
             assert_eq!(fixture.compression_detail, "legacy-level=6");
+        }
+        ("1.16.0", "lz4") => {
+            assert!(fixture.command.contains("--compress=lz4:1"));
+            assert_eq!(fixture.compression_detail, "level=1");
+        }
+        ("1.16.0", "zstd") => {
+            assert!(fixture.command.contains("--compress=zstd:3"));
+            assert_eq!(fixture.compression_detail, "level=3");
         }
         (_, "none") => {
             assert!(fixture.command.contains("--compress=none"));
