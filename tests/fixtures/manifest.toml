@@ -73,6 +73,24 @@ expected_row_count = 7
 expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
 
 [[fixture]]
+name = "pg18-none-insert-basic"
+path = "tests/fixtures/archives/pg18-none-insert-basic.dump"
+source = "tests/fixtures/source/alpha1-copy-basic.sql"
+archive_version = "1.16.0"
+generator = "pg_dump (PostgreSQL) 18.4 (Debian 18.4-1.pgdg12+1)"
+generator_image = "postgres:18.4-bookworm"
+generator_image_digest = "postgres@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382"
+generator_platform = "linux/amd64"
+command = "docker exec pgdumpx-pg18-insert-fixture pg_dump --username=postgres --dbname=pgdumpx_fixture --format=custom --compress=none --inserts --encoding=UTF8 --no-owner --no-privileges --no-comments --strict-names --table=public.orders --file=/tmp/pg18-none-insert-basic.dump"
+compression = "none"
+compression_detail = "none"
+sha256 = "48e49adb69d064c9049bb8fc266bc35be3e4ffebbf554ed94893e18124f95204"
+purpose = ["header", "toc", "none", "insert", "row-api-rejection", "selected-entry", "differential"]
+expected_tables = ["public.orders"]
+expected_row_count = 7
+expected_columns = ["order_id", "order_number", "customer_code", "note", "empty_text"]
+
+[[fixture]]
 name = "pg16-none-copy-basic"
 path = "tests/fixtures/archives/pg16-none-copy-basic.dump"
 source = "tests/fixtures/source/alpha1-copy-basic.sql"
