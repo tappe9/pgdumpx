@@ -1,36 +1,36 @@
 # pgdumpx Public API Design
 
-Status: **Accepted direction for v0.1 implementation**
+Status: **Implemented v0.1 public API contract**
 
-This document defines the intended public Rust API shape. Exact names may be refined during TDD, but changes to ownership, safety, streaming, row-search, resource-budget, and compatibility contracts should be deliberate.
+This document describes the implemented public Rust API shape and the ownership, safety, streaming, row-search, resource-budget, and compatibility contracts that must remain deliberate as the pre-1.0 API evolves. The crate rustdoc is authoritative for exact current signatures and error variants.
 
 ## 1. Design principles
 
-The public API should:
+The public API:
 
-- model a read-only PostgreSQL Custom Format archive;
-- make metadata inspection cheap after open;
-- keep payload access lazy;
-- expose streaming `Read` where raw entry bytes are useful;
-- expose row-aware COPY access without forcing UTF-8;
-- support column-aware first-match filtering without a SQL parser;
-- distinguish a missing requested column from unavailable/malformed column metadata;
-- make the sequential-scan cost of row lookup explicit;
-- provide caller-visible ways to bound structural allocations, row-scan work, and raw decompressed output;
-- reject unsupported table-data representations explicitly rather than guessing COPY input;
-- keep the source owned by the archive so seeks are coordinated safely;
-- use typed IDs and enums rather than stringly typed control flow;
-- expose typed errors and location/resource context;
-- keep public metadata types opaque enough to evolve before v1.0;
-- avoid leaking compression-library implementation types;
-- remain suitable for later wrappers without designing around Python or Arrow today;
-- require no running PostgreSQL server, `libpq`, or `pg_restore` at runtime.
+- models a read-only PostgreSQL Custom Format archive;
+- makes metadata inspection cheap after open;
+- keeps payload access lazy;
+- exposes streaming `Read` where raw entry bytes are useful;
+- exposes row-aware COPY access without forcing UTF-8;
+- supports column-aware first-match filtering without a SQL parser;
+- distinguishes a missing requested column from unavailable/malformed column metadata;
+- makes the sequential-scan cost of row lookup explicit;
+- provides caller-visible ways to bound structural allocations, row-scan work, and raw decompressed output;
+- rejects unsupported table-data representations explicitly rather than guessing COPY input;
+- keeps the source owned by the archive so seeks are coordinated safely;
+- uses typed IDs and enums rather than stringly typed control flow;
+- exposes typed errors and location/resource context;
+- keeps public metadata types opaque enough to evolve before v1.0;
+- avoids leaking compression-library implementation types;
+- remains suitable for later wrappers without designing around Python or Arrow today;
+- requires no running PostgreSQL server, `libpq`, or `pg_restore` at runtime.
 
-The project does not use “Pure Rust” as a blanket guarantee about every transitive dependency. Dependency and native-build constraints are documented separately from the public API.
+The project does not use “Pure Rust” as a blanket guarantee about every transitive dependency. Dependency and native-build constraints are documented separately from the public API in `PACKAGING.md` and ADR 0007.
 
 ## 2. Opening an archive
 
-Initial direction:
+The implemented reader-based shape is:
 
 ```rust
 pub struct Archive<R> {
@@ -43,15 +43,13 @@ impl<R: Read + Seek> Archive<R> {
 }
 ```
 
-A path convenience constructor may be implemented for `Archive<BufReader<File>>`, but the reusable API is reader-based.
-
-Opening parses archive metadata and the TOC only. It must not decompress all data entries.
+Opening parses supported archive metadata, the TOC, relationships, and lookup indexes under finite structural limits. It does not decompress selected entry bodies. A path convenience constructor is not required by the v0.1 public contract; callers can open a `File` and pass it to `Archive::open`.
 
 ## 3. Structural limits
 
-Configuration types may use constructors/builders, but their exact field layout is not a public compatibility commitment.
+Configuration fields remain private so the type can evolve without turning struct-literal layout into a compatibility promise.
 
-Representative direction:
+Implemented shape:
 
 ```rust
 #[derive(Debug, Clone)]
@@ -73,15 +71,13 @@ impl Limits {
 }
 ```
 
-`Default` may delegate to compatibility-oriented finite limits. Applications processing hostile input should be able to select stricter values.
+`Default` delegates to finite compatibility-oriented limits. Applications processing hostile input can select stricter values. An unbounded structural mode is not the default.
 
-An explicitly unbounded structural mode must not be the default merely for convenience.
-
-These limits protect individual allocations and metadata cardinalities. They do not by themselves bound the total CPU/decompression work of scanning millions of otherwise-small rows.
+These limits protect individual allocations and metadata cardinalities. They do not by themselves bound the total CPU/decompression work of scanning many otherwise-small rows.
 
 ## 4. Row-scan work limits
 
-Long-running row operations accept operation-level work budgets equivalent in purpose to:
+Long-running row operations accept operation-level work budgets:
 
 ```rust
 #[derive(Debug, Clone)]
@@ -97,28 +93,28 @@ impl ScanLimits {
 }
 ```
 
-Exact naming and default values may evolve from TDD and real fixture sizes.
+`ScanLimits::default()` and `ScanLimits::unlimited()` leave both budgets unset. Callers opt into one or both limits.
 
-Required semantics:
+Semantics:
 
 - `max_rows = N` permits at most `N` complete rows to be yielded or evaluated by the operation;
 - a row that would exceed the row or byte budget is not yielded to the caller or predicate;
 - the matching row is included in both row and byte accounting;
 - decompressed-byte accounting counts bytes consumed by the row parser from the decompressed COPY stream;
-- field separators, row terminators, and the COPY terminator count when consumed;
+- field separators, row terminators, escape spellings, and the COPY terminator count when consumed;
 - decoder or `BufRead` read-ahead that has not been consumed by the parser does not count;
 - counters use checked arithmetic;
 - limit exhaustion returns a typed resource error;
 - accounting remains incremental and never pre-reads the complete entry;
 - early match termination does not consume rows after the match.
 
-A trusted local-file convenience path may use generous or unlimited scan defaults. Tools processing externally supplied archives should select explicit budgets.
+Trusted local-file callers may intentionally use unlimited scan work. Tools processing externally supplied archives should select budgets appropriate to their resource policy.
 
 ## 5. Raw entry output limits
 
 Row-scan limits do not protect callers that only stream decompressed entry bytes. The library therefore provides a separate raw-output budget.
 
-Representative direction:
+Implemented shape:
 
 ```rust
 #[derive(Debug, Clone)]
@@ -132,7 +128,7 @@ impl EntryReadLimits {
 }
 ```
 
-The low-level unlimited reader may remain available for trusted use, but a bounded path is first-class:
+The low-level unlimited reader remains available for trusted use, and bounded access is first-class:
 
 ```rust
 impl<R: Read + Seek> Archive<R> {
@@ -158,9 +154,9 @@ impl<R: Read + Seek> Archive<R> {
 
 `EntryDataReader` implements `std::io::Read` and yields decompressed entry bytes. `BoundedEntryDataReader` wraps the same validated/decompressed path and applies the raw-output budget. If a bounded reader exhausts its budget, the `Read` error preserves a typed pgdumpx resource error as its source; high-level pgdumpx operations map it back to `PgDumpError`.
 
-Raw limits count decompressed bytes returned or copied. Crossing the limit is an error and must not be presented as a successful truncated stream. A deliberately truncating API, if ever added, must be named separately.
+Raw limits count decompressed bytes returned or copied. Crossing the limit is an error and is never presented as a successful truncated stream. `Archive::copy_entry_to` writes incrementally, so bytes already accepted by the destination cannot be rolled back after a later input/limit/writer failure; the operation still returns an error.
 
-The v0.1 CLI `extract` command uses `copy_entry_to` or an equivalent bounded high-level path.
+The v0.1 CLI `extract` command uses `copy_entry_to` with a finite 1 GiB default and an explicit positive-`u64` override.
 
 ## 6. Archive header
 
@@ -200,7 +196,7 @@ v0.1 rejects non-custom input rather than exposing an `ArchiveFormat` variant se
 
 ## 7. Archive strings
 
-Archive metadata strings must not require valid UTF-8 at the lowest level.
+Archive metadata strings do not require valid UTF-8 at the lowest level.
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,7 +208,7 @@ impl ArchiveString {
 }
 ```
 
-The inner storage remains private. If compatibility evidence proves a stronger encoding guarantee for a particular field, a convenience accessor may expose it without weakening the general parser.
+The inner storage remains private. Metadata lookup and identity remain byte-oriented; callers opt into fallible UTF-8 conversion.
 
 ## 8. Dump IDs and TOC entries
 
@@ -268,7 +264,7 @@ Version-dependent TOC fields preserve absence explicitly. `table_access_method()
 
 Metadata remains byte-oriented. Callers opt into UTF-8 through `ArchiveString::to_str()` rather than the parser discarding non-UTF-8 bytes. The generic TOC surface also exposes object-type/dependency metadata needed to inspect version-conditional large-object entries without implying a flat large-object payload extraction API.
 
-Public enums expected to grow as compatibility expands should be `#[non_exhaustive]` before v1.0. Exhaustive internal enums may remain private.
+Public enums expected to grow as compatibility expands are `#[non_exhaustive]` before v1.0. Exhaustive internal enums remain private.
 
 ## 9. Metadata access
 
@@ -281,7 +277,7 @@ impl<R: Read + Seek> Archive<R> {
 }
 ```
 
-A UTF-8 convenience overload may be provided, but byte-oriented lookup remains available.
+Byte-oriented lookup is the stable lowest-level contract. UTF-8 conversion is an opt-in boundary rather than parser policy.
 
 ## 10. Table reference
 
@@ -311,7 +307,7 @@ The mutable borrow intentionally prevents two readers from independently seeking
 
 Raw entry access is lower-level than row-aware access. A readable table-data entry may remain available through raw APIs even when its logical representation is unsupported by the COPY row parser.
 
-Large-object entries with internal OID framing may require a different API and are not forced into a flat `Read` abstraction.
+Large-object entries with internal OID framing may require a different future API and are not forced into a flat `Read` abstraction.
 
 ## 12. COPY rows and lending semantics
 
@@ -337,7 +333,7 @@ impl Row<'_> {
 
 `FieldRef::Bytes` contains logical field bytes after PostgreSQL COPY text escape decoding. It does not expose the escaped on-wire spelling.
 
-A row-reader direction matching the implemented v0.1 surface:
+Implemented row-reader surface:
 
 ```rust
 pub struct CopyRowReader<R> {
@@ -357,13 +353,13 @@ impl<R: Read> CopyRowReader<R> {
 }
 ```
 
-`Row` is valid only until the next mutable operation on the row reader. A standard `Iterator<Item = Row<'_>>` cannot express this lending relationship without changing ownership semantics. v0.1 therefore documents `next_row(&mut self)` explicitly instead of allocating every row merely to satisfy `Iterator`.
+`Row` is valid only until the next mutable operation on the row reader. A standard `Iterator<Item = Row<'_>>` cannot express this lending relationship without changing ownership semantics. v0.1 therefore exposes `next_row(&mut self)` and documents the invalidation boundary explicitly instead of allocating every row merely to satisfy `Iterator`.
 
 The detailed COPY parser contract is defined in `COPY-TEXT.md`.
 
 ## 13. Owned rows
 
-An owned representation is required for a matching row that must survive reader advancement or teardown:
+An owned representation is used for a matching row that must survive reader advancement or teardown:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,11 +382,11 @@ impl OwnedRow {
 
 Conversion from the current borrowed row copies only that row. It remains bounded by the configured row-size and field-count limits.
 
-Normal iteration continues to use borrowed `Row`; `OwnedRow` is not a reason to allocate every row.
+Normal iteration continues to use borrowed `Row`; `OwnedRow` does not cause allocation of every scanned row.
 
 ## 14. Table row convenience and column metadata
 
-The archive exposes a table-row reader equivalent in purpose to:
+The archive exposes a table-row reader:
 
 ```rust
 impl<R: Read + Seek> Archive<R> {
@@ -414,7 +410,7 @@ EntryDataReader
 CopyRowReader
 ```
 
-Representative metadata API:
+Metadata API:
 
 ```rust
 impl<R: Read> TableRowReader<'_, R> {
@@ -521,9 +517,7 @@ Semantics:
 - enforce structural and total-work limits on the same streaming path;
 - do not rewind a reader that has already yielded rows.
 
-The closure API deliberately avoids a SQL parser. Callers may implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
-
-A small equality helper may be added if demonstrated usage justifies it, but v0.1 does not require a condition DSL.
+The closure API deliberately avoids a SQL parser. Callers implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
 
 ## 17. Row-search performance contract
 
@@ -539,7 +533,7 @@ find row inside table     = sequential decompression + COPY scan
 
 A match near the start can terminate quickly. A late or absent match may process the complete selected entry for a fresh reader, or all remaining selected data after prior row reads, unless a configured budget stops the operation. Worst-case unrestricted work is proportional to the remaining selected table-data size.
 
-Public documentation must not imply `O(1)`/`O(log n)` row lookup or database-index semantics.
+Public documentation does not imply `O(1)`/`O(log n)` row lookup or database-index semantics.
 
 A future sidecar index or restart-point design requires a separate ADR because compressed streams cannot generally be treated as arbitrary row-seekable byte arrays.
 
@@ -558,41 +552,23 @@ pub enum Compression {
 
 The enum describes the archive, not a dependency-specific decoder type. Unsupported or invalid identifiers are errors.
 
-Compression backend selection is an implementation and packaging concern. A backend that introduces a material native build/runtime constraint must be documented and, where practical, feature-gated; it is not exposed through the archive model.
+Compression backend selection is an implementation and packaging concern. LZ4 and Zstandard are optional library features; the default CLI enables both. A disabled backend remains identifiable in metadata and produces a typed selected-entry read error instead of leaking dependency-specific types.
 
 ## 19. Error API
 
-Representative direction:
+`PgDumpError` is `#[non_exhaustive]` and exposes typed variants rather than requiring callers to parse `Display` strings. The exact current variants are documented in crate rustdoc; the taxonomy distinguishes at least:
 
-```rust
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PgDumpError {
-    Io(std::io::Error),
-    UnexpectedEof { offset: u64 },
-    InvalidMagic,
-    UnsupportedArchiveVersion { version: ArchiveVersion },
-    UnexpectedArchiveFormat { code: u8 },
-    InvalidOffset { dump_id: Option<DumpId> },
-    InvalidBlockType { offset: u64, block_type: u8 },
-    DumpIdMismatch { offset: u64, expected: DumpId, actual: DumpId },
-    UnsupportedCompression { code: i32 },
-    Decompression { algorithm: Compression },
-    MalformedCopy { row: u64, byte_offset: u64 },
-    CopyColumnMetadataUnavailable { dump_id: DumpId },
-    MalformedCopyStatement { dump_id: DumpId },
-    UnsupportedTableDataRepresentation { dump_id: DumpId },
-    ResourceLimitExceeded {
-        resource: ResourceLimit,
-        limit: u64,
-        consumed: Option<u64>,
-    },
-    ArithmeticOverflow { offset: Option<u64> },
-    InvalidUtf8,
-}
-```
-
-Exact fields evolve from tests, but callers must not parse `Display` strings to determine error category.
+- I/O and unexpected EOF;
+- invalid magic/archive format/version and integer/offset encoding;
+- TOC/string/dependency/relationship failures;
+- invalid entry data location, block type, or dump ID after seek;
+- unsupported compression/backend availability and decompression failures;
+- malformed COPY framing/escapes/terminator/column metadata;
+- unsupported table-data representation;
+- missing table/data relationships and unknown requested columns;
+- structural, scan-work, and raw-output resource exhaustion;
+- checked-counter/offset overflow;
+- explicit UTF-8 conversion failures.
 
 `column_index()` returns `Ok(None)` for a missing name only when column metadata itself is valid. Failure to derive the layout is a distinct error.
 
@@ -600,36 +576,39 @@ Limit exhaustion identifies the resource and, where practical, consumed work. Lo
 
 ## 20. CLI boundary
 
-The CLI is not part of the core Rust type system, but its encoding and output choices must align with the byte-oriented API.
+The CLI is not part of the core Rust type system, but its encoding, limit, output, and exit choices align with the byte-oriented API.
 
-v0.1 rules:
+Implemented v0.1 commands:
 
-- schema/table/column/value command-line arguments are UTF-8;
-- `extract` writes the decompressed selected table-data body as binary-safe bytes;
-- `extract` does not add DDL or a `COPY` statement wrapper;
-- `extract` uses a bounded library path and fails rather than silently truncating;
+```text
+pgdumpx inspect <FILE>
+pgdumpx list <FILE>
+pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>
+pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+```
+
+Rules:
+
+- table selectors contain exactly one ASCII `.` and two non-empty components; SQL identifier quoting/escaping is not supported;
+- schema/table/column/value command-line query arguments are UTF-8, while the Rust API remains byte-oriented;
+- `inspect` and `list` remain metadata-only;
+- `extract` writes the decompressed selected table-data body as binary-safe bytes and does not add DDL or a `COPY` statement wrapper;
+- `extract` uses a bounded library path, defaults to 1,073,741,824 bytes (1 GiB), and accepts an explicit positive-`u64` override;
+- streamed `extract` bytes cannot be rolled back after a later failure, so partial stdout can coexist with a non-success exit; diagnostics remain on stderr;
 - `find` compares its UTF-8 value bytes with logical post-unescape field bytes;
-- exit `0` means match, exit `1` means no match, and exit `2+` means failure.
+- `find` exposes optional positive-`u64` row and parser-consumed decompressed-byte scan budgets;
+- matched `find` output is one normalized ASCII-safe COPY text record;
+- exit `0` means match/success, `find` exit `1` means completed no-match, and exit `2+` means usage/runtime/resource failure.
 
 A byte-literal CLI syntax, JSON representation, or full restorable SQL output requires a separate design.
 
 ## 21. Serialization
 
-Serde support is not required for the parser to function.
-
-If exposed, it should be optional:
-
-```toml
-[features]
-default = []
-serde = ["dep:serde"]
-```
-
-The CLI may use presentation DTOs instead of freezing every archive metadata type as a JSON compatibility promise.
+Serde support is not required and is not part of the v0.1 public contract. Presentation/serialization DTOs can be added later without freezing every archive metadata type as a serialization compatibility promise.
 
 ## 22. Threading and parallel access
 
-`Archive<R>` itself does not promise concurrent reads from one seekable source.
+`Archive<R>` does not promise concurrent reads from one seekable source.
 
 Future parallel extraction should use APIs that can produce independent sources, such as reopening a path or accepting a source factory. This avoids mutex-protected seek thrashing and preserves simple borrowing semantics.
 
@@ -648,7 +627,7 @@ Before v1.0:
 
 ## 24. Deferred APIs
 
-Intentionally deferred:
+Intentionally deferred beyond v0.1:
 
 ```text
 archive writing

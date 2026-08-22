@@ -1,5 +1,7 @@
 # Bounded raw entry extraction
 
+Status: **Implemented v0.1 contract**
+
 `pgdumpx` exposes selected custom-archive entry bodies as decompressed byte streams. Raw extraction is deliberately separate from structural metadata limits and row-scan limits: it bounds the number of decompressed bytes exposed by one selected entry without changing COPY parsing semantics.
 
 ## Library API
@@ -29,7 +31,7 @@ The selector uses the same exact `SCHEMA.TABLE` grammar as `pgdumpx find`: one A
 
 When `--max-decompressed-bytes` is omitted, the CLI applies a finite default of **1,073,741,824 bytes (1 GiB)** per extraction.
 
-The Alpha 1 PostgreSQL 18 compatibility fixtures used by the repository produce a 270-byte selected `TABLE DATA` body for both none and gzip compression. A 1 GiB default therefore leaves substantial compatibility headroom over the validated baseline while still preventing an omitted option from becoming an implicit unbounded decompression request. Users who intentionally need a larger trusted extraction can provide a larger positive `u64` value explicitly.
+The committed PostgreSQL 18 compatibility fixtures used by the repository produce a 270-byte selected `TABLE DATA` body for both none and gzip compression. A 1 GiB default therefore leaves substantial compatibility headroom over that validated fixture while still preventing an omitted option from becoming an implicit unbounded decompression request. Users who intentionally need a larger trusted extraction can provide a larger positive `u64` value explicitly.
 
 The override must be a positive `u64`; zero, negative, malformed, overflowing, duplicate, or unknown limit options are usage errors.
 

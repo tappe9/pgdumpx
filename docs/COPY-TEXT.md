@@ -1,8 +1,8 @@
 # PostgreSQL COPY Text Contract
 
-Status: **Accepted baseline for v0.1 implementation**
+Status: **Implemented v0.1 contract**
 
-This document defines the COPY-text behavior that pgdumpx v0.1 relies on after a selected PostgreSQL Custom Format table-data entry has been framed and decompressed.
+This document defines the COPY-text behavior implemented by pgdumpx v0.1 after a selected PostgreSQL Custom Format table-data entry has been framed and decompressed.
 
 It is a parser contract for pgdumpx, not an independent PostgreSQL specification. PostgreSQL upstream behavior remains authoritative.
 
@@ -19,7 +19,7 @@ The following pg_dump data representations are intentionally **not** row-aware v
 - `--rows-per-insert` when it causes INSERT-based table data;
 - Binary COPY data.
 
-If a table-data entry uses an unsupported representation, pgdumpx must return a typed unsupported-representation error for row-aware access rather than attempting to parse it as COPY text.
+If a table-data entry uses an unsupported representation, pgdumpx returns a typed unsupported-representation error for row-aware access rather than attempting to parse it as COPY text.
 
 Raw entry extraction may still be available where the archive entry itself is otherwise readable.
 
@@ -48,7 +48,7 @@ COPY text byte stream
           Row / FieldRef
 ```
 
-Archive chunks, decompressor output chunks, COPY rows, and COPY fields are independent boundaries. The implementation must handle arbitrary short reads across all of them.
+Archive chunks, decompressor output chunks, COPY rows, and COPY fields are independent boundaries. The implementation handles arbitrary short reads across all of them.
 
 ## 3. Byte-oriented field contract
 
@@ -82,18 +82,18 @@ For the normal pg_dump COPY text representation targeted by v0.1:
 
 - fields are separated according to the recorded/supported COPY text layout used by pg_dump;
 - rows terminate at physical record boundaries;
-- embedded control characters represented through COPY escapes must not be confused with physical row delimiters;
+- embedded control characters represented through COPY escapes are not confused with physical row delimiters;
 - an empty field is a non-NULL zero-length byte string;
 - `\N` is the NULL marker when it appears as the complete unescaped field representation;
 - `\.` is recognized as the COPY end-of-data marker when present as a standalone terminator record in the stream representation.
 
-The implementation must not assume one `Read::read` call, one archive chunk, or one decompressor output buffer contains a complete row.
+The implementation does not assume one `Read::read` call, one archive chunk, or one decompressor output buffer contains a complete row.
 
 ## 5. Escape decoding
 
-pgdumpx must implement the PostgreSQL COPY text escape rules required for pg_dump-generated data, including the standard backslash escapes and numeric byte escapes used by PostgreSQL text COPY.
+pgdumpx implements the PostgreSQL COPY text escape rules required for pg_dump-generated data, including the standard backslash escapes and numeric byte escapes used by PostgreSQL text COPY.
 
-The exact accepted spellings and edge cases must follow PostgreSQL upstream behavior and be covered by tests. The parser must not silently invent a more permissive escape language.
+Accepted spellings and edge cases follow PostgreSQL upstream behavior and are covered by tests. The parser does not silently invent a more permissive escape language.
 
 Malformed or truncated escapes return a typed `MalformedCopy`-class error with row/byte context where practical.
 
@@ -120,7 +120,7 @@ pub fn column_index(
 ) -> Result<Option<usize>, PgDumpError>;
 ```
 
-Positional row iteration may remain available when the COPY byte stream is readable but the supported column layout cannot be derived. Column-aware helpers must never guess field names.
+Positional row iteration may remain available when the COPY byte stream is readable but the supported column layout cannot be derived. Column-aware helpers never guess field names.
 
 ## 7. Row ownership
 
@@ -146,7 +146,7 @@ Exceeding either class of limit returns a typed resource-limit error.
 
 ## 9. Required tests
 
-At minimum, COPY parser tests must cover:
+The implemented COPY parser coverage includes:
 
 - NULL versus empty field;
 - field separators and record boundaries;
@@ -166,4 +166,4 @@ At minimum, COPY parser tests must cover:
 
 ## 10. Upstream governance
 
-When COPY-related behavior is uncertain, implementation decisions should be checked against PostgreSQL source and official pg_dump-generated fixtures. A hand-built fixture is appropriate for malformed-input tests but must not be the sole evidence for valid-format semantics.
+When COPY-related behavior is uncertain, implementation decisions are checked against PostgreSQL source and official pg_dump-generated fixtures. A hand-built fixture is appropriate for malformed-input tests but is not the sole evidence for valid-format semantics.
