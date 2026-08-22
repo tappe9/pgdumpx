@@ -109,7 +109,9 @@ jobs:
           toolchain: stable
 
       - name: Verify fixture manifest, checksums, and compatibility contract
-        run: cargo test -p pgdumpx --all-features --test fixture_manifest --test compatibility_completion
+        run: |
+          cargo test -p pgdumpx --all-features --test fixture_manifest
+          cargo test -p pgdumpx --all-features --test compatibility_completion
 
   fuzz-smoke:
     name: Fuzz target smoke
