@@ -4,9 +4,9 @@ Status: **v0.1 package, license, dependency, and runtime boundary verified**
 
 This document records the v0.1 publish-time package and dependency boundary verified by Issue #35 / PR #54. The final cross-document Definition of Done mapping is recorded separately in `V0.1-RELEASE-AUDIT.md`.
 
-## Published packages
+## Intended package set
 
-The workspace contains two intended crates.io packages:
+The workspace contains two intended crates.io packages; neither is published by this audit:
 
 - `pgdumpx` — the reusable library;
 - `pgdumpx-cli` — the `pgdumpx` command-line binary, depending on `pgdumpx = "0.1.0"` with library default features disabled and CLI features forwarded explicitly.
