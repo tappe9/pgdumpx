@@ -31,6 +31,7 @@ fn official_fixtures_expose_complete_toc_metadata_without_hiding_version_absence
         let data_id = table.data_entry_id().expect("TABLE DATA must exist");
 
         let table_entry = archive.entry(table_id).expect("TABLE entry must resolve");
+        assert!(!table_entry.has_data());
         assert_eq!(table_entry.catalog_table_oid().as_bytes(), b"1259");
         assert!(
             table_entry
@@ -62,6 +63,7 @@ fn official_fixtures_expose_complete_toc_metadata_without_hiding_version_absence
         let data_entry = archive
             .entry(data_id)
             .expect("TABLE DATA entry must resolve");
+        assert!(data_entry.has_data());
         assert_eq!(data_entry.description().as_bytes(), b"TABLE DATA");
         assert_eq!(
             data_entry.namespace().map(|value| value.as_bytes()),
