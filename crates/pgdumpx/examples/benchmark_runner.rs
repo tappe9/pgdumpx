@@ -249,9 +249,7 @@ impl Config {
                     ));
                 }
                 if self.limit_mode != LimitMode::None {
-                    return Err(CliError::new(
-                        "open and rows require --limit-mode none",
-                    ));
+                    return Err(CliError::new("open and rows require --limit-mode none"));
                 }
             }
             Operation::Extract => {
@@ -283,7 +281,10 @@ impl Config {
     }
 }
 
-fn next_value(arguments: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, CliError> {
+fn next_value(
+    arguments: &mut impl Iterator<Item = String>,
+    flag: &str,
+) -> Result<String, CliError> {
     arguments
         .next()
         .ok_or_else(|| CliError::new(format!("{flag} requires a value")))
@@ -363,9 +364,7 @@ fn run_extract(path: &Path, limit_mode: LimitMode) -> Result<RunResult, Box<dyn 
         .ok_or_else(|| CliError::new("benchmark table has no TABLE DATA entry"))?;
     let limits = match limit_mode {
         LimitMode::None => EntryReadLimits::unlimited(),
-        LimitMode::RawBytes => {
-            EntryReadLimits::unlimited().with_max_decompressed_bytes(u64::MAX)
-        }
+        LimitMode::RawBytes => EntryReadLimits::unlimited().with_max_decompressed_bytes(u64::MAX),
         _ => return Err(CliError::new("invalid extract limit mode after validation").into()),
     };
     let mut output = io::sink();
@@ -473,7 +472,11 @@ fn run_find(
         elapsed,
         units: evaluated,
         unit: "evaluated_rows",
-        outcome: if matched.is_some() { "matched" } else { "absent" },
+        outcome: if matched.is_some() {
+            "matched"
+        } else {
+            "absent"
+        },
     })
 }
 
@@ -561,7 +564,10 @@ mod tests {
 
     #[test]
     fn match_targets_are_distinct() {
-        assert_ne!(MatchPosition::Early.target(), MatchPosition::Middle.target());
+        assert_ne!(
+            MatchPosition::Early.target(),
+            MatchPosition::Middle.target()
+        );
         assert_ne!(MatchPosition::Middle.target(), MatchPosition::Late.target());
         assert_ne!(MatchPosition::Late.target(), MatchPosition::Absent.target());
     }
