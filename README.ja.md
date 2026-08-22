@@ -84,7 +84,7 @@ pg_dump -Fc mydb > backup.dump
 - LZ4
 - Zstandard
 
-実装はまずArchive 1.16 + none/gzipで`find`まで通る細いend-to-end sliceを完成させ、その後に互換性を広げます。詳細は[ROADMAP.md](ROADMAP.md)を参照してください。
+現在のAlpha 3実装では、Archive 1.14〜1.16について、対象version / compressionの組み合わせをofficial fixtureとdifferential checkで検証済みです。正確なevidence matrixは[ROADMAP.md](ROADMAP.md)と[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)を参照してください。
 
 row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQL `COPY` text形式のtable dataです。次はv0.1 row parserの対象外です。
 
@@ -95,11 +95,11 @@ row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQ
 
 unsupported representationはCOPY textとして推測せず、row APIからtyped errorで失敗させます。archive entry自体が読める場合はraw extractionを利用できる可能性があります。
 
-「設計上のtarget」と「fixture/testで実証済みの互換性」は[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)で分けて管理します。実装前の現時点では、互換性表はrelease済みの保証ではありません。
+「設計上のtarget」と「fixture/testで実証済みの互換性」は[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)で分けて管理します。compatibility claimは、そこに記録したofficial fixtureとproduction-path evidenceの範囲に限定します。
 
 ## 想定Rust API
 
-現在のAlpha 2 sliceでは、以下のmetadata、row streaming、first-match、public structural-limit、scan-limit、error-taxonomy APIまで実装済みです。後続のv0.1 APIはROADMAPに従って追加します。
+現在のAlpha 3 sliceでは、metadata、row streaming、first-match、structural / scan / raw-extraction limits、typed error taxonomy、bounded raw-entry extraction、対応compression APIまで実装済みです。後続のv0.1 hardening / benchmarkはROADMAPに従って進めます。
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -166,7 +166,7 @@ APIでは次を別のlimitとして扱います。
 
 ## CLI
 
-`inspect`、`list`、`find`は実装済みで、archive / COPY parserをCLI側へ重複実装せずpublic Rust APIを利用します。`extract`は後続のAlpha 2 Issueで実装予定です。
+`inspect`、`list`、`extract`、`find`は実装済みで、archive / COPY parserをCLI側へ重複実装せずpublic Rust APIを利用します。
 
 ```bash
 pgdumpx inspect backup.dump
@@ -181,7 +181,7 @@ pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
 
 `inspect <FILE>`はarchive version、compression、entry / table / table-data件数をdeterministicな`key=value`形式で表示します。`list <FILE>`はTOC orderを維持し、dump ID、object type、schema、nameをtab区切りで表示します。どちらもlibraryのmetadata-open pathだけを使い、TABLE DATA payloadへのseek、entry decompression、COPY row parserには到達しません。diagnosticはstderrへ出力し、malformed archiveはnon-zero exitになります。
 
-### `extract`（planned）
+### `extract`
 
 選択したentryの**decompressed table-data body**をbinary-safeなbytesとしてstdoutへ出力します。schema DDL、`COPY` statement wrapper、restore可能な完全SQLは追加しません。
 

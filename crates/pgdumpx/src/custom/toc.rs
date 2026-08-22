@@ -9,6 +9,7 @@ use crate::{
 };
 use std::io::Read;
 
+const ARCHIVE_VERSION_1_14: ArchiveVersion = ArchiveVersion::new(1, 14, 0);
 const ARCHIVE_VERSION_1_16: ArchiveVersion = ArchiveVersion::new(1, 16, 0);
 
 #[cfg(test)]
@@ -121,11 +122,15 @@ fn read_toc_entry<R: Read>(
     let copy_statement = read_optional_string(reader, integer_size, limits)?;
     let namespace = read_optional_string(reader, integer_size, limits)?;
     let tablespace = read_optional_string(reader, integer_size, limits)?;
-    let table_access_method = read_optional_string(reader, integer_size, limits)?;
-    let relation_kind = if version >= ARCHIVE_VERSION_1_16 {
-        read_archive_integer(reader, integer_size)?
+    let table_access_method = if version >= ARCHIVE_VERSION_1_14 {
+        read_optional_string(reader, integer_size, limits)?
     } else {
-        0
+        None
+    };
+    let relation_kind = if version >= ARCHIVE_VERSION_1_16 {
+        Some(read_archive_integer(reader, integer_size)?)
+    } else {
+        None
     };
     let owner = read_optional_string(reader, integer_size, limits)?;
     let with_oids = read_required_string(reader, integer_size, limits, "TOC with-OIDs flag")?;

@@ -38,6 +38,24 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
+  compatibility-differential:
+    name: Compatibility differential
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Build pgdumpx CLI with all compression backends
+        run: cargo build -p pgdumpx-cli --all-features
+
+      - name: Compare selected entry output with pg_restore
+        run: bash scripts/check-compatibility-differential.sh
+
   lz4-disabled:
     name: LZ4 backend disabled
     runs-on: ubuntu-latest

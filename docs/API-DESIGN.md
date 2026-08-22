@@ -232,11 +232,23 @@ pub struct TocEntry {
 impl TocEntry {
     pub fn id(&self) -> DumpId;
     pub fn has_data(&self) -> bool;
+    pub fn catalog_table_oid(&self) -> &ArchiveString;
+    pub fn catalog_oid(&self) -> &ArchiveString;
+    pub fn name(&self) -> &ArchiveString;
     pub fn name_bytes(&self) -> &[u8];
+    pub fn description(&self) -> &ArchiveString;
     pub fn description_bytes(&self) -> &[u8];
     pub fn section(&self) -> Section;
+    pub fn definition(&self) -> Option<&ArchiveString>;
+    pub fn drop_statement(&self) -> Option<&ArchiveString>;
+    pub fn copy_statement(&self) -> Option<&ArchiveString>;
+    pub fn namespace(&self) -> Option<&ArchiveString>;
     pub fn namespace_bytes(&self) -> Option<&[u8]>;
-    pub fn owner_bytes(&self) -> &[u8];
+    pub fn tablespace(&self) -> Option<&ArchiveString>;
+    pub fn table_access_method(&self) -> Option<&ArchiveString>;
+    pub fn relation_kind(&self) -> Option<i32>;
+    pub fn owner(&self) -> Option<&ArchiveString>;
+    pub fn owner_bytes(&self) -> Option<&[u8]>;
     pub fn dependencies(&self) -> &[DumpId];
     pub fn data_location(&self) -> DataLocation;
 }
@@ -250,7 +262,11 @@ pub enum DataLocation {
 }
 ```
 
-The public model preserves the upstream distinction between no data, position not recorded, and a valid stored offset.
+The public model preserves the upstream distinction between no data, position not recorded, and a valid stored offset. Optional archive strings preserve encoded NULL as `None` rather than conflating it with an encoded empty string.
+
+Version-dependent TOC fields preserve absence explicitly. `table_access_method()` reflects the field encoded in the supported archive 1.14+ layouts. `relation_kind()` is `None` for archive 1.14/1.15 because no relkind slot exists there; archive 1.16 values are returned as `Some(value)`, including an encoded zero as `Some(0)`.
+
+Metadata remains byte-oriented. Callers opt into UTF-8 through `ArchiveString::to_str()` rather than the parser discarding non-UTF-8 bytes. The generic TOC surface also exposes object-type/dependency metadata needed to inspect version-conditional large-object entries without implying a flat large-object payload extraction API.
 
 Public enums expected to grow as compatibility expands should be `#[non_exhaustive]` before v1.0. Exhaustive internal enums may remain private.
 
@@ -279,10 +295,13 @@ impl TableRef<'_> {
     pub fn name(&self) -> &[u8];
     pub fn table_entry_id(&self) -> DumpId;
     pub fn data_entry_id(&self) -> Option<DumpId>;
+    pub fn data_representation(&self) -> Result<TableDataRepresentation, PgDumpError>;
+    pub fn columns(&self) -> Result<&[Column], PgDumpError>;
+    pub fn column_index(&self, name: &[u8]) -> Result<Option<usize>, PgDumpError>;
 }
 ```
 
-The type is a metadata handle only. It does not borrow entry payload bytes.
+The type is a metadata handle only. It does not borrow entry payload bytes. Representation and column access are derived from stored TOC metadata and therefore do not decompress the table-data entry.
 
 ## 11. Raw entry data
 
@@ -443,7 +462,7 @@ are not sent through `CopyRowReader` in v0.1. They return a typed unsupported-re
 
 Binary COPY decoding is also deferred.
 
-This distinction keeps low-level archive readability separate from logical row-parser support.
+This distinction keeps low-level archive readability separate from logical row-parser support. The official PostgreSQL 18.4 `--inserts` fixture verifies that raw selected-entry extraction remains available while `table_rows` rejects the representation before COPY parsing.
 
 ## 16. First-match filtering
 

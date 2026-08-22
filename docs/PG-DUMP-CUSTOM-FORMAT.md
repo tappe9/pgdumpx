@@ -113,14 +113,17 @@ Fields relevant to modern archives include object identity and restore metadata 
 - create/drop/COPY statements;
 - namespace/schema;
 - tablespace;
-- table access method in versions where encoded;
+- table access method in archive 1.14 and newer;
+- relation kind in archive 1.16 and newer;
 - owner;
 - dependencies;
 - format-specific extra TOC data.
 
 For custom format, the extra TOC data contains the entry's data-offset state and stored offset.
 
-pgdumpx parses enough of this metadata to inspect entries, relate table and table-data entries, identify the supported logical table-data representation, derive supported COPY column layouts, and safely seek to data blocks. It does not attempt to reproduce pg_restore dependency scheduling in v0.1.
+Within pgdumpx's supported range, archive 1.14 and 1.15 do not encode a relkind slot. Archive 1.16 does, and an encoded zero is a value rather than evidence that the field was absent. Optional archive strings likewise preserve encoded NULL separately from an encoded empty string. These distinctions are retained by the public metadata model.
+
+pgdumpx parses this metadata to inspect entries, relate table and table-data entries, identify the supported logical table-data representation, derive supported COPY column layouts, and safely seek to data blocks. It does not attempt to reproduce pg_restore dependency scheduling in v0.1.
 
 ## 7. Custom data blocks
 
@@ -309,28 +312,31 @@ This is a pgdumpx safety policy layered on top of the archive format; it is not 
 
 ## 14. Large objects
 
-Custom archives also have large-object block handling with internal OID framing. v0.1 may inspect TOC metadata for these entries, but flat row-aware streaming APIs are scoped to normal supported table data.
+Custom archives also have large-object block handling with internal OID framing. Archive 1.16 added BLOB metadata changes in the same archive-version family that added relkind to TOC serialization.
 
-Full large-object extraction is not required for the first milestone unless implementation evidence shows it is necessary for basic archive traversal correctness.
+v0.1 preserves the generic TOC information needed for safe traversal and inspection: object description/type, version-aware relkind presence, dependencies, ownership, and data-location state remain visible without a large-object-specific public payload model. A `BLOB METADATA` entry can therefore be inspected as a normal `TocEntry` without treating its payload as table COPY data.
+
+Full large-object extraction is not required for the first milestone. Large-object payload framing is not forced through the flat table-data or row-aware APIs.
 
 ## 15. Compatibility fixtures
 
-The repository should eventually store or generate a matrix resembling:
+The committed Alpha 3 compatibility corpus is evidence-backed rather than aspirational:
 
 ```text
-archive version | PostgreSQL generator | compression | fixture purpose
-1.14            | recorded explicitly  | none/gzip   | header/TOC/data
-1.15            | recorded explicitly  | selected    | compression header
-1.16            | recorded explicitly  | all tested  | current target
+archive version | PostgreSQL generator | compression              | representation
+1.14            | PostgreSQL 15.19     | none, gzip               | COPY text
+1.15            | PostgreSQL 16.15     | none, gzip               | COPY text
+1.16            | PostgreSQL 18.4      | none, gzip, LZ4, Zstd    | COPY text
+1.16            | PostgreSQL 18.4      | none                     | INSERT
 ```
 
-Exact PostgreSQL release versions and commands must be recorded with each committed fixture rather than inferred later.
+Every fixture records generator version, fixed container image digest/platform, exact command, archive version, compression details, SHA-256, purpose, and expected objects in `tests/fixtures/manifest.toml`.
 
-Column-aware fixtures should preserve the generated TOC COPY statement and verify that its column order matches extracted COPY fields.
+The production compatibility job compares selected decompressed output from all nine official fixtures against PostgreSQL 18.4 `pg_restore` where the operations are semantically equivalent. COPY logical rows are compared byte-for-byte. The INSERT fixture compares the selected INSERT statement region byte-for-byte and separately proves that row-aware APIs reject the representation before COPY parsing.
 
-At least one INSERT-based fixture should demonstrate that row-aware APIs return the explicit unsupported-representation error rather than invoking the COPY parser.
+Column-aware COPY fixtures preserve the generated TOC COPY statement and verify that its column order matches extracted COPY fields.
 
-The public status of these combinations is maintained in `COMPATIBILITY.md`.
+The public status of these combinations is maintained in `COMPATIBILITY.md` and must not exceed this evidence.
 
 ## 16. Upstream-change checklist
 
