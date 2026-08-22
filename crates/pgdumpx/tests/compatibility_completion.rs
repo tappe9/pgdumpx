@@ -1,7 +1,8 @@
-use pgdumpx::{
-    Archive, EntryReadLimits, PgDumpError, TableDataRepresentation,
+use pgdumpx::{Archive, EntryReadLimits, PgDumpError, TableDataRepresentation};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
 };
-use std::{fs::File, path::{Path, PathBuf}};
 
 #[test]
 fn alpha3_completion_requires_insert_fixture_and_differential_check() {
@@ -62,7 +63,10 @@ fn official_insert_fixture_allows_raw_access_and_rejects_row_api_before_copy_par
         )
         .expect("unsupported row representation must remain available to raw extraction");
     assert!(raw.starts_with(b"INSERT INTO public.orders VALUES ("));
-    assert!(!raw.windows(b"COPY public.orders".len()).any(|window| window == b"COPY public.orders"));
+    assert!(
+        !raw.windows(b"COPY public.orders".len())
+            .any(|window| window == b"COPY public.orders")
+    );
 
     let error = match archive.table_rows(b"public", b"orders") {
         Ok(_) => panic!("row APIs must not parse INSERT payload bytes as COPY text"),
