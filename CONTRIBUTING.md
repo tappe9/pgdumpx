@@ -48,11 +48,14 @@ Each document has one primary responsibility. Avoid copying normative text into 
 | `README.md` / `README.ja.md` | Product value, status, quick examples, high-level scope |
 | `docs/REQUIREMENTS.md` | Normative v0.1 behavior and acceptance criteria |
 | `ARCHITECTURE.md` | Internal boundaries, data flow, and safety architecture |
-| `docs/API-DESIGN.md` | Intended public Rust API and exact API semantics |
+| `docs/API-DESIGN.md` | Implemented public Rust API semantics and ownership/resource contracts |
 | `docs/PG-DUMP-CUSTOM-FORMAT.md` | Upstream-derived archive-format notes |
 | `docs/COPY-TEXT.md` | COPY text byte and row contract |
 | `docs/COMPATIBILITY.md` | Target versus fixture-verified support and fixture provenance |
-| `ROADMAP.md` | Delivery order and release sequencing |
+| `docs/RAW-EXTRACTION.md` | Raw extraction byte-budget and partial-output contract |
+| `docs/PACKAGING.md` | Package/license/dependency/runtime boundary |
+| `docs/V0.1-RELEASE-AUDIT.md` | Final v0.1 Definition of Done evidence mapping |
+| `ROADMAP.md` | Delivered v0.1 slices and future candidate scope |
 | `docs/adr/` | Accepted design decisions and supersession history |
 
 When a change affects more than one responsibility, update the smallest complete set and check terminology across those documents before opening a PR.
@@ -86,7 +89,7 @@ purpose = ["header", "toc", "gzip", "copy-text"]
 expected_tables = ["public.orders"]
 ```
 
-The committed Alpha 1 inventory and exact regeneration process are documented in [tests/fixtures/README.md](tests/fixtures/README.md).
+The committed v0.1 inventory and exact regeneration process are documented in [tests/fixtures/README.md](tests/fixtures/README.md).
 
 Large benchmark data should normally be generated reproducibly rather than committed.
 
@@ -113,6 +116,7 @@ Run the same baseline quality gates used by CI before opening a pull request:
 
 ```bash
 cargo fmt --check
+python3 scripts/verify-doc-links.py
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
@@ -124,7 +128,7 @@ Verify the declared MSRV separately:
 cargo +1.85.0 check --workspace --all-targets --all-features
 ```
 
-Parser changes should additionally run relevant fixture, differential, fuzz/regression, and benchmark checks as they become available.
+Parser changes should additionally run the relevant fixture, differential, fuzz/regression, and benchmark checks described by the repository's current CI and evidence documentation.
 
 Documentation-only changes should verify at least:
 
