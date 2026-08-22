@@ -1,12 +1,9 @@
 use pgdumpx::{Archive, CopyRowReader, PgDumpError};
 use std::io::Cursor;
 
-const TRUNCATED_MAGIC: &[u8] =
-    include_bytes!("../../../fuzz/corpus/archive_open/truncated_magic");
-const OVERSIZED_TOC: &[u8] =
-    include_bytes!("../../../fuzz/corpus/archive_open/oversized_toc.dump");
-const DANGLING_ESCAPE: &[u8] =
-    include_bytes!("../../../fuzz/corpus/copy_rows/dangling_escape");
+const TRUNCATED_MAGIC: &[u8] = include_bytes!("../../../fuzz/corpus/archive_open/truncated_magic");
+const OVERSIZED_TOC: &[u8] = include_bytes!("../../../fuzz/corpus/archive_open/oversized_toc.dump");
+const DANGLING_ESCAPE: &[u8] = include_bytes!("../../../fuzz/corpus/copy_rows/dangling_escape");
 const MALFORMED_TERMINATOR: &[u8] =
     include_bytes!("../../../fuzz/corpus/copy_rows/malformed_terminator");
 
