@@ -38,6 +38,24 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
+  generate-insert-fixture:
+    name: Generate INSERT fixture artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Generate official PostgreSQL 18.4 INSERT fixture
+        run: bash scripts/generate-alpha3-insert-fixture.sh
+
+      - name: Upload fixture artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg18-none-insert-basic
+          path: |
+            tests/fixtures/archives/pg18-none-insert-basic.dump
+            tests/fixtures/archives/pg18-none-insert-basic.provenance
+
   lz4-disabled:
     name: LZ4 backend disabled
     runs-on: ubuntu-latest
