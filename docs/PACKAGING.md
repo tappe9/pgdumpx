@@ -1,6 +1,8 @@
 # Packaging and dependency constraints
 
-This document records the v0.1 publish-time package and dependency boundary. It is intentionally limited to packaging, licensing, and runtime/build constraints; the final Definition of Done and cross-document status audit remains separate.
+Status: **v0.1 package, license, dependency, and runtime boundary verified**
+
+This document records the v0.1 publish-time package and dependency boundary verified by Issue #35 / PR #54. The final cross-document Definition of Done mapping is recorded separately in `V0.1-RELEASE-AUDIT.md`.
 
 ## Published packages
 
@@ -18,7 +20,7 @@ Both packages inherit the workspace version, edition, Rust version, license, rep
 - repository: `https://github.com/tappe9/pgdumpx`;
 - README: the workspace `README.md`.
 
-The package file list must contain `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`. The package-local license copies must exactly match the repository-root license texts. Repository fixtures, generated dump archives, and benchmark datasets are not distribution inputs and must not appear in either `.crate` package.
+The package file list contains `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`. The package-local license copies exactly match the repository-root license texts. Repository fixtures, generated dump archives, and benchmark datasets are not distribution inputs and do not appear in either `.crate` package.
 
 ## Compression and feature boundary
 
@@ -46,9 +48,9 @@ default features
 
 ## PostgreSQL runtime boundary
 
-The production library and CLI read the custom archive format directly. The default runtime dependency graph must not contain PostgreSQL client/runtime packages such as `libpq`, `pq-sys`, `postgres`, or `tokio-postgres`.
+The production library and CLI read the custom archive format directly. The default runtime dependency graph does not contain PostgreSQL client/runtime packages such as `libpq`, `pq-sys`, `postgres`, or `tokio-postgres`.
 
-A running PostgreSQL server, `libpq`, `pg_restore`, `pg_dump`, `psql`, or another PostgreSQL executable is not required to run the released library or CLI. PostgreSQL tools may still be used by repository-only fixture generation or differential-test scripts; those development/test tools are not runtime dependencies of the packaged crates.
+A running PostgreSQL server, `libpq`, `pg_restore`, `pg_dump`, `psql`, or another PostgreSQL executable is not required to run the v0.1 library or CLI. PostgreSQL tools may still be used by repository-only fixture generation or differential-test scripts; those development/test tools are not runtime dependencies of the packaged crates.
 
 ## Dependency license policy
 
@@ -91,4 +93,4 @@ The audit performs all of the following without publishing:
 
 Release packaging CI intentionally follows the repository's stable toolchain so it can use current Cargo's multi-package packaging support. The v0.1 MSRV remains Rust 1.85.0 and is enforced separately by the normal workspace CI.
 
-Publishing crates, creating tags/releases, and performing the final v0.1 documentation/Definition-of-Done audit are outside this preflight.
+Publishing crates, creating tags, and creating release artifacts remain outside this preflight and outside the Issue #36 audit.
