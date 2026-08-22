@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -53,7 +53,12 @@ class AuditError(RuntimeError):
     pass
 
 
-def run(*args: str, cwd: Path = ROOT, capture: bool = True) -> subprocess.CompletedProcess[str]:
+def run(
+    *args: str,
+    cwd: Path = ROOT,
+    capture: bool = True,
+    display_output: bool = True,
+) -> subprocess.CompletedProcess[str]:
     print("+", " ".join(args), flush=True)
     result = subprocess.run(
         args,
@@ -61,21 +66,40 @@ def run(*args: str, cwd: Path = ROOT, capture: bool = True) -> subprocess.Comple
         check=False,
         text=True,
         stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.STDOUT if capture else None,
+        stderr=subprocess.PIPE if capture else None,
     )
-    if capture and result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if capture and display_output:
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.stderr:
+            print(
+                result.stderr,
+                end="" if result.stderr.endswith("\n") else "\n",
+                file=sys.stderr,
+            )
     if result.returncode != 0:
+        if capture and not display_output:
+            if result.stdout:
+                print(result.stdout, file=sys.stderr)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
         raise AuditError(f"command failed with exit code {result.returncode}: {' '.join(args)}")
     return result
 
 
 def clean_status() -> str:
-    return run("git", "status", "--porcelain").stdout.strip()
+    return run("git", "status", "--porcelain", display_output=False).stdout.strip()
 
 
 def cargo_metadata() -> dict:
-    result = run("cargo", "metadata", "--format-version", "1", "--locked")
+    result = run(
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--locked",
+        display_output=False,
+    )
     return json.loads(result.stdout)
 
 
@@ -149,7 +173,8 @@ def license_is_acceptable(expression: str) -> bool:
         value = parse_and()
         while index < len(tokens) and tokens[index] == "OR":
             index += 1
-            value = value or parse_and()
+            rhs = parse_and()
+            value = value or rhs
         return value
 
     def parse_and() -> bool:
@@ -157,7 +182,8 @@ def license_is_acceptable(expression: str) -> bool:
         value = parse_factor()
         while index < len(tokens) and tokens[index] == "AND":
             index += 1
-            value = value and parse_factor()
+            rhs = parse_factor()
+            value = value and rhs
         return value
 
     def parse_factor() -> bool:
@@ -240,7 +266,15 @@ def verify_runtime_dependencies(metadata: dict) -> None:
 
 
 def package_file_list(package: str) -> set[str]:
-    result = run("cargo", "package", "--list", "-p", package, "--locked")
+    result = run(
+        "cargo",
+        "package",
+        "--list",
+        "-p",
+        package,
+        "--locked",
+        display_output=False,
+    )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
@@ -261,6 +295,22 @@ def verify_package_contents(package: str) -> None:
             + "\n  ".join(rejected)
         )
 
+    print(f"{package}: {len(files)} packaged files")
+    for path in sorted(files):
+        print(f"  {path}")
+
+
+def extract_crate(crate_path: Path, destination: Path) -> None:
+    if not crate_path.is_file():
+        raise AuditError(f"expected package archive was not created: {crate_path}")
+    with tarfile.open(crate_path, "r:gz") as archive:
+        root = destination.resolve()
+        for member in archive.getmembers():
+            target = (destination / member.name).resolve()
+            if root not in target.parents and target != root:
+                raise AuditError(f"unsafe path in generated .crate archive: {member.name}")
+        archive.extractall(destination)
+
 
 def verify_package_builds() -> None:
     # The library can be fully verified directly before first publication.
@@ -273,17 +323,15 @@ def verify_package_builds() -> None:
     run("cargo", "package", "-p", "pgdumpx-cli", "--locked", "--no-verify")
 
     package_root = ROOT / "target" / "package"
-    library_dir = package_root / f"pgdumpx-{VERSION}"
-    cli_dir = package_root / f"pgdumpx-cli-{VERSION}"
-    if not library_dir.is_dir() or not cli_dir.is_dir():
-        raise AuditError("cargo package did not leave the expected extracted package directories")
+    library_crate = package_root / f"pgdumpx-{VERSION}.crate"
+    cli_crate = package_root / f"pgdumpx-cli-{VERSION}.crate"
 
     with tempfile.TemporaryDirectory(prefix="pgdumpx-package-verify-") as temp_dir:
         temp = Path(temp_dir)
-        staged_library = temp / library_dir.name
-        staged_cli = temp / cli_dir.name
-        shutil.copytree(library_dir, staged_library)
-        shutil.copytree(cli_dir, staged_cli)
+        extract_crate(library_crate, temp)
+        extract_crate(cli_crate, temp)
+        staged_library = temp / f"pgdumpx-{VERSION}"
+        staged_cli = temp / f"pgdumpx-cli-{VERSION}"
 
         manifest = staged_cli / "Cargo.toml"
         text = manifest.read_text(encoding="utf-8")
@@ -364,7 +412,7 @@ def main() -> int:
             raise AuditError(
                 "packaging verification modified the source tree unexpectedly:\n" + after
             )
-    except AuditError as error:
+    except (AuditError, json.JSONDecodeError, OSError, tarfile.TarError) as error:
         print(f"packaging audit failed: {error}", file=sys.stderr)
         return 1
 
