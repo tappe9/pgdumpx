@@ -18,7 +18,7 @@ Both packages inherit the workspace version, edition, Rust version, license, rep
 - repository: `https://github.com/tappe9/pgdumpx`;
 - README: the workspace `README.md`.
 
-The package file list must contain `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`. Repository fixtures, generated dump archives, and benchmark datasets are not distribution inputs and must not appear in either `.crate` package.
+The package file list must contain `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`. The package-local license copies must exactly match the repository-root license texts. Repository fixtures, generated dump archives, and benchmark datasets are not distribution inputs and must not appear in either `.crate` package.
 
 ## Compression and feature boundary
 
@@ -80,15 +80,15 @@ python3 scripts/verify-release-packaging.py
 The audit performs all of the following without publishing:
 
 1. loads locked Cargo metadata and verifies package metadata;
-2. traverses the default CLI normal-runtime dependency graph;
-3. checks dependency license expressions, PostgreSQL runtime exclusions, and native `links` constraints;
-4. checks `cargo package --list` for both intended packages;
-5. verifies required README/license files and rejects fixture/benchmark data in package contents;
-6. checks the default and reduced-feature library builds plus the default CLI compression contract;
-7. fully runs `cargo package` verification for `pgdumpx`;
-8. creates the production `pgdumpx-cli` package with `--no-verify`, then verifies its packaged source against the just-packaged sibling `pgdumpx` crate because `pgdumpx 0.1.0` is intentionally not present on crates.io before the first release;
+2. verifies both package-local license files are byte-for-byte copies of the repository-root licenses;
+3. traverses the default CLI normal-runtime dependency graph;
+4. checks dependency license expressions, PostgreSQL runtime exclusions, and native `links` constraints;
+5. checks `cargo package --list` for both intended packages;
+6. verifies required README/license files and rejects fixture/benchmark data in package contents;
+7. checks the default and reduced-feature library builds plus the default CLI compression contract;
+8. runs `cargo package --workspace --locked` so current stable Cargo assembles and verifies both interdependent release packages together before `pgdumpx 0.1.0` exists on crates.io;
 9. verifies that the source tree remains unchanged by the preflight.
 
-The CLI sibling substitution changes only the dependency source inside a temporary verification directory. It does not change the normalized packaged CLI features or source. Once `pgdumpx 0.1.0` exists in the registry, ordinary Cargo package verification can resolve that dependency directly.
+Release packaging CI intentionally follows the repository's stable toolchain so it can use current Cargo's multi-package packaging support. The v0.1 MSRV remains Rust 1.85.0 and is enforced separately by the normal workspace CI.
 
 Publishing crates, creating tags/releases, and performing the final v0.1 documentation/Definition-of-Done audit are outside this preflight.
