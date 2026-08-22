@@ -1,14 +1,14 @@
 # pgdumpx Compatibility Matrix
 
-Status: **Alpha 3 archive 1.14–1.16 metadata and compatibility matrix is fixture- and differential-verified**
+Status: **v0.1 archive 1.14–1.16 compatibility matrix is fixture- and differential-verified**
 
-This document separates intended v0.1 compatibility from compatibility that has actually been demonstrated by official fixtures and production-path tests.
+This document separates the v0.1 support contract from compatibility that has actually been demonstrated by official fixtures and production-path tests.
 
 The public production path verifies archive 1.14, 1.15, and 1.16 header/TOC parsing, version-aware public TOC metadata, metadata indexes, validated selected-entry seeking, custom chunk framing, and selected-entry streaming for the compression algorithms covered below. The committed compatibility corpus is also compared against official PostgreSQL `pg_restore` output in CI.
 
 ## Archive format versions
 
-| Archive version | v0.1 target | Fixture-verified | Notes |
+| Archive version | v0.1 support | Fixture-verified | Notes |
 |---|---:|---:|---|
 | 1.14 | Yes | Metadata + none/gzip selected entry + differential | Official PostgreSQL 15.19 fixtures verify the legacy compression-level header representation and the 1.14 TOC layout. |
 | 1.15 | Yes | Metadata + none/gzip selected entry + differential | Official PostgreSQL 16.15 fixtures verify explicit compression-algorithm metadata and the 1.15 TOC layout. |
@@ -22,7 +22,7 @@ The implemented version gates mirror the supported upstream layouts: archive 1.1
 
 ## Compression
 
-| Compression | v0.1 target | Fixture-verified | Streaming requirement | Delivery order |
+| Compression | v0.1 support | Fixture-verified | Streaming requirement | Delivery history |
 |---|---:|---:|---:|---|
 | none | Yes | Selected-entry streaming + differential | Yes | First vertical slice / version compatibility |
 | gzip | Yes | Selected-entry streaming + differential | Yes | First vertical slice / version compatibility |
@@ -33,7 +33,7 @@ Committed official PostgreSQL fixtures exercise all four v0.1 compression algori
 
 The compatibility differential job builds the CLI with all compression backends and compares selected table-data output from every committed fixture with PostgreSQL 18.4 `pg_restore`. COPY logical rows are compared byte-for-byte; the INSERT fixture's complete selected INSERT statement region is compared byte-for-byte.
 
-A compression algorithm is only marked verified after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library. Version-specific compression representation is tested independently from the decompressor implementation.
+A compression algorithm is marked verified only after a reference-generated fixture is opened and its selected entry is streamed through the same production decoder path used by the library. Version-specific compression representation is tested independently from the decompressor implementation.
 
 ### Compression backend and feature policy
 
@@ -51,7 +51,7 @@ Normal CI covers the following feature and evidence matrix:
 
 | Area | CI coverage |
 |---|---|
-| Baseline quality | `fmt`, `clippy -D warnings`, full workspace tests, and warning-free rustdoc on stable Ubuntu |
+| Baseline quality | `fmt`, repository-local Markdown links, `clippy -D warnings`, full workspace tests, and warning-free rustdoc on stable Ubuntu |
 | Stable platforms | Full all-feature workspace tests on Ubuntu, macOS, and Windows |
 | Default CLI | Default-feature CLI extraction against none, gzip, LZ4, and Zstandard official fixtures on every stable platform runner |
 | Reduced library features | default, no optional compression, LZ4-only, and Zstandard-only builds plus typed disabled-backend behavior on stable Ubuntu |
@@ -77,7 +77,7 @@ See [COPY-TEXT.md](COPY-TEXT.md) for the row parser contract.
 
 ## Source compatibility
 
-The initial high-performance archive API requires:
+The v0.1 high-performance archive API requires:
 
 ```rust
 Read + Seek
@@ -85,7 +85,7 @@ Read + Seek
 
 The primary supported use case is a seekable PostgreSQL Custom Format archive with usable recorded entry positions. A general non-seekable sequential archive API is deferred.
 
-The default build must not require a running PostgreSQL server, `libpq`, or `pg_restore` at runtime. PostgreSQL executables are used only by fixture-generation and differential-test tooling.
+The default build does not require a running PostgreSQL server, `libpq`, or `pg_restore` at runtime. PostgreSQL executables are used only by fixture-generation and differential-test tooling.
 
 ## Verification policy
 
@@ -101,7 +101,7 @@ A compatibility cell moves to a concrete verified state only when all relevant e
 
 All nine committed official fixtures satisfy these requirements for the claims recorded in this document. Focused malformed/non-UTF-8 tests complement the official corpus for cases that are not appropriate valid-format fixture requirements.
 
-The repository should avoid broad claims such as “supports PostgreSQL X–Y” when the actual evidence is narrower than the archive-version and feature cells above.
+The repository avoids broad claims such as “supports PostgreSQL X–Y” when the actual evidence is narrower than the archive-version and feature cells above.
 
 ## Fixture provenance manifest
 
