@@ -9,6 +9,32 @@ const INITIAL_ROW_CAPACITY_BYTES: usize = 8 * 1024;
 const COPY_TERMINATOR: &[u8] = b"\\.";
 
 /// A borrowed logical field from a PostgreSQL COPY text row.
+///
+/// This type is byte-oriented: valid UTF-8 is not required. [`FieldRef::Bytes`]
+/// contains the logical bytes after COPY-text backslash decoding, while the exact
+/// unescaped `\N` field spelling is represented by [`FieldRef::Null`]. An empty
+/// field is therefore `Bytes(b"")`, not `Null`.
+///
+/// The bytes borrow the reusable storage of the [`Row`] that produced them and
+/// cannot outlive that row.
+///
+/// # Example
+///
+/// ```
+/// use pgdumpx::{CopyRowReader, FieldRef, PgDumpError};
+/// use std::io::Cursor;
+///
+/// # fn main() -> Result<(), PgDumpError> {
+/// let input = b"hello\\tworld\t\\N\n\\.\n";
+/// let mut rows = CopyRowReader::new(Cursor::new(input));
+/// let row = rows.next_row()?.expect("one data row");
+///
+/// assert_eq!(row.field(0), Some(FieldRef::Bytes(b"hello\tworld")));
+/// assert_eq!(row.field(1), Some(FieldRef::Null));
+/// assert!(rows.next_row()?.is_none());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldRef<'a> {
     /// The raw field spelling was exactly PostgreSQL's `\N` NULL marker.
@@ -18,6 +44,9 @@ pub enum FieldRef<'a> {
 }
 
 /// An owned logical field copied from one matched COPY text row.
+///
+/// [`OwnedField::Bytes`] has the same post-unescape byte semantics as
+/// [`FieldRef::Bytes`], but owns its storage so it can outlive the row reader.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnedField {
     /// A PostgreSQL COPY NULL value.
@@ -27,6 +56,10 @@ pub enum OwnedField {
 }
 
 /// One owned COPY text row that can outlive its streaming reader.
+///
+/// `find_first` materializes only the matching row into this type; non-matching
+/// rows continue to use the lending [`Row`] representation. Field order is the
+/// original COPY order and values keep the byte-oriented semantics of [`FieldRef`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwnedRow {
     fields: Vec<OwnedField>,
@@ -44,7 +77,7 @@ impl OwnedRow {
         self.fields.get(index)
     }
 
-    /// Returns all owned fields in column order.
+    /// Returns all owned fields in COPY column order.
     pub fn fields(&self) -> &[OwnedField] {
         &self.fields
     }
@@ -82,9 +115,11 @@ impl OwnedRow {
 
 /// A borrowed COPY text row backed by reusable parser storage.
 ///
-/// The row remains valid until the originating [`CopyRowReader`] is mutably
-/// borrowed again. This lending shape intentionally does not implement
-/// [`Iterator`].
+/// The row and all [`FieldRef::Bytes`] slices obtained from it remain valid only
+/// until the originating [`CopyRowReader`] (or a wrapper such as
+/// [`crate::TableRowReader`]) is mutably borrowed again. This lending shape is
+/// why row readers expose `next_row(&mut self)` instead of implementing
+/// [`Iterator`]. Use [`OwnedRow`] when data must survive reader advancement.
 pub struct Row<'a> {
     number: u64,
     bytes: &'a [u8],
@@ -92,7 +127,7 @@ pub struct Row<'a> {
 }
 
 impl Row<'_> {
-    /// Returns the number of fields in this row.
+    /// Returns the number of logical fields in this row.
     pub fn len(&self) -> usize {
         self.fields.len()
     }
@@ -102,12 +137,17 @@ impl Row<'_> {
         self.fields.is_empty()
     }
 
-    /// Returns one field by zero-based index.
+    /// Returns one logical field by zero-based index.
+    ///
+    /// `None` means only that `index` is outside this row; SQL NULL is represented
+    /// explicitly as [`FieldRef::Null`].
     pub fn field(&self, index: usize) -> Option<FieldRef<'_>> {
         self.fields.get(index).map(|span| span.resolve(self.bytes))
     }
 
-    /// Iterates over all borrowed fields in column order.
+    /// Iterates over all borrowed logical fields in COPY column order.
+    ///
+    /// The yielded fields borrow this row and therefore share its lending lifetime.
     pub fn fields(&self) -> impl ExactSizeIterator<Item = FieldRef<'_>> + FusedIterator + '_ {
         self.fields.iter().map(move |span| span.resolve(self.bytes))
     }
@@ -192,9 +232,17 @@ impl ScanBudget {
 
 /// A lending, byte-oriented parser for PostgreSQL COPY text rows.
 ///
-/// Input is consumed incrementally from any [`Read`] implementation. The
-/// parser stores only the current physical row and its decoded logical fields;
-/// it never buffers the complete COPY stream.
+/// Input is consumed incrementally from any [`Read`] implementation. The parser
+/// buffers only the current physical row plus decoded logical fields; it never
+/// buffers the complete COPY stream. Archive framing and decompression are not
+/// performed by this standalone parser; [`crate::Archive::table_rows`] composes
+/// those layers for custom-format table data.
+///
+/// Structural [`Limits`] and total-work [`ScanLimits`] are distinct. Structural
+/// limits bound one row/field layout. Constructor-level scan limits accumulate
+/// across subsequent row operations on this reader. Operation-level limits passed
+/// to [`CopyRowReader::find_first_with_limits`] add a second budget measured from
+/// that call's current stream position.
 pub struct CopyRowReader<R> {
     input: CopyInput<R>,
     limits: Limits,
@@ -207,25 +255,34 @@ pub struct CopyRowReader<R> {
 }
 
 impl<R: Read> CopyRowReader<R> {
-    /// Creates a COPY text row reader using finite compatibility-oriented limits.
+    /// Creates a reader with finite default structural limits and unlimited scan work.
     pub fn new(reader: R) -> Self {
         Self::with_limits(reader, Limits::default())
     }
 
-    /// Creates a COPY text row reader using caller-supplied structural limits.
+    /// Creates a reader using caller-supplied structural limits.
     ///
     /// Only the row-byte and fields-per-row members are used by this standalone
     /// parser. The same [`Limits`] values are used by [`crate::Archive::table_rows`].
+    /// Scan work remains unlimited unless configured separately.
     pub fn with_limits(reader: R, limits: Limits) -> Self {
         Self::with_limits_and_scan_limits(reader, limits, ScanLimits::unlimited())
     }
 
-    /// Creates a COPY text row reader using caller-supplied scan work budgets.
+    /// Creates a reader with finite default structural limits and scan work budgets.
+    ///
+    /// These scan budgets are reader-wide: consumed rows and parser-consumed bytes
+    /// accumulate across successive `next_row` and search calls.
     pub fn with_scan_limits(reader: R, scan_limits: ScanLimits) -> Self {
         Self::with_limits_and_scan_limits(reader, Limits::default(), scan_limits)
     }
 
-    /// Creates a COPY text row reader using structural and total-work limits.
+    /// Creates a COPY reader using both structural and reader-wide scan limits.
+    ///
+    /// A scan row limit of `N` permits at most `N` complete rows. A scan byte limit
+    /// of `N` permits at most `N` decompressed bytes consumed by this parser. The
+    /// first byte or row that would make the corresponding count exceed `N` causes
+    /// a typed resource error and is not exposed as a row.
     pub fn with_limits_and_scan_limits(reader: R, limits: Limits, scan_limits: ScanLimits) -> Self {
         let input = CopyInput::new(reader);
         let scan_budget = ScanBudget::new(scan_limits, input.consumed());
@@ -264,18 +321,38 @@ impl<R: Read> CopyRowReader<R> {
     /// Parses and lends the next logical row.
     ///
     /// `Ok(None)` is returned after a standalone `\.` terminator or after the
-    /// underlying COPY stream reaches EOF. A returned row borrows reusable
-    /// parser storage, so another call is rejected by the borrow checker until
-    /// that row is no longer used.
+    /// underlying COPY stream reaches EOF. A returned row borrows reusable parser
+    /// storage, so Rust prevents another mutable operation on this reader while
+    /// that row is still used.
+    ///
+    /// ```compile_fail
+    /// use pgdumpx::{CopyRowReader, PgDumpError};
+    /// use std::io::Cursor;
+    ///
+    /// fn cannot_hold_two_rows() -> Result<(), PgDumpError> {
+    ///     let mut rows = CopyRowReader::new(Cursor::new(b"a\nb\n"));
+    ///     let first = rows.next_row()?.unwrap();
+    ///     let _second = rows.next_row()?;
+    ///     println!("{first:?}");
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError> {
         let mut operation_budget = None;
         self.next_row_with_budget(&mut operation_budget)
     }
 
-    /// Returns the first row for which `predicate` evaluates to `true`.
+    /// Sequentially scans from the current reader position for the first match.
     ///
-    /// This compatibility path has no additional operation-level scan budget;
-    /// constructor-level limits, if any, still apply.
+    /// The predicate is called once for each fully parsed row that is within the
+    /// reader-wide scan budget. On the first `true`, only that row is copied into
+    /// [`OwnedRow`] and scanning stops immediately. If the remaining stream ends
+    /// without a match, this returns `Ok(None)`.
+    ///
+    /// This is not an indexed lookup. Worst-case unrestricted work is proportional
+    /// to the remaining COPY stream. No additional operation-level budget is added
+    /// by this convenience method; constructor-level [`ScanLimits`], if any, still
+    /// apply.
     pub fn find_first<F>(&mut self, predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
     where
         F: FnMut(&Row<'_>) -> bool,
@@ -283,11 +360,16 @@ impl<R: Read> CopyRowReader<R> {
         self.find_first_with_limits(ScanLimits::unlimited(), predicate)
     }
 
-    /// Returns the first matching row while enforcing operation-level work budgets.
+    /// Sequentially scans for the first match with an additional operation budget.
     ///
-    /// The parser checks decompressed bytes immediately after consuming each
-    /// physical COPY byte and checks complete rows before decoding or invoking
-    /// the predicate. A crossing row is never exposed to `predicate`.
+    /// `scan_limits` is measured from this call's current stream position and is
+    /// enforced in addition to any reader-wide limits supplied at construction.
+    /// Decompressed-byte accounting advances as physical COPY bytes are consumed by
+    /// the parser, including separators and terminator bytes; decoder or buffered
+    /// read-ahead that has not been consumed does not count. Complete rows are
+    /// counted before decoding or predicate invocation, so a row that crosses either
+    /// budget is never exposed to `predicate`. The matching row itself counts toward
+    /// both budgets, and no bytes after a successful match are consumed by the scan.
     pub fn find_first_with_limits<F>(
         &mut self,
         scan_limits: ScanLimits,

@@ -4,7 +4,11 @@ use crate::{
 };
 use std::str::Utf8Error;
 
-/// The archive format version stored in a PostgreSQL custom archive header.
+/// The custom-archive format version stored in a PostgreSQL archive header.
+///
+/// `pgdumpx` v0.1 accepts archive versions 1.14 through 1.16 when opening an archive.
+/// [`ArchiveVersion::new`] is a value constructor only; constructing another version
+/// does not imply that [`crate::Archive::open`] supports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ArchiveVersion {
     major: u8,
@@ -13,7 +17,7 @@ pub struct ArchiveVersion {
 }
 
 impl ArchiveVersion {
-    /// Creates a version from its three on-disk components.
+    /// Creates a version value from its three on-disk components.
     pub const fn new(major: u8, minor: u8, revision: u8) -> Self {
         Self {
             major,
@@ -38,7 +42,15 @@ impl ArchiveVersion {
     }
 }
 
-/// A byte-oriented archive metadata string.
+/// An owned, byte-oriented archive metadata string.
+///
+/// PostgreSQL custom-archive strings are not forced through UTF-8 by the core API.
+/// [`ArchiveString::as_bytes`] always returns the parsed bytes. Callers that require
+/// text can opt into [`ArchiveString::to_str`], which is fallible and does not mutate
+/// or normalize the stored value.
+///
+/// Where the archive grammar permits NULL, surrounding accessors return `Option` so
+/// encoded NULL remains distinct from an encoded empty string.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ArchiveString(Vec<u8>);
 
@@ -47,18 +59,26 @@ impl ArchiveString {
         Self(bytes)
     }
 
-    /// Returns the exact metadata bytes stored in the archive.
+    /// Returns the exact parsed metadata bytes without performing text conversion.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Interprets the metadata as UTF-8 without changing the stored bytes.
+    ///
+    /// Invalid UTF-8 returns [`Utf8Error`]; it is not a structural archive error at the
+    /// byte-oriented metadata layer.
     pub fn to_str(&self) -> Result<&str, Utf8Error> {
         std::str::from_utf8(&self.0)
     }
 }
 
-/// Compression algorithm declared by an archive header.
+/// Compression algorithm declared by a supported custom archive header.
+///
+/// The enum describes archive metadata and does not expose implementation-specific
+/// decoder types. LZ4 and Zstandard entry decoding is feature-gated; a recognized
+/// archive compression mode whose backend is disabled fails selected-entry access with
+/// [`PgDumpError::UnsupportedEntryCompression`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
@@ -72,7 +92,10 @@ pub enum Compression {
     Zstd,
 }
 
-/// PostgreSQL's raw broken-down archive creation timestamp.
+/// PostgreSQL's raw broken-down archive creation timestamp fields.
+///
+/// These accessors intentionally expose the stored `struct tm`-style components rather
+/// than constructing a timezone-aware timestamp or normalizing calendar fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveTimestamp {
     second: i32,
@@ -105,43 +128,47 @@ impl ArchiveTimestamp {
         }
     }
 
-    /// Returns the `tm_sec` value stored by PostgreSQL.
+    /// Returns the stored `tm_sec` value.
     pub const fn second(&self) -> i32 {
         self.second
     }
 
-    /// Returns the `tm_min` value stored by PostgreSQL.
+    /// Returns the stored `tm_min` value.
     pub const fn minute(&self) -> i32 {
         self.minute
     }
 
-    /// Returns the `tm_hour` value stored by PostgreSQL.
+    /// Returns the stored `tm_hour` value.
     pub const fn hour(&self) -> i32 {
         self.hour
     }
 
-    /// Returns the `tm_mday` value stored by PostgreSQL.
+    /// Returns the stored `tm_mday` value.
     pub const fn day_of_month(&self) -> i32 {
         self.day_of_month
     }
 
-    /// Returns the zero-based `tm_mon` value stored by PostgreSQL.
+    /// Returns the zero-based stored `tm_mon` value.
     pub const fn month_zero_based(&self) -> i32 {
         self.month_zero_based
     }
 
-    /// Returns the `tm_year` value stored by PostgreSQL (years since 1900).
+    /// Returns the stored `tm_year` value (years since 1900).
     pub const fn year_since_1900(&self) -> i32 {
         self.year_since_1900
     }
 
-    /// Returns the `tm_isdst` value stored by PostgreSQL.
+    /// Returns the stored `tm_isdst` value.
     pub const fn is_dst(&self) -> i32 {
         self.is_dst
     }
 }
 
-/// Metadata parsed from the custom archive header.
+/// Metadata parsed from a supported PostgreSQL custom archive header.
+///
+/// Header metadata is available after [`crate::Archive::open`] without reading or
+/// decompressing selected entry bodies. String-valued fields remain byte-oriented via
+/// [`ArchiveString`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveHeader {
     version: ArchiveVersion,
@@ -203,23 +230,26 @@ impl ArchiveHeader {
         &self.created_at
     }
 
-    /// Returns the archive database name as bytes.
+    /// Returns the archive database name as a byte-oriented string.
     pub const fn database_name(&self) -> &ArchiveString {
         &self.database_name
     }
 
-    /// Returns the dumped server version as bytes.
+    /// Returns the dumped server version as a byte-oriented string.
     pub const fn server_version(&self) -> &ArchiveString {
         &self.server_version
     }
 
-    /// Returns the `pg_dump` version as bytes.
+    /// Returns the `pg_dump` version as a byte-oriented string.
     pub const fn dump_version(&self) -> &ArchiveString {
         &self.dump_version
     }
 }
 
-/// A positive PostgreSQL dump identifier.
+/// A positive PostgreSQL dump identifier parsed from the archive TOC.
+///
+/// `DumpId` values obtained from a successfully opened archive are validated positive
+/// `i32` values. v0.1 intentionally does not expose a public unchecked constructor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DumpId(i32);
 
@@ -228,13 +258,13 @@ impl DumpId {
         Self(value)
     }
 
-    /// Returns the integer value stored in the archive.
+    /// Returns the validated positive integer value stored in the archive.
     pub const fn as_i32(self) -> i32 {
         self.0
     }
 }
 
-/// The restore section assigned to a TOC entry.
+/// The restore section assigned to a TOC entry by PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Section {
@@ -248,19 +278,32 @@ pub enum Section {
     PostData,
 }
 
-/// The custom archive location state associated with a TOC entry.
+/// The custom-archive data-location state associated with a TOC entry.
+///
+/// The three states preserve PostgreSQL's distinction between explicitly having no data,
+/// having no recorded direct-seek position, and having a validated numeric offset value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DataLocation {
     /// PostgreSQL explicitly recorded that the TOC entry has no data block.
     NoData,
-    /// A data position exists conceptually but was not recorded.
+    /// A data position exists conceptually but no direct-seek offset was recorded.
     Unknown,
     /// The stored absolute archive byte offset.
     Offset(u64),
 }
 
 /// Metadata for one archive table-of-contents entry.
+///
+/// `TocEntry` is parsed eagerly during [`crate::Archive::open`]; its accessors do not
+/// decompress the associated payload. Archive strings remain byte-oriented. Optional
+/// strings preserve encoded NULL as `None` rather than conflating NULL with an encoded
+/// empty value.
+///
+/// Some TOC fields are version-dependent. In supported archive versions 1.14–1.16,
+/// `table_access_method` is part of the parsed layout. [`TocEntry::relation_kind`] is
+/// `None` for 1.14/1.15 where no relkind slot exists and `Some(value)` for 1.16,
+/// including `Some(0)` when zero was actually encoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TocEntry {
     id: DumpId,
@@ -327,12 +370,15 @@ impl TocEntry {
         }
     }
 
-    /// Returns this entry's dump identifier.
+    /// Returns this entry's validated dump identifier.
     pub const fn id(&self) -> DumpId {
         self.id
     }
 
     /// Returns whether PostgreSQL associated a data dumper with this entry.
+    ///
+    /// This metadata flag is not itself a promise that a directly readable offset exists;
+    /// inspect [`TocEntry::data_location`] or use the selected-entry APIs for that.
     pub const fn has_data(&self) -> bool {
         self.has_data
     }
@@ -362,7 +408,7 @@ impl TocEntry {
         &self.description
     }
 
-    /// Returns the exact entry-description bytes.
+    /// Returns the exact entry-description/object-type bytes.
     pub fn description_bytes(&self) -> &[u8] {
         self.description.as_bytes()
     }
@@ -373,16 +419,23 @@ impl TocEntry {
     }
 
     /// Returns the optional object definition exactly as stored in the TOC.
+    ///
+    /// `None` represents encoded NULL; `Some` may contain an empty byte string.
     pub const fn definition(&self) -> Option<&ArchiveString> {
         self.definition.as_ref()
     }
 
     /// Returns the optional DROP statement exactly as stored in the TOC.
+    ///
+    /// `None` represents encoded NULL rather than an empty statement.
     pub const fn drop_statement(&self) -> Option<&ArchiveString> {
         self.drop_statement.as_ref()
     }
 
     /// Returns the optional COPY statement exactly as stored in the TOC.
+    ///
+    /// The row-aware metadata layer derives COPY column layout/representation from this
+    /// value; callers do not need to parse it to use [`TableRef::columns`].
     pub const fn copy_statement(&self) -> Option<&ArchiveString> {
         self.copy_statement.as_ref()
     }
@@ -392,7 +445,7 @@ impl TocEntry {
         self.namespace.as_ref()
     }
 
-    /// Returns the optional namespace bytes.
+    /// Returns optional namespace bytes, preserving encoded NULL as `None`.
     pub fn namespace_bytes(&self) -> Option<&[u8]> {
         self.namespace.as_ref().map(ArchiveString::as_bytes)
     }
@@ -402,15 +455,17 @@ impl TocEntry {
         self.tablespace.as_ref()
     }
 
-    /// Returns the table access method when encoded by archive 1.14 and newer.
+    /// Returns the table access method encoded by supported archive layouts.
+    ///
+    /// Encoded NULL remains `None`; an encoded empty string remains `Some`.
     pub const fn table_access_method(&self) -> Option<&ArchiveString> {
         self.table_access_method.as_ref()
     }
 
     /// Returns PostgreSQL's encoded relation-kind value for archive 1.16 entries.
     ///
-    /// `None` means the field was not encoded by the archive version. A zero value
-    /// in a 1.16 archive remains `Some(0)` and is therefore distinct from absence.
+    /// `None` means the field was not encoded by the archive version (1.14/1.15).
+    /// A zero value in a 1.16 archive remains `Some(0)` and is distinct from absence.
     pub const fn relation_kind(&self) -> Option<i32> {
         self.relation_kind
     }
@@ -420,17 +475,17 @@ impl TocEntry {
         self.owner.as_ref()
     }
 
-    /// Returns the optional owner bytes without conflating NULL with an empty value.
+    /// Returns optional owner bytes without conflating NULL with an empty value.
     pub fn owner_bytes(&self) -> Option<&[u8]> {
         self.owner.as_ref().map(ArchiveString::as_bytes)
     }
 
-    /// Returns the entry's dependency dump IDs.
+    /// Returns this entry's validated dependency dump IDs in archive order.
     pub fn dependencies(&self) -> &[DumpId] {
         &self.dependencies
     }
 
-    /// Returns the custom archive data-location state.
+    /// Returns the custom archive data-location state recorded for this entry.
     pub const fn data_location(&self) -> DataLocation {
         self.data_location
     }
@@ -456,7 +511,16 @@ impl TocEntry {
     }
 }
 
-/// A metadata-only view of a table and its optional table-data entry.
+/// A metadata-only view of a `TABLE` and its optional related `TABLE DATA` entry.
+///
+/// This handle borrows metadata parsed and indexed by [`crate::Archive::open`]. Creating
+/// or querying it does not seek to or decompress table data. Schema, table, and column
+/// identities are byte-oriented.
+///
+/// Row representation and column-layout queries deliberately distinguish unavailable
+/// metadata, malformed COPY metadata, and unsupported table-data representations. Raw
+/// selected-entry access remains separate and may still be possible for a representation
+/// the row parser does not support.
 #[derive(Debug, Clone, Copy)]
 pub struct TableRef<'a> {
     table: &'a TocEntry,
@@ -477,43 +541,54 @@ impl<'a> TableRef<'a> {
         }
     }
 
-    /// Returns the table namespace bytes.
+    /// Returns table namespace bytes, or `None` when the `TABLE` namespace was NULL.
     pub fn schema(&self) -> Option<&[u8]> {
         self.table.namespace_bytes()
     }
 
-    /// Returns the table name bytes.
+    /// Returns exact table-name bytes.
     pub fn name(&self) -> &[u8] {
         self.table.name_bytes()
     }
 
-    /// Returns the dump ID of the `TABLE` entry.
+    /// Returns the dump ID of the `TABLE` TOC entry.
     pub const fn table_entry_id(&self) -> DumpId {
         self.table.id()
     }
 
     /// Returns the dump ID of the related `TABLE DATA` entry, when present.
+    ///
+    /// `None` means the metadata index found no related table-data entry.
     pub fn data_entry_id(&self) -> Option<DumpId> {
         self.data.map(TocEntry::id)
     }
 
     /// Returns the table-data representation derived from stored TOC metadata.
+    ///
+    /// `CopyText`, `Insert`, `Binary`, and other recognized states are values. If the
+    /// representation cannot be derived because metadata is absent or malformed, this
+    /// returns the corresponding typed metadata error instead.
     pub fn data_representation(&self) -> Result<TableDataRepresentation, PgDumpError> {
         let (data, metadata) = self.require_data_metadata()?;
         metadata.representation(data.id())
     }
 
-    /// Returns COPY columns in the exact row-field order stored by `pg_dump`.
+    /// Returns COPY columns in the exact positional order used by parsed rows.
     ///
-    /// Missing metadata, malformed COPY statements, and unsupported table-data
-    /// representations are reported distinctly. Raw entry access remains
-    /// available through [`crate::Archive::entry_reader`].
+    /// Missing table-data/COPY metadata, malformed COPY statements, and unsupported
+    /// table-data representations are reported distinctly. This metadata-only call does
+    /// not decompress data. Raw entry access remains available through
+    /// [`crate::Archive::entry_reader`] when the selected entry itself is readable.
     pub fn columns(&self) -> Result<&[Column], PgDumpError> {
         let (data, metadata) = self.require_data_metadata()?;
         metadata.columns(data.id())
     }
 
-    /// Resolves a byte-oriented COPY column name to its zero-based field index.
+    /// Resolves an exact byte-oriented COPY column name to its zero-based field index.
+    ///
+    /// `Ok(Some(index))` means valid metadata contained the name. `Ok(None)` means
+    /// metadata was valid but the name was absent. Metadata unavailable/malformed and
+    /// unsupported representations are returned as distinct typed errors.
     pub fn column_index(&self, name: &[u8]) -> Result<Option<usize>, PgDumpError> {
         let (data, metadata) = self.require_data_metadata()?;
         metadata.column_index(data.id(), name)

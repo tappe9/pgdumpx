@@ -15,7 +15,17 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-/// A read-only PostgreSQL custom-format archive with parsed metadata.
+/// A read-only PostgreSQL custom-format archive with eagerly parsed metadata.
+///
+/// Opening an archive parses and validates the supported 1.14–1.16 header, TOC, table
+/// relationships, and table-data metadata under [`Limits`]. Entry payloads are not
+/// decompressed during open. Raw or row-aware payload access happens later through a
+/// mutable borrow, which coordinates seeks on the owned [`Read`] + [`Seek`] source and
+/// prevents two independently seeking entry readers from sharing it at once.
+///
+/// Metadata and lookup identities are byte-oriented. Use [`Archive::table`] or
+/// [`Archive::table_rows`] with exact schema/name bytes; UTF-8 is not required by the
+/// Rust API.
 #[derive(Debug)]
 pub struct Archive<R> {
     reader: R,
@@ -27,12 +37,24 @@ pub struct Archive<R> {
 }
 
 impl<R: Read + Seek> Archive<R> {
-    /// Opens a supported archive-format 1.14–1.16 custom archive with finite default limits.
+    /// Opens a supported archive-format 1.14–1.16 custom archive.
+    ///
+    /// This uses compatibility-oriented finite [`Limits::default_compatible`] bounds.
+    /// Opening reads metadata and builds lookup indexes but does not decompress selected
+    /// entry bodies.
     pub fn open(reader: R) -> Result<Self, PgDumpError> {
         Self::open_with_limits(reader, Limits::default())
     }
 
-    /// Opens a supported archive-format 1.14–1.16 custom archive with caller-supplied limits.
+    /// Opens a supported archive-format 1.14–1.16 archive with structural limits.
+    ///
+    /// `limits` bounds TOC/string/dependency cardinalities and the COPY row/column
+    /// structures that are prepared or later parsed. These structural limits do not
+    /// impose a total row-scan or raw decompressed-output budget; see [`crate::ScanLimits`]
+    /// and [`crate::EntryReadLimits`] for those independent controls.
+    ///
+    /// The source is consumed sequentially only far enough to parse the archive header
+    /// and TOC. Payload decompression remains lazy.
     pub fn open_with_limits(reader: R, limits: Limits) -> Result<Self, PgDumpError> {
         let mut reader = ArchiveReader::new(reader);
         let parsed_header = read_header(&mut reader, limits)?;
@@ -55,10 +77,18 @@ impl<R: Read + Seek> Archive<R> {
         })
     }
 
-    /// Seeks to and opens one validated TOC entry as a streaming decompressed reader.
+    /// Opens one TOC entry as a validated streaming decompressed reader.
     ///
-    /// The recorded data offset, custom block type, and dump ID are validated before
-    /// any payload bytes are exposed. `Ok(None)` means the dump ID is not present.
+    /// `Ok(None)` means `id` is not present in the parsed TOC. For a present entry, the
+    /// recorded data-location state, absolute seek result, custom block type, and block
+    /// dump ID are validated before payload bytes are exposed. `NoData` and an unknown
+    /// direct-seek position are returned as distinct typed lookup errors.
+    ///
+    /// This low-level reader does not impose a decompressed-output budget. Trusted callers
+    /// may use it directly; callers that require a raw-output bound should use
+    /// [`Archive::entry_reader_with_limits`] or [`Archive::copy_entry_to`]. Decoder
+    /// availability is feature-dependent for LZ4 and Zstandard and is reported through
+    /// [`PgDumpError::UnsupportedEntryCompression`] when disabled.
     pub fn entry_reader(
         &mut self,
         id: DumpId,
@@ -76,11 +106,18 @@ impl<R: Read + Seek> Archive<R> {
         .map(Some)
     }
 
-    /// Opens the related table-data entry as a lending COPY text row stream.
+    /// Opens one table's related `TABLE DATA` entry as a lending COPY-text row stream.
     ///
-    /// Table lookup and representation validation use metadata parsed during
-    /// [`Archive::open`]. Unsupported row representations fail before the
-    /// selected payload is sought or parsed.
+    /// `schema` and `name` are matched exactly as bytes. Missing table identity and a
+    /// missing related table-data entry are distinct typed lookup failures. Representation
+    /// validation uses metadata parsed during [`Archive::open`]: INSERT, binary COPY, and
+    /// other unsupported row representations fail before the selected payload is sought
+    /// or parsed. Metadata-unavailable or malformed COPY layouts remain distinguishable
+    /// through row-reader metadata accessors.
+    ///
+    /// The resulting [`TableRowReader`] starts at the beginning of the selected entry,
+    /// streams decompression/COPY parsing, and lends each [`crate::Row`] from reusable
+    /// storage. The archive stays mutably borrowed for the reader's lifetime.
     pub fn table_rows(
         &mut self,
         schema: &[u8],
@@ -187,24 +224,31 @@ fn open_entry_reader<'a, R: Read + Seek>(
 }
 
 impl<R> Archive<R> {
-    /// Returns parsed archive-header metadata.
+    /// Returns parsed archive-header metadata without touching entry payloads.
     pub const fn header(&self) -> &ArchiveHeader {
         &self.header
     }
 
-    /// Returns all parsed TOC entries in archive order.
+    /// Returns all parsed TOC entries in archive order without payload I/O.
     pub fn entries(&self) -> &[TocEntry] {
         &self.entries
     }
 
-    /// Resolves one TOC entry by dump ID.
+    /// Resolves one parsed TOC entry by validated dump ID.
+    ///
+    /// This is a metadata-index lookup and performs no seek or decompression.
     pub fn entry(&self, id: DumpId) -> Option<&TocEntry> {
         self.index
             .entry_index(id)
             .and_then(|index| self.entries.get(index))
     }
 
-    /// Resolves a table by exact byte-oriented schema and name.
+    /// Resolves a table by exact byte-oriented schema and table name.
+    ///
+    /// This is a metadata-only lookup. `None` means no indexed `TABLE` entry has exactly
+    /// those bytes; no UTF-8 conversion, case folding, SQL identifier unquoting, or search
+    /// path resolution is performed. The returned [`TableRef`] can inspect related
+    /// table-data/column metadata without decompressing the table body.
     pub fn table(&self, schema: &[u8], name: &[u8]) -> Option<TableRef<'_>> {
         let table_id = self.index.table_id(schema, name)?;
         let table = self.entry(table_id)?;

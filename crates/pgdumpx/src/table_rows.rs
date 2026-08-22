@@ -4,11 +4,20 @@ use crate::{
 };
 use std::io::Read;
 
-/// A lending stream of COPY text rows for one selected table-data entry.
+/// A lending COPY-text row stream for one selected `TABLE DATA` entry.
 ///
-/// The reader composes validated archive seeking, custom chunk framing,
-/// streaming decompression, and COPY text parsing without buffering the
-/// complete entry or table data.
+/// [`crate::Archive::table_rows`] constructs this reader after exact byte-oriented
+/// table lookup and table-data representation validation. It composes validated
+/// selected-entry seeking, custom chunk framing, streaming decompression, and
+/// [`CopyRowReader`] without buffering the complete entry or table.
+///
+/// Rows borrow reusable parser storage. A [`Row`] and its field slices remain valid
+/// only until this reader is mutably borrowed again, so this type intentionally does
+/// not implement `Iterator`. Use [`OwnedRow`] when a row must outlive advancement.
+///
+/// A newly created `TableRowReader` starts at the beginning of the selected table-data
+/// body. After calls to [`TableRowReader::next_row`], searches continue from the current
+/// stream position; they do not rewind the archive.
 pub struct TableRowReader<'a, R> {
     data_id: DumpId,
     metadata: &'a TableDataMetadata,
@@ -41,22 +50,30 @@ impl<'a, R: Read> TableRowReader<'a, R> {
 
     /// Returns COPY columns in the exact positional order used by parsed rows.
     ///
-    /// Positional row iteration may remain available when column metadata is
-    /// unavailable or malformed; in that case this method returns the
-    /// corresponding typed metadata error.
+    /// This reads metadata parsed while the archive was opened; it does not scan the
+    /// entry body. `CopyColumnMetadataUnavailable`, `MalformedCopyStatement`, and
+    /// `UnsupportedTableDataRepresentation` remain distinct errors. Positional row
+    /// iteration can still be available for readable COPY data when only the column
+    /// metadata is unavailable or malformed.
     pub fn columns(&self) -> Result<&[Column], PgDumpError> {
         self.metadata.columns(self.data_id)
     }
 
     /// Resolves a byte-oriented COPY column name to its zero-based field index.
+    ///
+    /// `Ok(Some(index))` means valid metadata contained an exact byte match.
+    /// `Ok(None)` means the metadata was valid but that name was absent. Metadata
+    /// unavailable/malformed and unsupported representations are returned as distinct
+    /// typed errors rather than being conflated with a missing column.
     pub fn column_index(&self, name: &[u8]) -> Result<Option<usize>, PgDumpError> {
         self.metadata.column_index(self.data_id, name)
     }
 
     /// Parses and lends the next logical row from the selected table-data entry.
     ///
-    /// A returned row borrows reusable parser storage and remains valid only
-    /// until the next mutable operation on this reader.
+    /// A returned row borrows reusable parser storage and remains valid only until the
+    /// next mutable operation on this reader. Fields are byte-oriented logical COPY
+    /// values after escape decoding; they are not required to be UTF-8.
     ///
     /// ```compile_fail
     /// use pgdumpx::{PgDumpError, TableRowReader};
@@ -75,11 +92,17 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         self.rows.next_row()
     }
 
-    /// Returns the first row for which `predicate` evaluates to `true`.
+    /// Sequentially scans from the current stream position for the first match.
     ///
-    /// Non-matching rows continue to borrow reusable parser storage. Only the
-    /// matched row is copied into an [`OwnedRow`], and the stream is not read
-    /// after that match.
+    /// Non-matching rows reuse lending parser storage. On the first predicate result
+    /// of `true`, only that row is copied into [`OwnedRow`] and no later row is read.
+    /// `Ok(None)` means the remaining stream ended without a match.
+    ///
+    /// This is not an indexed row lookup. A fresh `TableRowReader` scans from the
+    /// beginning of the selected table-data entry; after prior row reads it scans from
+    /// the current position. A late or absent match can require processing all remaining
+    /// selected data. Use [`TableRowReader::find_first_with_limits`] to add an explicit
+    /// operation-level work budget.
     pub fn find_first<F>(&mut self, predicate: F) -> Result<Option<OwnedRow>, PgDumpError>
     where
         F: FnMut(&Row<'_>) -> bool,
@@ -87,11 +110,14 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         self.rows.find_first(predicate)
     }
 
-    /// Returns the first matching row while enforcing operation-level scan limits.
+    /// Sequentially scans for the first match with operation-level [`ScanLimits`].
     ///
-    /// Byte accounting uses physical decompressed COPY bytes consumed by the
-    /// parser, not decoder or buffered-reader lookahead and not logical decoded
-    /// field length.
+    /// The limits are measured from this call's current stream position. Row limits
+    /// count complete rows before predicate invocation; a crossing row is not exposed.
+    /// Byte accounting counts physical decompressed COPY bytes consumed by the parser,
+    /// including separators and terminators, rather than logical decoded field length or
+    /// decoder/buffered-reader lookahead. The matching row counts toward the budgets,
+    /// and the scan stops without consuming rows after a match.
     pub fn find_first_with_limits<F>(
         &mut self,
         scan_limits: ScanLimits,
