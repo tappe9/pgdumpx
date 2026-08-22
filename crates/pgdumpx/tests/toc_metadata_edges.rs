@@ -130,12 +130,7 @@ fn write_metadata_entry_with_description(
     output.extend_from_slice(&0_u64.to_le_bytes());
 }
 
-fn write_toc_prefix_through_tableam(
-    output: &mut Vec<u8>,
-    id: i32,
-    tag: &[u8],
-    description: &[u8],
-) {
+fn write_toc_prefix_through_tableam(output: &mut Vec<u8>, id: i32, tag: &[u8], description: &[u8]) {
     write_int(output, id);
     write_int(output, 0);
     write_string(output, Some(b"0"));
