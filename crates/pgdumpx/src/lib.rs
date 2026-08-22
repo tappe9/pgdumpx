@@ -1,7 +1,8 @@
 //! A bounded, byte-oriented reader for PostgreSQL custom-format dumps.
 //!
-//! The current v0.1 implementation opens exact archive version 1.16 metadata
-//! and streams validated entries compressed with PostgreSQL's none/gzip modes.
+//! The current v0.1 implementation opens supported archive versions 1.14 through 1.16,
+//! exposes version-aware TOC metadata, and streams validated entries compressed with
+//! PostgreSQL's none, gzip, LZ4, and Zstandard modes.
 
 #![forbid(unsafe_code)]
 
