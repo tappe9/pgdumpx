@@ -7,20 +7,23 @@ import json
 import re
 import subprocess
 import sys
-import tarfile
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "0.1.0"
 PROJECT_PACKAGES = {"pgdumpx", "pgdumpx-cli"}
+PACKAGE_DIRS = {
+    "pgdumpx": ROOT / "crates" / "pgdumpx",
+    "pgdumpx-cli": ROOT / "crates" / "pgdumpx-cli",
+}
 REQUIRED_METADATA = {
     "version": VERSION,
     "edition": "2024",
     "license": "MIT OR Apache-2.0",
     "repository": "https://github.com/tappe9/pgdumpx",
 }
-REQUIRED_PACKAGE_FILES = {"README.md", "LICENSE-APACHE", "LICENSE-MIT"}
+LICENSE_FILES = {"LICENSE-APACHE", "LICENSE-MIT"}
+REQUIRED_PACKAGE_FILES = {"README.md", *LICENSE_FILES}
 FORBIDDEN_PACKAGE_PARTS = {"fixtures", "benchmarks", "benchmark-data"}
 FORBIDDEN_RUNTIME_PACKAGES = {
     "libpq",
@@ -125,6 +128,19 @@ def verify_project_metadata(metadata: dict) -> None:
             raise AuditError(
                 f"{name}: rust-version={package.get('rust_version')!r}, expected '1.85.0'"
             )
+
+
+def verify_license_copies() -> None:
+    for license_name in sorted(LICENSE_FILES):
+        canonical = (ROOT / license_name).read_bytes()
+        for package, package_dir in PACKAGE_DIRS.items():
+            packaged_copy = package_dir / license_name
+            if not packaged_copy.is_file():
+                raise AuditError(f"{package}: missing package-local {license_name}")
+            if packaged_copy.read_bytes() != canonical:
+                raise AuditError(
+                    f"{package}: {license_name} differs from repository root copy"
+                )
 
 
 def normal_runtime_closure(metadata: dict, root_name: str) -> list[dict]:
@@ -300,47 +316,11 @@ def verify_package_contents(package: str) -> None:
         print(f"  {path}")
 
 
-def extract_crate(crate_path: Path, destination: Path) -> None:
-    if not crate_path.is_file():
-        raise AuditError(f"expected package archive was not created: {crate_path}")
-    with tarfile.open(crate_path, "r:gz") as archive:
-        root = destination.resolve()
-        for member in archive.getmembers():
-            target = (destination / member.name).resolve()
-            if root not in target.parents and target != root:
-                raise AuditError(f"unsafe path in generated .crate archive: {member.name}")
-        archive.extractall(destination)
-
-
 def verify_package_builds() -> None:
-    # The library can be fully verified directly before first publication.
-    run("cargo", "package", "-p", "pgdumpx", "--locked")
-
-    # The CLI depends on pgdumpx 0.1.0, which intentionally is not published yet.
-    # Create the production .crate with Cargo, then verify that packaged source by
-    # substituting only the just-packaged sibling crate for the unavailable registry
-    # copy. This preserves the packaged CLI manifest/features and production source.
-    run("cargo", "package", "-p", "pgdumpx-cli", "--locked", "--no-verify")
-
-    package_root = ROOT / "target" / "package"
-    library_crate = package_root / f"pgdumpx-{VERSION}.crate"
-    cli_crate = package_root / f"pgdumpx-cli-{VERSION}.crate"
-
-    with tempfile.TemporaryDirectory(prefix="pgdumpx-package-verify-") as temp_dir:
-        temp = Path(temp_dir)
-        extract_crate(library_crate, temp)
-        extract_crate(cli_crate, temp)
-        staged_library = temp / f"pgdumpx-{VERSION}"
-        staged_cli = temp / f"pgdumpx-cli-{VERSION}"
-
-        manifest = staged_cli / "Cargo.toml"
-        text = manifest.read_text(encoding="utf-8")
-        header = "[dependencies.pgdumpx]\n"
-        if header not in text:
-            raise AuditError("normalized CLI package manifest has no pgdumpx dependency table")
-        text = text.replace(header, header + f'path = "../{staged_library.name}"\n', 1)
-        manifest.write_text(text, encoding="utf-8")
-        run("cargo", "check", "--manifest-path", str(manifest), cwd=temp)
+    # Package the two interdependent release crates together. Current stable
+    # Cargo verifies workspace members through its temporary registry overlay,
+    # so this works before pgdumpx 0.1.0 exists on crates.io.
+    run("cargo", "package", "--workspace", "--locked")
 
 
 def verify_feature_builds() -> None:
@@ -400,6 +380,7 @@ def main() -> int:
 
         metadata = cargo_metadata()
         verify_project_metadata(metadata)
+        verify_license_copies()
         verify_runtime_dependencies(metadata)
         verify_unsafe_policy()
         for package in sorted(PROJECT_PACKAGES):
@@ -412,7 +393,7 @@ def main() -> int:
             raise AuditError(
                 "packaging verification modified the source tree unexpectedly:\n" + after
             )
-    except (AuditError, json.JSONDecodeError, OSError, tarfile.TarError) as error:
+    except (AuditError, json.JSONDecodeError, OSError) as error:
         print(f"packaging audit failed: {error}", file=sys.stderr)
         return 1
 
