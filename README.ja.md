@@ -2,7 +2,7 @@
 
 **PostgreSQL Custom Formatをrestoreせず、byte-orientedなrowとして安全にscanするRustライブラリ / CLI。**
 
-> ステータス: v0.1の実装とrelease-readiness作業は完了しています。crate / CLIの公開releaseはまだ行っていません。
+> ステータス: v0.1の実装とrelease-readiness作業は完了しています。v0.2は[Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56)で計画済みですが、v0.2のproduction codeはまだ`main`へmergeされていません。crate / CLIの公開releaseもまだ行っていません。
 
 pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベースへrestoreせずに検査するread-onlyのRustライブラリ / CLIです。
 
@@ -14,31 +14,33 @@ pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベ�
 
 [English README](README.md)
 
+## 現在の開発状況
+
+- **`main`で実装済み:** metadata inspection、4種類のcompression backend、bounded raw extraction、COPY row parsing、first-match search、各種limits、fuzz / benchmark / CI evidence、rustdoc、packaging / release-readiness verificationを含むv0.1全体。
+- **次に実装するv0.2:** file-oriented convenience API ([#57](https://github.com/tappe9/pgdumpx/issues/57))、owned byte-oriented table selector ([#58](https://github.com/tappe9/pgdumpx/issues/58))、reusable extraction plan ([#59](https://github.com/tappe9/pgdumpx/issues/59))をfoundationとし、sequential multi-table executionとselection helperを[#60](https://github.com/tappe9/pgdumpx/issues/60)〜[#62](https://github.com/tappe9/pgdumpx/issues/62)で追加する計画です。
+- **activeなv0.2実装範囲から明示的に除外:** parallel extraction、sidecar index / restart-point scheme、data-only archive identity support、v0.3以降のdata ecosystem integration。
+
+実装順と依存関係は[ROADMAP.md](ROADMAP.md)を参照してください。
+
 ## pgdumpxが解決すること
 
 PostgreSQL Custom FormatにはTOCとentry単位のdata positionがあります。そのため対象**entry**へ選択的にアクセスできますが、列値からrow位置を引くrow-level indexは含まれていません。
 
 pgdumpxはarchive layerとrow layerを、resource-boundedな1本のinspection pathとして構成します。
 
-```text
-PostgreSQL custom archive
-        │
-        ▼
-header + TOC metadata
-        │
-        ▼
-select table-data entry + validated seek
-        │
-        ▼
-streaming decompression
-        │
-        ▼
-PostgreSQL COPY text parser
-        │
-        ├── borrowed Row / byte-oriented Field
-        ├── COPY column metadata / column lookup
-        ├── structural / scan-work limits
-        └── predicate evaluation / first-match retrieval
+```mermaid
+flowchart TD
+    A["PostgreSQL custom archive<br/>pg_dump -Fc"] --> B["Archive::open<br/>header + TOC + index"]
+    B --> C{"Operation"}
+    C -->|"inspect / list"| D["metadataのみ<br/>payload seek / decompressionなし"]
+    C -->|"extract"| E["TABLE DATAを解決<br/>validated seek"]
+    C -->|"table_rows / find"| E
+    E --> F["streaming decompression<br/>none / gzip / LZ4 / Zstandard"]
+    F --> G{"Consumer path"}
+    G -->|"extract"| H["bounded raw bytes<br/>EntryReadLimits"]
+    G -->|"rows / find"| I["COPY text parser<br/>borrowed byte-oriented fields"]
+    I --> J["column metadata + ScanLimits"]
+    J --> K["sequential predicate scan<br/>first matchでearly stop"]
 ```
 
 v0.1では次を重視します。
@@ -278,7 +280,7 @@ v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget / partial-output semantics
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — 最終DoD-to-evidence mapping
-- [Roadmap](ROADMAP.md) — delivered v0.1 sliceとfuture candidate scope
+- [Roadmap](ROADMAP.md) — delivered v0.1 slice、planned v0.2 issue sequence、later candidate scope
 - [Architecture Decision Records](docs/adr/) — accepted / superseded design decisions
 - [Contributing](CONTRIBUTING.md) — contribution / document-update policy
 - [Security policy](SECURITY.md) — vulnerability reporting / resource-threat model

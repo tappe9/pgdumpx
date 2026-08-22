@@ -1,8 +1,8 @@
 # pgdumpx Roadmap
 
-Status: **v0.1 implementation and release-readiness complete; publication remains separate work.**
+Status: **v0.1 implementation and release-readiness complete; v0.2 planned, with no v0.2 production code merged yet; publication remains separate work.**
 
-This roadmap records the delivered v0.1 vertical slices and possible later directions. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, and GitHub Tracking Issue #30 records the implementation issue sequence.
+This roadmap records the delivered v0.1 vertical slices, the active v0.2 implementation plan, and possible later directions. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final v0.1 evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, GitHub Tracking Issue #30 records the completed v0.1 implementation sequence, and [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56) owns the v0.2 delivery sequence.
 
 ## v0.1 — Bounded row scanning for Custom Format archives
 
@@ -109,7 +109,7 @@ Delivered:
 
 Ordinary CI compiles/smokes fuzz and benchmark targets but does not substitute short smoke runs for longer fuzz campaigns or performance measurements. The benchmark harness is reproducible separately, and the README publishes no quantitative throughput/latency/memory/speedup claim without a recorded result.
 
-Beta exit criteria are satisfied when the final Issue #36 PR is green: no known malformed-input parser panic within the documented boundaries, supported platform/toolchain/feature jobs pass, default CLI packaging includes all v0.1 compression backends, warning-free rustdoc succeeds, package/license/runtime constraints pass the dedicated preflight, English/Japanese README claims agree with tested behavior, and `docs/V0.1-RELEASE-AUDIT.md` contains no unresolved production blocker.
+Beta exit criteria were satisfied by the merged Issue #36 audit: supported platform/toolchain/feature jobs passed, default CLI packaging included all v0.1 compression backends, warning-free rustdoc succeeded, package/license/runtime constraints passed the dedicated preflight, English/Japanese README claims matched tested behavior, and `docs/V0.1-RELEASE-AUDIT.md` recorded no unresolved production blocker.
 
 ## v0.1 release scope summary
 
@@ -178,19 +178,48 @@ Stable exit behavior:
 
 No-match remains distinct from failure.
 
-## v0.2 — Extraction performance and ergonomics
+## v0.2 — Extraction ergonomics and multi-table workflows — planned
 
-Candidate scope only; none of this is part of the v0.1 audit PR:
+No v0.2 production behavior has merged into `main` yet. The implementation plan is tracked in [Issue #56](https://github.com/tappe9/pgdumpx/issues/56) and is deliberately built on the existing v0.1 `Read + Seek`, validated-entry, decompression, row-parser, and raw-output paths rather than introducing parallel or indexed alternatives prematurely.
 
-- file-oriented convenience APIs;
-- reusable extraction plans/selectors;
-- additional equality or typed-value helpers if real usage justifies them;
-- efficient multi-table extraction;
-- optional parallel extraction using independently seekable file handles;
-- buffer-size tuning from benchmark evidence;
-- richer filtering by schema/object type/name;
-- explicit support for data-only archive lookup if real fixture/user demand justifies a model change;
-- research into optional sidecar indexes or decompression restart points for repeated row queries, without assuming arbitrary row seek inside compressed entries.
+### Sprint 1 — File and reusable selection foundations
+
+- [#57 — file-oriented archive convenience APIs](https://github.com/tappe9/pgdumpx/issues/57): add path/file ergonomics while delegating parsing to the existing generic archive-open path.
+- [#58 — owned byte-oriented table selectors](https://github.com/tappe9/pgdumpx/issues/58): introduce archive-independent exact `(schema, table)` selection values without assuming UTF-8.
+- [#59 — reusable extraction plans](https://github.com/tappe9/pgdumpx/issues/59): compose owned selectors with extraction policy and metadata-only preflight. **Depends on #58.**
+
+Preferred implementation order for the first sprint is **#57 → #58 → #59**. Only the selector-to-plan edge is a hard dependency; #57 remains an independent convenience foundation.
+
+### Sprint 2 — Sequential multi-table extraction
+
+- [#60 — bounded sequential multi-table plan execution](https://github.com/tappe9/pgdumpx/issues/60): execute preflighted plans deterministically on one mutable seekable source, reusing v0.1 validation, decompression, and `EntryReadLimits`. **Depends on #59.**
+
+This is the first multi-table production slice. It remains sequential and does not introduce shared-source concurrent seeking, source cloning, or independently reopened handles.
+
+### Sprint 3 — Selection and query ergonomics
+
+- [#61 — reusable metadata filtering](https://github.com/tappe9/pgdumpx/issues/61): filter TOC metadata by exact byte-oriented schema/name plus object type, and feed matched normal tables into the same selector/plan model. **Depends on #58.**
+- [#62 — reusable byte-equality row matcher helpers](https://github.com/tappe9/pgdumpx/issues/62): factor the common exact-column-equality search pattern over existing `find_first` semantics without creating a SQL/value system.
+
+The generic predicate API remains the row-query foundation; the equality helper is narrowly justified by existing `pgdumpx find` usage.
+
+### Sprint 4 — Benchmark-driven tuning
+
+After the multi-table production path exists, use the reproducible benchmark/peak-RSS harness to evaluate buffer-size or orchestration tuning. Production defaults change only when recorded evidence justifies the tradeoff; ordinary CI continues to compile/smoke benchmark targets rather than run full performance campaigns.
+
+### Explicitly deferred from active v0.2 scope
+
+The current v0.2 issues intentionally do **not** include:
+
+- parallel extraction, concurrent seeking, or source-factory/reopen designs;
+- persistent/sidecar row indexes or decompression restart-point schemes;
+- data-only archive identity synthesis or support changes for standalone `TABLE DATA` without a normal `TABLE` identity;
+- SQL `WHERE`, a general predicate/query DSL, SQL coercion/collation, or a broad typed-value system;
+- CSV/JSONL/Arrow/Polars/Parquet integrations;
+- Directory/Tar format expansion;
+- publish/tag/release work unless requested separately.
+
+These can be reconsidered only as later roadmap work with independent requirements and evidence.
 
 ## v0.3 — Data ecosystem integrations
 

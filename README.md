@@ -2,7 +2,7 @@
 
 **A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
-> Status: the v0.1 implementation and release-readiness work are complete. No crate or CLI release has been published yet.
+> Status: the v0.1 implementation and release-readiness work are complete. v0.2 is planned in [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56), but no v0.2 production code has merged yet. No crate or CLI release has been published yet.
 
 pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
@@ -14,31 +14,33 @@ A representative use case is:
 
 [日本語 README](README.ja.md)
 
+## Current development status
+
+- **Implemented on `main`:** the complete v0.1 bounded row-scanning scope, including metadata inspection, four compression backends, bounded raw extraction, COPY row parsing, first-match search, limits, fuzz/benchmark/CI evidence, rustdoc, and packaging/release-readiness verification.
+- **Planned next:** v0.2 starts with file-oriented convenience APIs ([#57](https://github.com/tappe9/pgdumpx/issues/57)), owned byte-oriented table selectors ([#58](https://github.com/tappe9/pgdumpx/issues/58)), and reusable extraction plans ([#59](https://github.com/tappe9/pgdumpx/issues/59)); sequential multi-table execution and selection helpers follow in [#60](https://github.com/tappe9/pgdumpx/issues/60)–[#62](https://github.com/tappe9/pgdumpx/issues/62).
+- **Explicitly deferred from the active v0.2 implementation plan:** parallel extraction, sidecar indexes/restart-point schemes, data-only archive identity support, and v0.3+ data-ecosystem integrations.
+
+See [ROADMAP.md](ROADMAP.md) for delivery order and dependency boundaries.
+
 ## Why pgdumpx?
 
 A PostgreSQL custom archive contains a table of contents (TOC) and per-entry data positions. That makes selective **entry** access possible, but it does not provide a row-level value index.
 
 pgdumpx composes the archive and row layers into one bounded inspection path:
 
-```text
-PostgreSQL custom archive
-        │
-        ▼
-header + TOC metadata
-        │
-        ▼
-select table-data entry + validated seek
-        │
-        ▼
-streaming decompression
-        │
-        ▼
-PostgreSQL COPY text parser
-        │
-        ├── borrowed rows and byte-oriented fields
-        ├── COPY column metadata and name lookup
-        ├── structural and scan-work limits
-        └── predicate evaluation / first-match retrieval
+```mermaid
+flowchart TD
+    A["PostgreSQL custom archive<br/>pg_dump -Fc"] --> B["Archive::open<br/>header + TOC + indexes"]
+    B --> C{"Operation"}
+    C -->|"inspect / list"| D["Metadata only<br/>no payload seek or decompression"]
+    C -->|"extract"| E["Resolve TABLE DATA<br/>validated seek"]
+    C -->|"table_rows / find"| E
+    E --> F["Streaming decompression<br/>none / gzip / LZ4 / Zstandard"]
+    F --> G{"Consumer path"}
+    G -->|"extract"| H["Bounded raw bytes<br/>EntryReadLimits"]
+    G -->|"rows / find"| I["COPY text parser<br/>borrowed byte-oriented fields"]
+    I --> J["Column metadata + ScanLimits"]
+    J --> K["Sequential predicate scan<br/>early stop on first match"]
 ```
 
 The v0.1 design emphasizes:
@@ -278,7 +280,7 @@ Each document has one primary responsibility to reduce duplication and drift:
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget and partial-output semantics;
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary;
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — final DoD-to-evidence mapping;
-- [Roadmap](ROADMAP.md) — delivered v0.1 slices and future candidate scope;
+- [Roadmap](ROADMAP.md) — delivered v0.1 slices, the planned v0.2 issue sequence, and later candidate scope;
 - [Architecture Decision Records](docs/adr/) — accepted and superseded design decisions;
 - [Contributing](CONTRIBUTING.md) — contribution and document-update policy;
 - [Security policy](SECURITY.md) — vulnerability reporting and resource-threat model.
