@@ -4,7 +4,7 @@ pgdumpx parses archive files that may be attacker controlled. Parser safety and 
 
 ## Supported versions
 
-pgdumpx is currently in the pre-release implementation stage and has no supported published version yet. This section will be updated when releases begin.
+The v0.1 implementation and release-readiness audit are complete, but pgdumpx has no supported published release yet. This section will be updated when releases begin.
 
 ## Reporting a vulnerability
 
@@ -44,7 +44,7 @@ Security-sensitive properties include:
 
 ## Runtime and dependency boundary
 
-The default pgdumpx build is intended to inspect archives without a running PostgreSQL server, `libpq`, `pg_restore`, or other PostgreSQL executables at runtime.
+The default pgdumpx build inspects archives without a running PostgreSQL server, `libpq`, `pg_restore`, or another PostgreSQL executable at runtime. The release-packaging preflight verifies the default runtime dependency graph and native `links` constraints; see [Packaging and dependency constraints](docs/PACKAGING.md).
 
 The project does not use “Pure Rust” as a blanket guarantee about every transitive dependency. Compression backend choices must be documented when they introduce material native build, distribution, or sandboxing implications. Project-authored `unsafe` remains prohibited unless a separately accepted ADR documents invariants and verification.
 
@@ -76,23 +76,23 @@ Configured limits are enforced incrementally on the normal streaming path and te
 
 Applications processing trusted local backups may choose generous limits. Applications processing untrusted or customer-supplied archives should configure limits appropriate to their service-level and resource constraints.
 
-The low-level unlimited `EntryDataReader` may remain available for trusted callers, but the library and CLI must also provide a bounded raw-extraction path. `pgdumpx extract` must use the bounded path rather than relying on each CLI caller to wrap stdout copying correctly.
+A low-level unlimited `EntryDataReader` remains available for trusted callers. The library also provides `entry_reader_with_limits` and `copy_entry_to` bounded raw-extraction paths, and `pgdumpx extract` uses the bounded high-level path with a finite 1 GiB default rather than relying on CLI callers to wrap stdout copying themselves.
 
 ## Accounting semantics
 
-Row-scan decompressed-byte budgets count bytes consumed by the row parser from the decompressed COPY stream, including field separators, row terminators, and the COPY terminator when consumed. Decoder read-ahead that has not been consumed by the parser must not make the result depend on buffer size.
+Row-scan decompressed-byte budgets count bytes consumed by the row parser from the decompressed COPY stream, including field separators, row terminators, escape spellings, and the COPY terminator when consumed. Decoder read-ahead that has not been consumed by the parser does not affect accounting.
 
 A maximum-row budget of `N` permits at most `N` complete rows to be yielded or evaluated. If the next row would exceed the configured row or byte budget, that row is not yielded and the operation returns a typed limit error.
 
-Raw extraction byte limits count decompressed bytes exposed to the caller or copied to the destination. Crossing the limit must fail rather than silently truncate output, unless a separately named truncating API is introduced in the future.
+Raw extraction byte limits count decompressed bytes exposed to the caller or copied to the destination. Crossing the limit fails rather than silently truncating output. Because copying is streaming, bytes written before a later limit or writer failure cannot be rolled back; the operation still returns an error and the CLI exits non-successfully.
 
 ## COPY representation boundary
 
 The v0.1 row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
 
-Unsupported representations must fail explicitly before row parsing where the necessary metadata is available.
+Unsupported representations fail explicitly before row parsing where the necessary metadata is available.
 
-See `docs/COPY-TEXT.md` for the byte-level row contract.
+See [COPY text contract](docs/COPY-TEXT.md) for the byte-level row contract.
 
 ## Fuzzing
 
