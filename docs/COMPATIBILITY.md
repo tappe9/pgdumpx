@@ -41,6 +41,28 @@ Compression backend types and decoder settings remain private implementation det
 
 The LZ4 backend uses `lz4_flex` 0.14 with its frame and safe-decode support. The Zstandard backend uses `ruzstd` 0.8.1, pinned to preserve the workspace Rust 1.85 MSRV. These choices do not add a PostgreSQL runtime dependency or a native compression-library build requirement. Backend-specific dependencies remain optional at the library boundary.
 
+## Platform, Rust, and CI policy
+
+The v0.1 supported CI platform families are Linux, macOS, and Windows. Pull requests and `main` are tested on the current GitHub-hosted `ubuntu-latest`, `macos-latest`, and `windows-latest` runners with the stable Rust toolchain. This is an operating-system-family support policy; it is not a promise that every historical OS release, CPU architecture, or non-hosted target has been verified.
+
+Rust 1.85.0 is the minimum supported Rust version. CI checks the complete workspace, all targets, and all features with Rust 1.85.0 on Ubuntu, while the stable toolchain exercises the full workspace test suite on all three supported platform families. The stable cross-platform build therefore also detects material native build requirements introduced by default/all-feature dependencies; the current compression stack requires no native compression library.
+
+Normal CI covers the following feature and evidence matrix:
+
+| Area | CI coverage |
+|---|---|
+| Baseline quality | `fmt`, `clippy -D warnings`, full workspace tests, and warning-free rustdoc on stable Ubuntu |
+| Stable platforms | Full all-feature workspace tests on Ubuntu, macOS, and Windows |
+| Default CLI | Default-feature CLI extraction against none, gzip, LZ4, and Zstandard official fixtures on every stable platform runner |
+| Reduced library features | default, no optional compression, LZ4-only, and Zstandard-only builds plus typed disabled-backend behavior on stable Ubuntu |
+| Fixture integrity | Manifest schema, provenance fields, committed checksums, and compatibility contract tests |
+| Differential compatibility | Selected-entry output comparison with official `pg_restore` on Ubuntu |
+| Fuzz targets | Nightly compile plus bounded smoke runs on Ubuntu; full fuzz campaigns are not ordinary PR CI |
+| Benchmark target | All-feature benchmark-runner compile plus `--help` smoke on Ubuntu; ordinary CI does not generate performance results |
+| MSRV | All-target/all-feature workspace check with Rust 1.85.0 on Ubuntu |
+
+Full performance measurements remain reproducible through the benchmark harness documented under `benchmarks/`; they are intentionally separate from ordinary pull-request CI so CI noise is not presented as benchmark evidence.
+
 ## Table-data representations
 
 | Representation | Raw entry access | Row-aware v0.1 access | Evidence |
