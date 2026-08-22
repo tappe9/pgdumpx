@@ -1,5 +1,7 @@
+use pgdumpx::{Archive, DataLocation};
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
@@ -42,6 +44,35 @@ fn list_preserves_toc_order_with_exact_output_for_official_none_and_gzip_fixture
     let second = run("list", &fixture);
     assert_eq!(first.stdout, second.stdout);
     assert_eq!(first.stderr, second.stderr);
+}
+
+#[test]
+fn inspect_and_list_do_not_read_selected_entry_payload_bytes() {
+    let fixture = fixture_path("pg18-none-copy-basic.dump");
+    let mut bytes = fs::read(&fixture).expect("fixture must be readable");
+    let archive = Archive::open(Cursor::new(bytes.clone())).expect("fixture must open");
+    let data_id = archive
+        .table(b"public", b"orders")
+        .and_then(|table| table.data_entry_id())
+        .expect("orders TABLE DATA must exist");
+    let offset = match archive
+        .entry(data_id)
+        .expect("TABLE DATA entry must resolve")
+        .data_location()
+    {
+        DataLocation::Offset(offset) => usize::try_from(offset).expect("fixture offset fits usize"),
+        other => panic!("expected recorded TABLE DATA offset, got {other:?}"),
+    };
+    let end = offset
+        .checked_add(16)
+        .expect("test corruption range must not overflow")
+        .min(bytes.len());
+    assert!(offset < end, "fixture TABLE DATA offset must be in range");
+    bytes[offset..end].fill(0xff);
+
+    let corrupted = TempArchive::new(&bytes);
+    assert_success(run("inspect", corrupted.path()), EXPECTED_NONE_INSPECT);
+    assert_success(run("list", corrupted.path()), EXPECTED_LIST);
 }
 
 #[test]
