@@ -1,5 +1,7 @@
 # pgdumpx benchmark harness
 
+Status: **v0.1 reproducible performance-evidence harness implemented; ordinary CI compiles/smokes it without publishing performance results.**
+
 This directory defines the reproducible performance-evidence harness for pgdumpx v0.1.
 It intentionally measures the public production archive, decompression, COPY-row, and limit paths. It does not contain a benchmark-only parser or decompressor.
 
@@ -176,7 +178,7 @@ PGDUMPX_BENCH_RESULTS_DIR=target/benchmark-results/smoke \
   bash scripts/run-benchmarks.sh
 ```
 
-Issue #33 owns the final cross-platform/feature-matrix CI integration. This issue's harness does not turn full benchmark execution into a normal pull-request CI workload.
+The completed Issue #33 CI matrix builds the all-feature benchmark target and runs its `--help` smoke path on Ubuntu. Full benchmark execution intentionally remains outside ordinary pull-request CI so CI noise is not presented as performance evidence.
 
 ## Comparator policy
 
