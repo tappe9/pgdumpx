@@ -12,19 +12,16 @@ const FIXTURES: [&str; 4] = [
 
 #[test]
 fn default_cli_extracts_all_v01_compression_backends() {
-    let mut expected_output: Option<Vec<u8>> = None;
+    let baseline = run_extract(FIXTURES[0]);
+    assert_success(FIXTURES[0], &baseline);
 
-    for fixture in FIXTURES {
+    for fixture in FIXTURES.iter().skip(1).copied() {
         let output = run_extract(fixture);
         assert_success(fixture, &output);
-
-        match &expected_output {
-            Some(expected) => assert_eq!(
-                output.stdout, *expected,
-                "fixture {fixture} decoded to different table-data bytes"
-            ),
-            None => expected_output = Some(output.stdout),
-        }
+        assert_eq!(
+            output.stdout, baseline.stdout,
+            "fixture {fixture} decoded to different table-data bytes"
+        );
     }
 }
 
