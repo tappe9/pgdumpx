@@ -117,7 +117,10 @@ fn write_int(output: &mut Vec<u8>, value: i32) {
 fn write_string(output: &mut Vec<u8>, value: Option<&[u8]>) {
     match value {
         Some(bytes) => {
-            write_int(output, i32::try_from(bytes.len()).expect("test string length fits i32"));
+            write_int(
+                output,
+                i32::try_from(bytes.len()).expect("test string length fits i32"),
+            );
             output.extend_from_slice(bytes);
         }
         None => write_int(output, -1),
