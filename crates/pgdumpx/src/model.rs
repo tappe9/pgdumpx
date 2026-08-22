@@ -270,14 +270,14 @@ pub struct TocEntry {
     name: ArchiveString,
     description: ArchiveString,
     section: Section,
-    _definition: Option<ArchiveString>,
-    _drop_statement: Option<ArchiveString>,
+    definition: Option<ArchiveString>,
+    drop_statement: Option<ArchiveString>,
     copy_statement: Option<ArchiveString>,
     namespace: Option<ArchiveString>,
-    _tablespace: Option<ArchiveString>,
-    _table_access_method: Option<ArchiveString>,
-    _relation_kind: i32,
-    owner: ArchiveString,
+    tablespace: Option<ArchiveString>,
+    table_access_method: Option<ArchiveString>,
+    relation_kind: Option<i32>,
+    owner: Option<ArchiveString>,
     _with_oids: ArchiveString,
     dependencies: Vec<DumpId>,
     data_location: DataLocation,
@@ -299,7 +299,7 @@ impl TocEntry {
         namespace: Option<ArchiveString>,
         tablespace: Option<ArchiveString>,
         table_access_method: Option<ArchiveString>,
-        relation_kind: i32,
+        relation_kind: Option<i32>,
         owner: Option<ArchiveString>,
         with_oids: ArchiveString,
         dependencies: Vec<DumpId>,
@@ -313,14 +313,14 @@ impl TocEntry {
             name,
             description,
             section,
-            _definition: definition,
-            _drop_statement: drop_statement,
+            definition,
+            drop_statement,
             copy_statement,
             namespace,
-            _tablespace: tablespace,
-            _table_access_method: table_access_method,
-            _relation_kind: relation_kind,
-            owner: owner.unwrap_or_default(),
+            tablespace,
+            table_access_method,
+            relation_kind,
+            owner,
             _with_oids: with_oids,
             dependencies,
             data_location,
@@ -337,6 +337,16 @@ impl TocEntry {
         self.has_data
     }
 
+    /// Returns the catalog table OID exactly as PostgreSQL encoded it.
+    pub const fn catalog_table_oid(&self) -> &ArchiveString {
+        &self.catalog_table_oid
+    }
+
+    /// Returns the catalog object OID exactly as PostgreSQL encoded it.
+    pub const fn catalog_oid(&self) -> &ArchiveString {
+        &self.catalog_oid
+    }
+
     /// Returns the entry name as a byte-oriented archive string.
     pub const fn name(&self) -> &ArchiveString {
         &self.name
@@ -345,6 +355,11 @@ impl TocEntry {
     /// Returns the exact entry-name bytes.
     pub fn name_bytes(&self) -> &[u8] {
         self.name.as_bytes()
+    }
+
+    /// Returns the entry description/object type as a byte-oriented archive string.
+    pub const fn description(&self) -> &ArchiveString {
+        &self.description
     }
 
     /// Returns the exact entry-description bytes.
@@ -357,14 +372,57 @@ impl TocEntry {
         self.section
     }
 
+    /// Returns the optional object definition exactly as stored in the TOC.
+    pub const fn definition(&self) -> Option<&ArchiveString> {
+        self.definition.as_ref()
+    }
+
+    /// Returns the optional DROP statement exactly as stored in the TOC.
+    pub const fn drop_statement(&self) -> Option<&ArchiveString> {
+        self.drop_statement.as_ref()
+    }
+
+    /// Returns the optional COPY statement exactly as stored in the TOC.
+    pub const fn copy_statement(&self) -> Option<&ArchiveString> {
+        self.copy_statement.as_ref()
+    }
+
+    /// Returns the optional namespace exactly as stored in the TOC.
+    pub const fn namespace(&self) -> Option<&ArchiveString> {
+        self.namespace.as_ref()
+    }
+
     /// Returns the optional namespace bytes.
     pub fn namespace_bytes(&self) -> Option<&[u8]> {
         self.namespace.as_ref().map(ArchiveString::as_bytes)
     }
 
-    /// Returns the owner bytes, or an empty slice when PostgreSQL stored NULL.
-    pub fn owner_bytes(&self) -> &[u8] {
-        self.owner.as_bytes()
+    /// Returns the optional tablespace exactly as stored in the TOC.
+    pub const fn tablespace(&self) -> Option<&ArchiveString> {
+        self.tablespace.as_ref()
+    }
+
+    /// Returns the table access method when encoded by archive 1.14 and newer.
+    pub const fn table_access_method(&self) -> Option<&ArchiveString> {
+        self.table_access_method.as_ref()
+    }
+
+    /// Returns PostgreSQL's encoded relation-kind value for archive 1.16 entries.
+    ///
+    /// `None` means the field was not encoded by the archive version. A zero value
+    /// in a 1.16 archive remains `Some(0)` and is therefore distinct from absence.
+    pub const fn relation_kind(&self) -> Option<i32> {
+        self.relation_kind
+    }
+
+    /// Returns the optional owner exactly as stored in the TOC.
+    pub const fn owner(&self) -> Option<&ArchiveString> {
+        self.owner.as_ref()
+    }
+
+    /// Returns the optional owner bytes without conflating NULL with an empty value.
+    pub fn owner_bytes(&self) -> Option<&[u8]> {
+        self.owner.as_ref().map(ArchiveString::as_bytes)
     }
 
     /// Returns the entry's dependency dump IDs.
