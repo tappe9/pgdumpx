@@ -1,4 +1,4 @@
-use pgdumpx::{Archive, PgDumpError};
+use pgdumpx::{Archive, DataLocation, PgDumpError};
 use std::io::Cursor;
 
 const SECTION_PRE_DATA: i32 = 2;
@@ -42,10 +42,33 @@ fn archive_1_15_does_not_consume_a_relkind_slot() {
 }
 
 #[test]
+fn archive_1_16_large_object_metadata_is_inspectable_without_payload_special_casing() {
+    let bytes = build_archive([1, 16, 0], 1, |output| {
+        write_metadata_entry_with_description(
+            output,
+            1,
+            b"BLOB METADATA",
+            b"BLOB METADATA",
+            Some(b"postgres"),
+            true,
+        );
+    });
+    let archive = Archive::open(Cursor::new(bytes)).expect("1.16 archive must open");
+    let entry = &archive.entries()[0];
+
+    assert_eq!(entry.name().as_bytes(), b"BLOB METADATA");
+    assert_eq!(entry.description().as_bytes(), b"BLOB METADATA");
+    assert_eq!(entry.relation_kind(), Some(0));
+    assert!(entry.table_access_method().is_none());
+    assert_eq!(entry.owner_bytes(), Some(b"postgres".as_slice()));
+    assert_eq!(entry.data_location(), DataLocation::NoData);
+}
+
+#[test]
 fn truncated_1_16_relkind_returns_a_typed_eof_error() {
     let mut bytes = complete_header([1, 16, 0]);
     write_int(&mut bytes, 1);
-    write_toc_prefix_through_tableam(&mut bytes, 1, b"entry");
+    write_toc_prefix_through_tableam(&mut bytes, 1, b"entry", b"COMMENT");
 
     let error = Archive::open(Cursor::new(bytes)).expect_err("relkind is required in 1.16");
     assert!(matches!(error, PgDumpError::UnexpectedEof { .. }));
@@ -85,7 +108,18 @@ fn write_metadata_entry(
     owner: Option<&[u8]>,
     include_relkind: bool,
 ) {
-    write_toc_prefix_through_tableam(output, id, tag);
+    write_metadata_entry_with_description(output, id, tag, b"COMMENT", owner, include_relkind);
+}
+
+fn write_metadata_entry_with_description(
+    output: &mut Vec<u8>,
+    id: i32,
+    tag: &[u8],
+    description: &[u8],
+    owner: Option<&[u8]>,
+    include_relkind: bool,
+) {
+    write_toc_prefix_through_tableam(output, id, tag, description);
     if include_relkind {
         write_int(output, 0);
     }
@@ -96,13 +130,18 @@ fn write_metadata_entry(
     output.extend_from_slice(&0_u64.to_le_bytes());
 }
 
-fn write_toc_prefix_through_tableam(output: &mut Vec<u8>, id: i32, tag: &[u8]) {
+fn write_toc_prefix_through_tableam(
+    output: &mut Vec<u8>,
+    id: i32,
+    tag: &[u8],
+    description: &[u8],
+) {
     write_int(output, id);
     write_int(output, 0);
     write_string(output, Some(b"0"));
     write_string(output, Some(b"0"));
     write_string(output, Some(tag));
-    write_string(output, Some(b"COMMENT"));
+    write_string(output, Some(description));
     write_int(output, SECTION_PRE_DATA);
     for _ in 0..6 {
         write_string(output, None);
