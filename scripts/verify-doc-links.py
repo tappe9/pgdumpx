@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that repository-local Markdown links resolve to existing paths."""
+"""Verify that repository-local Markdown links stay inside the repo and resolve."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
+ROOT_RESOLVED = ROOT.resolve()
 MARKDOWN_FILES = sorted(
     path
     for path in ROOT.rglob("*.md")
@@ -43,6 +44,14 @@ def resolve(source: Path, destination: str) -> Path:
     return source.parent / destination
 
 
+def display_target(target: Path) -> str:
+    resolved = target.resolve(strict=False)
+    try:
+        return str(resolved.relative_to(ROOT_RESOLVED))
+    except ValueError:
+        return f"<outside repository: {resolved}>"
+
+
 def main() -> int:
     failures: list[str] = []
     checked = 0
@@ -60,10 +69,17 @@ def main() -> int:
                 continue
             checked += 1
             target = resolve(source, destination)
+            resolved = target.resolve(strict=False)
+            try:
+                resolved.relative_to(ROOT_RESOLVED)
+            except ValueError:
+                failures.append(
+                    f"{source.relative_to(ROOT)}: {raw!r} -> {display_target(target)}"
+                )
+                continue
             if not target.exists():
                 failures.append(
-                    f"{source.relative_to(ROOT)}: {raw!r} -> "
-                    f"{target.resolve(strict=False).relative_to(ROOT.resolve())}"
+                    f"{source.relative_to(ROOT)}: {raw!r} -> {display_target(target)}"
                 )
 
     if failures:
