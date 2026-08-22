@@ -2,15 +2,15 @@
 
 **A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
-> Status: early implementation. The workspace and baseline CI exist, but no crate or CLI release is available yet.
+> Status: the v0.1 implementation and release-readiness work are complete. No crate or CLI release has been published yet.
 
 pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
-Its primary value is not merely opening an archive entry. pgdumpx is designed to select one table-data entry through the archive TOC, seek to it, stream decompression, parse PostgreSQL `COPY` text into logical rows and fields, evaluate an application-defined predicate, and stop as soon as the first matching row is found.
+Its primary value is not merely opening an archive entry. pgdumpx selects one table-data entry through the archive TOC, seeks to it, streams decompression, parses PostgreSQL `COPY` text into logical rows and fields, evaluates an application-defined predicate, and can stop as soon as the first matching row is found.
 
-A representative target is:
+A representative use case is:
 
-> Find one order, user, or other record in a multi-gigabyte `-Fc` backup without starting PostgreSQL and without buffering the complete table.
+> Find one order, user, or other record in a large `-Fc` backup without starting PostgreSQL and without buffering the complete table.
 
 [日本語 README](README.ja.md)
 
@@ -41,7 +41,7 @@ PostgreSQL COPY text parser
         └── predicate evaluation / first-match retrieval
 ```
 
-The initial product direction emphasizes:
+The v0.1 design emphasizes:
 
 - **read-only parsing** of PostgreSQL Custom Format archives;
 - no running PostgreSQL server, `libpq`, or `pg_restore` requirement at runtime;
@@ -53,9 +53,9 @@ The initial product direction emphasizes:
 - typed, location-aware errors;
 - structural, row-scan, and raw-extraction resource limits;
 - a small core suitable for CLI and later language/data integrations;
-- fixture-backed compatibility and benchmark-backed performance claims.
+- fixture-backed compatibility and reproducible benchmark methodology.
 
-The project does not use “Pure Rust” as a blanket dependency guarantee. The default build is intended to remain independent of PostgreSQL runtime components; compression backend and native-build implications are documented separately. See [ADR 0007](docs/adr/0007-standalone-row-scanner-and-vertical-slices.md).
+The project does not use “Pure Rust” as a blanket dependency guarantee. The default build remains independent of PostgreSQL runtime components; compression backend and native-build implications are documented separately. See [ADR 0007](docs/adr/0007-standalone-row-scanner-and-vertical-slices.md) and [Packaging and dependency constraints](docs/PACKAGING.md).
 
 ## Use cases
 
@@ -63,13 +63,13 @@ pgdumpx targets situations where a PostgreSQL dump is useful as an offline data 
 
 - inspect a production backup without starting PostgreSQL;
 - find one record inside a large custom-format dump;
-- extract one selected table-data stream from a multi-gigabyte archive;
+- extract one selected table-data stream without reading every payload into memory;
 - build backup verification and support/forensics tools;
 - process customer-supplied dumps under explicit parser and work budgets;
 - convert selected row streams into CSV, JSON Lines, Arrow, or Parquet in downstream tools;
 - build Rust, CLI, Python, or analytical tooling on one reusable row-scanning core.
 
-## Initial scope
+## v0.1 scope
 
 v0.1 targets PostgreSQL Custom Format only:
 
@@ -77,14 +77,14 @@ v0.1 targets PostgreSQL Custom Format only:
 pg_dump -Fc mydb > backup.dump
 ```
 
-The final v0.1 compatibility target is archive format versions **1.14 through 1.16** with:
+The implemented v0.1 compatibility range is archive format versions **1.14 through 1.16** with:
 
 - none;
 - gzip;
 - LZ4;
 - Zstandard.
 
-The current Alpha 3 implementation has fixture- and differential-verified archive 1.14–1.16 compatibility across the supported version/compression combinations. See [ROADMAP.md](ROADMAP.md) and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for the exact evidence matrix.
+Fixture-backed verification is deliberately narrower where an older archive version does not have a committed fixture for every backend. The exact version/compression evidence matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md); claims there are backed by official PostgreSQL-generated fixtures and production-path differential checks.
 
 Row-aware access targets normal pg_dump table data represented as PostgreSQL `COPY` text. The following are explicitly outside the v0.1 row parser:
 
@@ -93,13 +93,11 @@ Row-aware access targets normal pg_dump table data represented as PostgreSQL `CO
 - INSERT output produced by `--rows-per-insert`;
 - Binary COPY.
 
-Unsupported logical representations must fail through a typed row-API error rather than being guessed as COPY text. Raw entry extraction may still be available when the archive entry itself is structurally readable.
+Unsupported logical representations fail through a typed row-API error rather than being guessed as COPY text. Raw entry extraction may still be available when the archive entry itself is structurally readable.
 
-The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Compatibility claims are limited to official fixture and production-path evidence recorded there.
+## Rust API
 
-## Intended Rust API
-
-The current Alpha 3 slice implements the metadata, row-streaming, first-match, structural/scan/raw-extraction limits, typed error taxonomy, bounded raw-entry extraction, and supported compression APIs shown below. Later v0.1 hardening and benchmark work remains subject to the roadmap.
+The v0.1 library implements metadata inspection, selected-entry streaming, COPY row access, first-match search, structural/scan/raw-extraction limits, contextual typed errors, and all four supported compression backends.
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -119,7 +117,7 @@ while let Some(row) = rows.next_row()? {
 }
 ```
 
-`next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references a reusable internal buffer and remains valid only until the next mutable reader operation.
+`next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references reusable internal storage and remains valid only until the next mutable reader operation.
 
 A primary v0.1 use case is finding the first matching row with explicit total-work budgets:
 
@@ -140,7 +138,7 @@ let row = rows.find_first_with_limits(scan_limits, |row| {
 })?;
 ```
 
-`find_first` remains the convenience path without additional total-work budgets. `find_first_with_limits` uses the same streaming parser and predicate loop while enforcing the supplied `ScanLimits`.
+`find_first` is the convenience path without additional operation-level scan budgets. `find_first_with_limits` uses the same streaming parser and predicate loop while enforcing the supplied `ScanLimits`.
 
 Column lookup distinguishes three states:
 
@@ -150,67 +148,70 @@ Ok(None)         valid metadata, requested column absent
 Err(...)         column layout unavailable or malformed
 ```
 
-Both first-match methods perform a **streaming sequential scan**, not a database index lookup. The TOC enables direct access to the selected table-data entry, but rows must be decompressed and parsed in order from the beginning of that entry. A match can stop early; an absent or late match may process the complete selected table unless a configured budget ends the operation.
+Both first-match methods perform a **streaming sequential scan**, not a database index lookup. The TOC enables direct access to the selected table-data entry, but rows are decompressed and parsed in order from the beginning/current stream position. A match can stop early; an absent or late match may process the complete selected table unless a configured budget ends the operation. Worst-case unrestricted work is proportional to the selected table-data stream.
 
-The API includes separate concepts for:
+The API keeps three resource concepts separate:
 
 - structural/per-item limits;
 - total row-scan work limits;
 - decompressed-byte limits for raw entry extraction.
 
-The implemented structural configuration is `Limits`. `Limits::default()` is finite and compatibility-oriented, `Archive::open` uses those defaults, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds through the same parser path.
+`Limits::default()` is finite and compatibility-oriented, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds. `ScanLimits::default()` and `ScanLimits::unlimited()` leave both operation-level budgets unset. `max_rows = N` permits at most `N` complete rows to be yielded or evaluated, including a matching row. The decompressed-byte scan budget counts physical COPY bytes consumed by the parser—including field separators, row terminators, escape spellings, and the COPY terminator when consumed—not logical decoded field length or unread decoder/`BufRead` lookahead. A crossing row is not yielded or passed to the predicate, and exhaustion is returned as a typed resource error with limit and consumed-work context.
 
-The implemented total-work configuration is `ScanLimits`. `ScanLimits::default()` and `ScanLimits::unlimited()` leave both optional budgets unset. `max_rows = N` permits at most `N` complete rows to be yielded or evaluated, including a matching row. The decompressed-byte budget counts physical COPY bytes consumed by the parser—including field separators, row terminators, escape spellings, and the COPY terminator when consumed—not logical decoded field length or unread decoder/`BufRead` lookahead. A crossing row is not yielded or passed to the predicate, and exhaustion is returned as a typed resource error with limit and consumed-work context.
-
-See [docs/API-DESIGN.md](docs/API-DESIGN.md).
+See [Public API design](docs/API-DESIGN.md) and the crate rustdoc for the complete public contract.
 
 ## CLI
 
-`inspect`, `list`, `extract`, and `find` are implemented and consume the same public Rust library API rather than maintaining separate archive or COPY parsers.
+`inspect`, `list`, `extract`, and `find` are implemented and use the public Rust library path rather than maintaining separate archive or COPY parsers.
 
 ```bash
 pgdumpx inspect backup.dump
 pgdumpx list backup.dump
 pgdumpx extract backup.dump public.orders
+pgdumpx extract --max-decompressed-bytes 2147483648 backup.dump public.orders
 pgdumpx find backup.dump public.orders order_number 123456
 pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
   backup.dump public.orders order_number 123456
 ```
 
+For table-oriented commands, `<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting/escaping and identifiers containing `.` are not supported by the v0.1 CLI. Query identifiers/values at the CLI boundary are UTF-8; the Rust API remains byte-oriented.
+
 ### `inspect` / `list`
 
-`inspect <FILE>` prints archive version, compression, and entry/table/table-data counts as deterministic `key=value` lines. `list <FILE>` prints TOC entries in archive order as tab-separated dump ID, object type, schema, and name columns. Both commands stop at the library metadata-open path: they do not seek into TABLE DATA payloads, decompress entry data, or invoke the COPY row parser. Diagnostics are written to stderr and malformed archives exit non-zero.
+`inspect <FILE>` prints archive version, compression, and entry/table/table-data counts as deterministic `key=value` lines. `list <FILE>` prints TOC entries in archive order as tab-separated dump ID, object type, schema, and name columns. Both commands stop at the library metadata-open path: they do not seek into `TABLE DATA` payloads, decompress entry data, or invoke the COPY row parser. Diagnostics are written to stderr and malformed archives exit non-zero.
 
 ### `extract`
 
+```text
+pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>
+```
+
 `extract` writes the selected entry's **decompressed table-data body** to stdout as binary-safe bytes. It does not add schema DDL, a `COPY` statement wrapper, or a complete restorable SQL script.
 
-The command uses the library's bounded raw-extraction path. Limit exhaustion is an error; output is not silently truncated.
+The command uses the library's bounded raw-extraction path. When the option is omitted, the finite default is **1,073,741,824 bytes (1 GiB)**. An explicit override must be a positive decimal `u64` and must appear before `<FILE>`; malformed, zero, overflowing, duplicate, or unknown limit options are usage errors.
+
+Limit exhaustion is an error, not successful truncation. Because output is streamed, bytes already written before a later limit, decompression, input, or destination error cannot be rolled back. Partial bytes can therefore be observable on stdout even though the command exits non-successfully; diagnostics remain on stderr. Consumers must use the exit status to decide whether extraction completed successfully. See [Bounded raw entry extraction](docs/RAW-EXTRACTION.md).
 
 ### `find`
 
-`find` is a narrow first-match equality command. It is not a SQL parser and does not introduce a general `WHERE` language.
-
-The v0.1 form is:
-
 ```text
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \
+  <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
-The optional scan-limit flags precede `<FILE>`. Each accepts a positive decimal `u64`, may be specified at most once, and is independent of the other. Omitting a flag leaves that budget unlimited. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses the same parser-consumed physical COPY-byte accounting as the Rust API; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes.
-
-`<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting and escaping are not supported. Schema, table, column, and value arguments are UTF-8; the Rust API remains byte-oriented.
+Each optional scan-limit flag accepts a positive decimal `u64`, may be specified at most once, and appears before `<FILE>`. Omitting a flag leaves that budget unlimited. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses parser-consumed physical COPY-byte accounting; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes.
 
 A match writes exactly one **normalized COPY text record** to stdout. Fields remain in COPY column order, are separated by ASCII tabs, and the record ends with LF. NULL is `\N`; an empty byte field is an empty field. Backslash, tab, LF, and CR are emitted as `\\`, `\t`, `\n`, and `\r`; other non-printable or non-ASCII bytes use three-digit octal escapes such as `\377`. This keeps stdout deterministic and ASCII-safe without lossy UTF-8 conversion. No match produces no output, and diagnostics are written only to stderr.
 
-A resource limit is an operation failure, not a clean no-match result. It therefore writes a diagnostic to stderr and exits with `2+` even when no matching row was reached before exhaustion.
+A resource limit is an operation failure, not a clean no-match result. It writes a diagnostic to stderr and exits with `2+` even when no matching row was reached before exhaustion.
 
 Stable exit behavior:
 
 ```text
 0  match found
 1  completed scan with no matching row
-2+ usage, I/O, format, integrity, decompression, COPY, encoding, or resource error
+2+ usage, I/O, format, integrity, decompression, COPY, encoding,
+   unsupported representation, unknown column, or resource error
 ```
 
 ## Architecture
@@ -248,17 +249,13 @@ COPY record framing, escaping, column metadata, unsupported representations, and
 
 ## Evidence policy
 
-Compatibility and performance are claims that require evidence.
+Compatibility and performance claims require evidence.
 
-Valid archive fixtures must record:
+Valid archive fixtures record the official `pg_dump` generator version, exact generation command, archive-format version/compression, checksum, purpose, and expected objects. The committed evidence matrix is maintained in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-- official `pg_dump` generator version;
-- exact generation command;
-- archive-format version and compression;
-- checksum;
-- fixture purpose and expected objects.
+The benchmark harness records the dataset/generator, command/API path, hardware/OS, exact commit, compression, match position, measurement tool, and warm-up/repetition method. This README intentionally makes no quantitative throughput, latency, peak-memory, or competitor-speedup claim without a reproducible recorded result. See [benchmarks/README.md](benchmarks/README.md).
 
-Benchmarks must record the fixture, command, hardware, compression, match position, and measurement method. README performance claims are added only after reproducible results exist.
+The final v0.1 Definition of Done evidence mapping is recorded in [docs/V0.1-RELEASE-AUDIT.md](docs/V0.1-RELEASE-AUDIT.md).
 
 ## Related projects
 
@@ -271,14 +268,17 @@ These projects cover adjacent PostgreSQL dump use cases. pgdumpx keeps a deliber
 
 Each document has one primary responsibility to reduce duplication and drift:
 
-- [README](README.md) / [日本語 README](README.ja.md) — product value, status, examples, and high-level scope;
-- [Requirements](docs/REQUIREMENTS.md) — normative v0.1 behavior and acceptance criteria;
-- [Architecture](ARCHITECTURE.md) — internal boundaries and data flow;
-- [Public API design](docs/API-DESIGN.md) — intended Rust API and exact API semantics;
+- [README](README.md) / [日本語 README](README.ja.md) — product value, current implementation/release status, examples, and high-level scope;
+- [Requirements](docs/REQUIREMENTS.md) — normative v0.1 behavior and Definition of Done;
+- [Architecture](ARCHITECTURE.md) — implemented boundaries and data flow;
+- [Public API design](docs/API-DESIGN.md) — implemented Rust API semantics and ownership/resource contracts;
 - [Custom archive format notes](docs/PG-DUMP-CUSTOM-FORMAT.md) — upstream-derived archive behavior;
 - [COPY text contract](docs/COPY-TEXT.md) — row and field byte semantics;
 - [Compatibility matrix](docs/COMPATIBILITY.md) — target versus fixture-verified support;
-- [Roadmap](ROADMAP.md) — delivery order;
+- [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget and partial-output semantics;
+- [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary;
+- [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — final DoD-to-evidence mapping;
+- [Roadmap](ROADMAP.md) — delivered v0.1 slices and future candidate scope;
 - [Architecture Decision Records](docs/adr/) — accepted and superseded design decisions;
 - [Contributing](CONTRIBUTING.md) — contribution and document-update policy;
 - [Security policy](SECURITY.md) — vulnerability reporting and resource-threat model.
