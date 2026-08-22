@@ -405,11 +405,11 @@ impl<R: Read + Seek> Archive<R> {
 `TableRowReader` composes:
 
 ```text
+metadata lookup + representation validation
+        ↓
 entry seek + block validation
         ↓
 EntryDataReader
-        ↓
-representation validation
         ↓
 CopyRowReader
 ```
@@ -449,7 +449,7 @@ Err(...)         supported column layout unavailable or malformed
 
 The implementation derives the supported pg_dump-generated column list from the TOC entry's recorded COPY statement. Name lookup is prepared once rather than reparsing the statement for every row.
 
-If the data stream is positionally readable but column metadata is unavailable or unsupported, `next_row()` may remain usable while column-aware operations fail explicitly rather than inventing names.
+If the COPY data stream is positionally readable but column metadata is unavailable or malformed, `next_row()` remains usable while column-aware operations fail explicitly rather than inventing names. Unsupported table-data representations are rejected before constructing `TableRowReader`.
 
 ## 15. Supported table-data representation
 
