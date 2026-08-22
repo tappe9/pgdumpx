@@ -8,15 +8,16 @@ use std::{
 };
 
 const MANIFEST_PATH: &str = "tests/fixtures/manifest.toml";
-const REQUIRED_FIXTURES: [(&str, &str, &str); 8] = [
-    ("pg18-none-copy-basic", "1.16.0", "none"),
-    ("pg18-gzip-copy-basic", "1.16.0", "gzip"),
-    ("pg18-lz4-copy-basic", "1.16.0", "lz4"),
-    ("pg18-zstd-copy-basic", "1.16.0", "zstd"),
-    ("pg16-none-copy-basic", "1.15.0", "none"),
-    ("pg16-gzip-copy-basic", "1.15.0", "gzip"),
-    ("pg15-none-copy-basic", "1.14.0", "none"),
-    ("pg15-gzip-copy-basic", "1.14.0", "gzip"),
+const REQUIRED_FIXTURES: [FixtureExpectation; 9] = [
+    FixtureExpectation::new("pg18-none-copy-basic", "1.16.0", "none", "copy"),
+    FixtureExpectation::new("pg18-gzip-copy-basic", "1.16.0", "gzip", "copy"),
+    FixtureExpectation::new("pg18-lz4-copy-basic", "1.16.0", "lz4", "copy"),
+    FixtureExpectation::new("pg18-zstd-copy-basic", "1.16.0", "zstd", "copy"),
+    FixtureExpectation::new("pg18-none-insert-basic", "1.16.0", "none", "insert"),
+    FixtureExpectation::new("pg16-none-copy-basic", "1.15.0", "none", "copy"),
+    FixtureExpectation::new("pg16-gzip-copy-basic", "1.15.0", "gzip", "copy"),
+    FixtureExpectation::new("pg15-none-copy-basic", "1.14.0", "none", "copy"),
+    FixtureExpectation::new("pg15-gzip-copy-basic", "1.14.0", "gzip", "copy"),
 ];
 const EXPECTED_COLUMNS: [&str; 5] = [
     "order_id",
@@ -25,6 +26,30 @@ const EXPECTED_COLUMNS: [&str; 5] = [
     "note",
     "empty_text",
 ];
+
+#[derive(Debug, Clone, Copy)]
+struct FixtureExpectation {
+    name: &'static str,
+    version: &'static str,
+    compression: &'static str,
+    representation: &'static str,
+}
+
+impl FixtureExpectation {
+    const fn new(
+        name: &'static str,
+        version: &'static str,
+        compression: &'static str,
+        representation: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            version,
+            compression,
+            representation,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct FixtureManifest {
@@ -64,6 +89,7 @@ fn official_fixture_manifest_contract_is_satisfied() {
         "scripts/generate-alpha1-fixtures.sh",
         "scripts/generate-alpha3-version-fixtures.sh",
         "scripts/generate-alpha3-compression-fixture.sh",
+        "scripts/generate-alpha3-insert-fixture.sh",
     ] {
         assert!(
             root.join(script).is_file(),
@@ -90,14 +116,15 @@ fn official_fixture_manifest_contract_is_satisfied() {
         validate_fixture(&root, fixture);
     }
 
-    for (required_name, required_version, required_compression) in REQUIRED_FIXTURES {
+    for expected in REQUIRED_FIXTURES {
         let fixture = manifest
             .fixture
             .iter()
-            .find(|fixture| fixture.name == required_name)
-            .unwrap_or_else(|| panic!("required fixture entry missing: {required_name}"));
-        assert_eq!(fixture.archive_version, required_version);
-        assert_eq!(fixture.compression, required_compression);
+            .find(|fixture| fixture.name == expected.name)
+            .unwrap_or_else(|| panic!("required fixture entry missing: {}", expected.name));
+        assert_eq!(fixture.archive_version, expected.version);
+        assert_eq!(fixture.compression, expected.compression);
+        assert_eq!(representation(fixture), expected.representation);
     }
 }
 
@@ -108,7 +135,7 @@ fn checksum_verification_rejects_modified_bytes() {
     let fixture = manifest
         .fixture
         .iter()
-        .find(|fixture| fixture.name == REQUIRED_FIXTURES[0].0)
+        .find(|fixture| fixture.name == REQUIRED_FIXTURES[0].name)
         .expect("none fixture must exist");
     let fixture_path = resolve_repository_file(&root, &fixture.path).expect("valid fixture path");
     let mut bytes = fs::read(fixture_path).expect("fixture bytes must be readable");
@@ -188,18 +215,33 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
     assert!(fixture.command.contains("--format=custom"));
     assert!(fixture.command.contains("--dbname=pgdumpx_fixture"));
     assert!(fixture.command.contains("--table=public.orders"));
-
-    for required_purpose in ["header", "toc", "copy-text"] {
-        assert_has_purpose(fixture, required_purpose);
-    }
+    assert_has_purpose(fixture, "header");
+    assert_has_purpose(fixture, "toc");
     assert_has_purpose(fixture, &fixture.compression);
-    if let Some(version_purpose) = version_purpose {
-        assert_has_purpose(fixture, version_purpose);
-        assert_has_purpose(fixture, "selected-entry");
-    } else {
-        assert_has_purpose(fixture, "column-layout");
-        assert_has_purpose(fixture, "find-first");
+
+    match representation(fixture) {
+        "copy" => {
+            assert!(!fixture.command.contains("--inserts"));
+            assert_has_purpose(fixture, "copy-text");
+            if let Some(version_purpose) = version_purpose {
+                assert_has_purpose(fixture, version_purpose);
+                assert_has_purpose(fixture, "selected-entry");
+            } else {
+                assert_has_purpose(fixture, "column-layout");
+                assert_has_purpose(fixture, "find-first");
+            }
+        }
+        "insert" => {
+            assert_eq!(fixture.archive_version, "1.16.0");
+            assert!(fixture.command.contains("--inserts"));
+            assert_has_purpose(fixture, "insert");
+            assert_has_purpose(fixture, "row-api-rejection");
+            assert_has_purpose(fixture, "selected-entry");
+            assert_has_purpose(fixture, "differential");
+        }
+        other => panic!("{} has unexpected representation {other:?}", fixture.name),
     }
+
     if fixture.archive_version == "1.14.0" {
         assert_has_purpose(fixture, "legacy-compression");
     }
@@ -247,6 +289,19 @@ fn validate_fixture(root: &Path, fixture: &FixtureRecord) {
         "{} checksum mismatch",
         fixture.name
     );
+}
+
+fn representation(fixture: &FixtureRecord) -> &'static str {
+    let copy = fixture.purpose.iter().any(|purpose| purpose == "copy-text");
+    let insert = fixture.purpose.iter().any(|purpose| purpose == "insert");
+    match (copy, insert) {
+        (true, false) => "copy",
+        (false, true) => "insert",
+        _ => panic!(
+            "{} must declare exactly one table-data representation purpose",
+            fixture.name
+        ),
+    }
 }
 
 fn validate_compression(fixture: &FixtureRecord) {
