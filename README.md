@@ -84,7 +84,7 @@ The final v0.1 compatibility target is archive format versions **1.14 through 1.
 - LZ4;
 - Zstandard.
 
-Implementation starts with a narrow end-to-end slice for archive 1.16 and none/gzip, then expands to the complete matrix. See [ROADMAP.md](ROADMAP.md).
+The current Alpha 3 implementation has fixture- and differential-verified archive 1.14–1.16 compatibility across the supported version/compression combinations. See [ROADMAP.md](ROADMAP.md) and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for the exact evidence matrix.
 
 Row-aware access targets normal pg_dump table data represented as PostgreSQL `COPY` text. The following are explicitly outside the v0.1 row parser:
 
@@ -95,11 +95,11 @@ Row-aware access targets normal pg_dump table data represented as PostgreSQL `CO
 
 Unsupported logical representations must fail through a typed row-API error rather than being guessed as COPY text. Raw entry extraction may still be available when the archive entry itself is structurally readable.
 
-The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Until implementation fixtures pass through production code paths, compatibility entries are targets rather than release claims.
+The exact target-versus-verified matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Compatibility claims are limited to official fixture and production-path evidence recorded there.
 
 ## Intended Rust API
 
-The current Alpha 2 slice implements the metadata, row-streaming, first-match, public structural-limit, scan-limit, and error-taxonomy APIs shown below. Later v0.1 APIs remain subject to the roadmap.
+The current Alpha 3 slice implements the metadata, row-streaming, first-match, structural/scan/raw-extraction limits, typed error taxonomy, bounded raw-entry extraction, and supported compression APIs shown below. Later v0.1 hardening and benchmark work remains subject to the roadmap.
 
 ```rust
 use pgdumpx::{Archive, FieldRef};
@@ -166,7 +166,7 @@ See [docs/API-DESIGN.md](docs/API-DESIGN.md).
 
 ## CLI
 
-`inspect`, `list`, and `find` are implemented and consume the same public Rust library API rather than maintaining separate archive or COPY parsers. `extract` remains planned for a later Alpha 2 issue.
+`inspect`, `list`, `extract`, and `find` are implemented and consume the same public Rust library API rather than maintaining separate archive or COPY parsers.
 
 ```bash
 pgdumpx inspect backup.dump
@@ -181,7 +181,7 @@ pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
 
 `inspect <FILE>` prints archive version, compression, and entry/table/table-data counts as deterministic `key=value` lines. `list <FILE>` prints TOC entries in archive order as tab-separated dump ID, object type, schema, and name columns. Both commands stop at the library metadata-open path: they do not seek into TABLE DATA payloads, decompress entry data, or invoke the COPY row parser. Diagnostics are written to stderr and malformed archives exit non-zero.
 
-### `extract` (planned)
+### `extract`
 
 `extract` writes the selected entry's **decompressed table-data body** to stdout as binary-safe bytes. It does not add schema DDL, a `COPY` statement wrapper, or a complete restorable SQL script.
 
