@@ -23,5 +23,12 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Diagnose lockfile drift
+        run: |
+          cargo generate-lockfile
+          echo '---BEGIN CARGO LOCK---'
+          cat Cargo.lock
+          echo '---END CARGO LOCK---'
+
       - name: Verify publish preflight
         run: python3 scripts/verify-release-packaging.py
