@@ -8,8 +8,16 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 
 /// Optional decompressed-byte budget for one raw selected-entry read.
 ///
-/// `None` means no raw-output budget is applied. Applications processing
-/// untrusted input should normally configure an explicit finite value.
+/// Raw-output limits are separate from [`crate::Limits`] (archive/row structure)
+/// and [`crate::ScanLimits`] (COPY row-scan work). This budget counts decompressed
+/// bytes exposed by [`BoundedEntryDataReader`] or copied by [`Archive::copy_entry_to`].
+///
+/// A configured value is an inclusive maximum. If an entry ends after exactly `N`
+/// bytes, a limit of `N` succeeds. If byte `N + 1` exists, the next read fails with
+/// [`PgDumpError::EntryDecompressedByteLimitExceeded`]; the extra byte is never
+/// returned to the caller. [`EntryReadLimits::unlimited`] and [`Default`] deliberately
+/// apply no library-side raw-output budget. The `pgdumpx extract` CLI chooses a
+/// separate finite default of 1 GiB when its option is omitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntryReadLimits {
     max_decompressed_bytes: Option<u64>,
@@ -17,18 +25,25 @@ pub struct EntryReadLimits {
 
 impl EntryReadLimits {
     /// Returns raw-entry limits with no decompressed-byte budget.
+    ///
+    /// This is appropriate only when the caller intentionally accepts unbounded raw
+    /// decompression work, for example for a trusted local archive.
     pub const fn unlimited() -> Self {
         Self {
             max_decompressed_bytes: None,
         }
     }
 
-    /// Returns the optional maximum decompressed bytes exposed by the reader.
+    /// Returns the inclusive maximum decompressed bytes exposed, if configured.
     pub const fn max_decompressed_bytes(self) -> Option<u64> {
         self.max_decompressed_bytes
     }
 
-    /// Returns a configuration with a maximum decompressed-byte budget.
+    /// Returns a configuration with an inclusive decompressed-byte budget.
+    ///
+    /// A value of `N` permits exactly `N` bytes if the selected entry ends there.
+    /// Discovering byte `N + 1` produces a typed resource-limit error rather than
+    /// successful truncation.
     #[must_use]
     pub const fn with_max_decompressed_bytes(mut self, value: u64) -> Self {
         self.max_decompressed_bytes = Some(value);
@@ -42,12 +57,19 @@ impl Default for EntryReadLimits {
     }
 }
 
-/// A streaming selected-entry reader that enforces a decompressed-byte budget.
+/// A streaming selected-entry reader with an optional decompressed-byte budget.
 ///
-/// If the configured limit is crossed, [`Read::read`] returns an `io::Error`
-/// whose source is the typed [`PgDumpError::EntryDecompressedByteLimitExceeded`].
-/// The error is distinct from normal EOF; bytes beyond the configured limit are
-/// never returned to the caller.
+/// The inner [`EntryDataReader`] has already validated the selected entry and performs
+/// streaming decompression. This wrapper counts only bytes exposed through its [`Read`]
+/// implementation. If the configured limit is crossed, `Read::read` returns an
+/// [`io::Error`] whose source is the typed
+/// [`PgDumpError::EntryDecompressedByteLimitExceeded`]. The error is terminal and
+/// remains distinct from normal EOF; bytes beyond the configured limit are never
+/// returned.
+///
+/// Low-level callers that need the typed error can walk [`std::error::Error::source`]
+/// or use the higher-level [`Archive::copy_entry_to`], which maps the embedded
+/// `PgDumpError` back to the library error type.
 pub struct BoundedEntryDataReader<'a, R> {
     dump_id: DumpId,
     inner: EntryDataReader<'a, R>,
@@ -167,8 +189,16 @@ impl<R: Read> Read for BoundedEntryDataReader<'_, R> {
 }
 
 impl<R: Read + Seek> Archive<R> {
-    /// Opens one validated entry as a streaming decompressed reader with an
-    /// optional raw-output byte budget.
+    /// Opens one validated entry as a bounded streaming decompressed reader.
+    ///
+    /// Entry lookup, recorded-offset seek, custom block type, and dump-ID identity use
+    /// the same validation path as [`Archive::entry_reader`]. `Ok(None)` means the dump
+    /// ID is absent from the TOC. If present, `limits` applies only to decompressed bytes
+    /// exposed by the returned reader; structural and row-scan limits are separate.
+    ///
+    /// Limit exhaustion is surfaced through [`Read`] as an `io::Error` with a typed
+    /// [`PgDumpError`] source. Crossing the limit never becomes clean EOF or successful
+    /// truncation.
     pub fn entry_reader_with_limits(
         &mut self,
         id: DumpId,
@@ -178,13 +208,40 @@ impl<R: Read + Seek> Archive<R> {
             .map(|reader| reader.map(|reader| BoundedEntryDataReader::new(id, reader, limits)))
     }
 
-    /// Copies one selected entry's decompressed bytes to `writer` using the
-    /// same bounded reader path exposed by [`Archive::entry_reader_with_limits`].
+    /// Copies one selected entry's decompressed bytes to `writer` with a raw-output budget.
     ///
-    /// Bytes already accepted by the destination cannot be rolled back if a
-    /// later limit, input, decompression, or writer error occurs. Such partial
-    /// output is nevertheless returned as an error, never as successful
-    /// truncation.
+    /// This uses [`Archive::entry_reader_with_limits`] rather than a separate accounting
+    /// path. The copy is streaming and binary-safe. The returned `u64` is the number of
+    /// bytes successfully accepted by `writer` only when the complete entry finishes.
+    /// A missing dump ID is [`PgDumpError::EntryNotFound`].
+    ///
+    /// # Partial output on failure
+    ///
+    /// Bytes already accepted by `writer` cannot be rolled back if a later limit,
+    /// archive-input, decompression, counter, or writer error occurs. Such an operation
+    /// returns `Err`; partial output is never reported as successful extraction. For
+    /// [`PgDumpError::EntryOutputIo`], the error records the number of bytes accepted by
+    /// the writer before the failure.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pgdumpx::{Archive, EntryReadLimits};
+    /// use std::{fs::File, io::{BufReader, BufWriter}};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let source = File::open("backup.dump")?;
+    /// let mut archive = Archive::open(BufReader::new(source))?;
+    /// let table = archive.table(b"public", b"events").ok_or("table not found")?;
+    /// let data_id = table.data_entry_id().ok_or("table has no data entry")?;
+    /// let limits = EntryReadLimits::unlimited().with_max_decompressed_bytes(64 * 1024 * 1024);
+    /// let output = File::create("events.copy")?;
+    /// let mut output = BufWriter::new(output);
+    /// let copied = archive.copy_entry_to(data_id, &mut output, limits)?;
+    /// assert!(copied <= 64 * 1024 * 1024);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn copy_entry_to<W: Write>(
         &mut self,
         id: DumpId,
