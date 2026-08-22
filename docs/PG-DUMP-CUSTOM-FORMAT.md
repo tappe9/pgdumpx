@@ -1,8 +1,8 @@
 # PostgreSQL Custom Archive Format Notes
 
-Status: **Initial research baseline for pgdumpx v0.1**
+Status: **Implemented v0.1 format contract and compatibility evidence notes**
 
-This document records the format behavior pgdumpx relies on for PostgreSQL custom-format archives (`pg_dump -Fc`). It is not an independent PostgreSQL specification and must be kept synchronized with upstream compatibility research.
+This document records the format behavior pgdumpx v0.1 relies on for PostgreSQL custom-format archives (`pg_dump -Fc`). It is not an independent PostgreSQL specification and must be kept synchronized with upstream compatibility research.
 
 ## 1. Source governance
 
@@ -34,15 +34,15 @@ PGDMP
 
 The common archive header then stores archive version components and representation sizes used by subsequent encoded integers/offsets.
 
-Historical version constants relevant to the initial pgdumpx target include:
+Historical version constants relevant to the pgdumpx v0.1 range include:
 
 - 1.14 — table access method information was added;
 - 1.15 — compression algorithm information was added to the header;
 - 1.16 — BLOB metadata / multiple-BLOB and relkind-related archive changes were added.
 
-pgdumpx v0.1 targets 1.14–1.16 and rejects unsupported versions explicitly.
+pgdumpx v0.1 supports archive versions 1.14–1.16 and rejects unsupported versions explicitly.
 
-The public compatibility matrix must not mark these versions as verified until official pg_dump-generated fixtures pass the production parser path.
+The public compatibility matrix marks combinations as verified only after official pg_dump-generated fixtures pass the production parser path.
 
 ## 3. Header shape
 
@@ -63,20 +63,20 @@ TOC
 custom-format data blocks
 ```
 
-The exact encoded representation of fields is version-sensitive. Implementation must mirror PostgreSQL's `ReadHead`, integer/string helpers, and version gates rather than treating this list as a byte-for-byte standalone spec.
+The exact encoded representation of fields is version-sensitive. The implementation mirrors PostgreSQL's `ReadHead`, integer/string helpers, and version gates rather than treating this list as a byte-for-byte standalone spec.
 
 ## 4. Integer encoding
 
 PostgreSQL archive helpers encode logical integers independently of host endianness/width. The archive records an integer-size value used for these fields.
 
-pgdumpx must:
+pgdumpx:
 
-- decode using the archive's recorded size;
-- reject impossible/unsupported size values deliberately;
-- use checked accumulation/conversion;
-- preserve signedness semantics where upstream uses signed IDs/sentinels.
+- decodes using the archive's recorded size;
+- rejects impossible/unsupported size values deliberately;
+- uses checked accumulation/conversion;
+- preserves signedness semantics where upstream uses signed IDs/sentinels.
 
-Do not use a fixed-width little-endian read over arbitrary archive integers merely because common dumps use a familiar integer size.
+It does not use a fixed-width little-endian read over arbitrary archive integers merely because common dumps use a familiar integer size.
 
 ## 5. Offset encoding
 
@@ -94,9 +94,9 @@ POSITION_SET
 NO_DATA
 ```
 
-Only a valid set position may be used for direct seek.
+Only a valid set position is used for direct seek.
 
-pgdumpx must preserve these states in its public metadata model instead of collapsing them into `Option<u64>` where that would erase meaning.
+pgdumpx preserves these states in its public metadata model instead of collapsing them into `Option<u64>` where that would erase meaning.
 
 ## 6. TOC
 
@@ -147,9 +147,9 @@ pgdumpx follows the same integrity principle: **a stored offset is not trusted m
 
 Data is framed as a sequence of length-prefixed chunks terminated by a zero length. Compression wraps the data stream according to archive compression settings.
 
-The exact relationship between custom chunk framing and decompressor input must be tested with short-read conditions; implementation must not assume one archive chunk maps to one decompressor output chunk or one COPY row.
+The relationship between custom chunk framing and decompressor input is covered by short-read tests; the implementation does not assume one archive chunk maps to one decompressor output chunk or one COPY row.
 
-The streaming decoder boundary must accept arbitrary segmentation of the continuous compressed byte stream for the selected entry.
+The streaming decoder boundary accepts arbitrary segmentation of the continuous compressed byte stream for the selected entry.
 
 ## 9. Seeking behavior
 
@@ -184,9 +184,9 @@ Modern archives within the v0.1 target may use:
 - LZ4;
 - Zstandard.
 
-Archive 1.15 introduced explicit compression-algorithm information in the header. Earlier supported archive versions represent compression differently, so the parser must branch by archive version.
+Archive 1.15 introduced explicit compression-algorithm information in the header. Earlier supported archive versions represent compression differently, so the parser branches by archive version.
 
-Compression dependencies are implementation details; pgdumpx should expose only a stable `Compression` enum.
+Compression dependencies are implementation details; pgdumpx exposes only a stable `Compression` enum.
 
 Target versus fixture-verified combinations are tracked in `COMPATIBILITY.md`.
 
@@ -218,7 +218,7 @@ logical table-data representation validation
         └── unsupported INSERT/Binary/etc. -> typed error for row APIs
 ```
 
-The row parser must not attempt to recover by guessing that arbitrary table-data bytes are COPY text.
+The row parser does not attempt to recover by guessing that arbitrary table-data bytes are COPY text.
 
 A representative typed error is `UnsupportedTableDataRepresentation`.
 
@@ -228,7 +228,7 @@ For a supported normal pg_dump COPY-text table-data entry, the bytes obtained af
 
 The TOC also records the COPY statement for table-data entries. For supported pg_dump-generated statements, pgdumpx uses this metadata to derive the ordered column list used by the row stream.
 
-COPY text parsing is a separate format layer. Archive framing must not make assumptions such as:
+COPY text parsing is a separate format layer. Archive framing does not make assumptions such as:
 
 - one chunk equals one row;
 - all data is UTF-8;
@@ -249,9 +249,9 @@ escape / NULL decode
       └── value -> FieldRef::Bytes(logical bytes)
 ```
 
-If column metadata cannot be safely derived from a supported TOC entry, pgdumpx must not guess names. Positional row parsing may still be possible while column-aware helpers return an explicit error.
+If column metadata cannot be safely derived from a supported TOC entry, pgdumpx does not guess names. Positional row parsing may still be possible while column-aware helpers return an explicit error.
 
-Column lookup must distinguish valid metadata with an absent requested name from metadata that could not be derived.
+Column lookup distinguishes valid metadata with an absent requested name from metadata that could not be derived.
 
 Detailed row semantics live in `COPY-TEXT.md`; API shape lives in `API-DESIGN.md`.
 
@@ -306,7 +306,7 @@ maximum rows scanned
 maximum decompressed bytes consumed
 ```
 
-Accounting must happen incrementally on the streaming path with checked counters. Exceeding a configured budget terminates the operation with a typed resource-limit error.
+Accounting happens incrementally on the streaming path with checked counters. Exceeding a configured budget terminates the operation with a typed resource-limit error.
 
 This is a pgdumpx safety policy layered on top of the archive format; it is not metadata stored by PostgreSQL in the Custom Format archive.
 
@@ -316,11 +316,11 @@ Custom archives also have large-object block handling with internal OID framing.
 
 v0.1 preserves the generic TOC information needed for safe traversal and inspection: object description/type, version-aware relkind presence, dependencies, ownership, and data-location state remain visible without a large-object-specific public payload model. A `BLOB METADATA` entry can therefore be inspected as a normal `TocEntry` without treating its payload as table COPY data.
 
-Full large-object extraction is not required for the first milestone. Large-object payload framing is not forced through the flat table-data or row-aware APIs.
+Full large-object extraction is not part of the v0.1 contract. Large-object payload framing is not forced through the flat table-data or row-aware APIs.
 
 ## 15. Compatibility fixtures
 
-The committed Alpha 3 compatibility corpus is evidence-backed rather than aspirational:
+The committed v0.1 compatibility corpus is evidence-backed rather than aspirational:
 
 ```text
 archive version | PostgreSQL generator | compression              | representation
@@ -336,7 +336,7 @@ The production compatibility job compares selected decompressed output from all 
 
 Column-aware COPY fixtures preserve the generated TOC COPY statement and verify that its column order matches extracted COPY fields.
 
-The public status of these combinations is maintained in `COMPATIBILITY.md` and must not exceed this evidence.
+The public status of these combinations is maintained in `COMPATIBILITY.md` and does not exceed this evidence.
 
 ## 16. Upstream-change checklist
 
