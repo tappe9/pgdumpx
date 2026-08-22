@@ -32,16 +32,23 @@ fn official_fixtures_expose_complete_toc_metadata_without_hiding_version_absence
 
         let table_entry = archive.entry(table_id).expect("TABLE entry must resolve");
         assert_eq!(table_entry.catalog_table_oid().as_bytes(), b"1259");
-        assert!(table_entry
-            .catalog_oid()
-            .as_bytes()
-            .iter()
-            .all(u8::is_ascii_digit));
+        assert!(
+            table_entry
+                .catalog_oid()
+                .as_bytes()
+                .iter()
+                .all(u8::is_ascii_digit)
+        );
         assert_eq!(table_entry.name().as_bytes(), b"orders");
         assert_eq!(table_entry.description().as_bytes(), b"TABLE");
-        assert_eq!(table_entry.namespace().map(|value| value.as_bytes()), Some(b"public".as_slice()));
         assert_eq!(
-            table_entry.table_access_method().map(|value| value.as_bytes()),
+            table_entry.namespace().map(|value| value.as_bytes()),
+            Some(b"public".as_slice())
+        );
+        assert_eq!(
+            table_entry
+                .table_access_method()
+                .map(|value| value.as_bytes()),
             Some(b"heap".as_slice())
         );
         assert_eq!(table_entry.relation_kind(), expected_relkind);
@@ -52,9 +59,14 @@ fn official_fixtures_expose_complete_toc_metadata_without_hiding_version_absence
         assert!(table_entry.dependencies().is_empty());
         assert_eq!(table_entry.data_location(), DataLocation::NoData);
 
-        let data_entry = archive.entry(data_id).expect("TABLE DATA entry must resolve");
+        let data_entry = archive
+            .entry(data_id)
+            .expect("TABLE DATA entry must resolve");
         assert_eq!(data_entry.description().as_bytes(), b"TABLE DATA");
-        assert_eq!(data_entry.namespace().map(|value| value.as_bytes()), Some(b"public".as_slice()));
+        assert_eq!(
+            data_entry.namespace().map(|value| value.as_bytes()),
+            Some(b"public".as_slice())
+        );
         assert!(data_entry.definition().is_none());
         assert!(data_entry.drop_statement().is_none());
         assert!(data_entry.copy_statement().is_some());
@@ -62,7 +74,10 @@ fn official_fixtures_expose_complete_toc_metadata_without_hiding_version_absence
         assert!(data_entry.table_access_method().is_none());
         assert_eq!(data_entry.relation_kind(), version_relation_kind(version));
         assert_eq!(data_entry.dependencies(), &[table_id]);
-        assert!(matches!(data_entry.data_location(), DataLocation::Offset(_)));
+        assert!(matches!(
+            data_entry.data_location(),
+            DataLocation::Offset(_)
+        ));
     }
 }
 
