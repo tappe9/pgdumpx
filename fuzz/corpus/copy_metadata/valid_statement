@@ -1,0 +1,1 @@
+COPY public.orders (id, note) FROM stdin;

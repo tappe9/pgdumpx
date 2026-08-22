@@ -1,0 +1,57 @@
+[package]
+name = "pgdumpx-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pgdumpx = { path = "../crates/pgdumpx" }
+
+[[bin]]
+name = "archive_open"
+path = "fuzz_targets/archive_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "toc_metadata"
+path = "fuzz_targets/toc_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entry_framing"
+path = "fuzz_targets/entry_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "copy_rows"
+path = "fuzz_targets/copy_rows.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "copy_metadata"
+path = "fuzz_targets/copy_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "limit_accounting"
+path = "fuzz_targets/limit_accounting.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

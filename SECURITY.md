@@ -96,13 +96,15 @@ See `docs/COPY-TEXT.md` for the byte-level row contract.
 
 ## Fuzzing
 
-The planned baseline invariants are:
+The baseline invariants are:
 
 ```text
 arbitrary archive bytes -> successful parse/extraction or typed error, never parser panic
 arbitrary COPY bytes    -> rows or typed error, never parser panic
 ```
 
-Fuzzing should include structural limits, row limits, raw extraction limits, malformed COPY escape boundaries, unsupported-representation transitions, and checked scan counters.
+The committed `cargo-fuzz` harnesses cover raw archive opening, TOC/metadata parsing with structural limits, selected-entry block/chunk framing, COPY row/escape parsing, COPY column metadata, and structural/scan/raw-output limit accounting. Each harness uses bounded inputs and the normal production parser/limit paths.
 
-Security-relevant regression inputs should remain in the permanent test corpus after fixes.
+Pull-request CI compiles all fuzz targets and runs a short deterministic-count smoke campaign. Longer coverage-guided campaigns remain a local or dedicated fuzzing activity rather than a latency-heavy pull-request gate. Reproducible commands, target ownership, bounds, and the crash-to-regression workflow are documented in [`fuzz/README.md`](fuzz/README.md).
+
+When fuzzing finds a panic, hang, or boundary defect, the minimized input must first be represented by a deterministic failing regression test before production code is changed. Security-relevant regression inputs remain in the permanent corpus after fixes.

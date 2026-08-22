@@ -38,6 +38,30 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
+  fuzz-smoke:
+    name: Fuzz target smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Build fuzz targets
+        run: cargo +nightly fuzz build --fuzz-dir fuzz
+
+      - name: Smoke fuzz targets
+        run: |
+          for target in archive_open toc_metadata entry_framing copy_rows copy_metadata limit_accounting; do
+            cargo +nightly fuzz run --fuzz-dir fuzz "$target" -- -runs=64 -max_len=65536 -timeout=2
+          done
+
   compatibility-differential:
     name: Compatibility differential
     runs-on: ubuntu-latest

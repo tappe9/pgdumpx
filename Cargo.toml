@@ -3,6 +3,7 @@ members = [
     "crates/pgdumpx",
     "crates/pgdumpx-cli",
 ]
+exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]
