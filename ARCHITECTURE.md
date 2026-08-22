@@ -1,8 +1,8 @@
 # pgdumpx Architecture
 
-Status: **Accepted for initial implementation**
+Status: **Implemented v0.1 architecture**
 
-This document defines the initial architecture for pgdumpx. The first implementation is intentionally narrow: a safe, read-only, file-backed row scanner for modern PostgreSQL custom-format archives.
+This document describes the implemented v0.1 architecture for pgdumpx: a safe, read-only, seekable-source row scanner for PostgreSQL custom-format archives.
 
 ## 1. Architectural goals
 
@@ -67,7 +67,7 @@ The core does not own terminal formatting, command-line parsing, Python objects,
 
 ## 3. Runtime and dependency boundary
 
-The default build must not require:
+The default v0.1 build does not require:
 
 - a running PostgreSQL server;
 - `libpq`;
@@ -79,11 +79,11 @@ The project does not use “Pure Rust” as a blanket guarantee about every tran
 
 pgdumpx implements its own narrow archive read path rather than using another dump library as a mandatory backend. This keeps byte preservation, integrity validation, resource accounting, and typed errors under one coherent contract. Adjacent libraries may be used for research and differential testing.
 
-See `docs/adr/0007-standalone-row-scanner-and-vertical-slices.md`.
+See `docs/adr/0007-standalone-row-scanner-and-vertical-slices.md` and `docs/PACKAGING.md`.
 
-## 4. Initial workspace direction
+## 4. Workspace layout
 
-The first code milestone uses a Cargo workspace with separate library and CLI crates:
+v0.1 uses a Cargo workspace with separate library and CLI crates:
 
 ```text
 pgdumpx/
@@ -108,7 +108,7 @@ pgdumpx/
 
 Exact private module names are not public API commitments.
 
-The CLI crate exists from the first vertical slice so end-to-end behavior is exercised early. Parser logic remains in the library.
+The CLI crate is an end-to-end consumer of the public library path. Parser logic remains in the library.
 
 ## 5. Core responsibilities
 
@@ -175,13 +175,13 @@ build ArchiveIndex
 Archive<R>
 ```
 
-Opening must not read or decompress every table-data block.
+Opening does not read or decompress every table-data block.
 
-The first vertical slice may parse only the archive 1.16 TOC fields required for table lookup and row access. The final v0.1 parser must implement the complete supported-version requirements recorded in `docs/REQUIREMENTS.md`.
+The v0.1 parser deliberately handles the supported archive 1.14–1.16 version gates and public metadata surface recorded in `docs/REQUIREMENTS.md` and `docs/COMPATIBILITY.md`.
 
 ## 7. Source abstraction
 
-The initial high-performance API requires a seekable source:
+The v0.1 high-performance API requires a seekable source:
 
 ```rust
 R: std::io::Read + std::io::Seek
@@ -189,14 +189,14 @@ R: std::io::Read + std::io::Seek
 
 This matches the primary use case: local files and other seekable byte sources.
 
-Why `Read + Seek` first:
+Why `Read + Seek`:
 
 - custom archives record data positions when generated on seekable output;
 - selective entry access is foundational to the row-aware workflow;
 - arbitrary non-seekable streaming requires sequential block discovery and different state management;
-- adding a separate sequential-reader API later is safer than weakening the file-backed API now.
+- a future separate sequential-reader API can be added without weakening the seekable v0.1 contract.
 
-A convenience `Archive::open_path()` may be added outside the parser's lowest-level primitives.
+Filesystem convenience APIs are separate from the parser's lowest-level primitives.
 
 ## 8. Archive index
 
@@ -213,7 +213,7 @@ struct ArchiveIndex {
 }
 ```
 
-Exact collection types are implementation details. Common dump-ID and `(schema, table)` lookup must not repeatedly scan all TOC entries.
+Exact collection types are implementation details. Common dump-ID and `(schema, table)` lookup does not repeatedly scan all TOC entries.
 
 The index is **entry-level**, not row-level. It identifies a selected table-data entry and archive offset; it does not provide offsets for individual COPY rows.
 
@@ -265,9 +265,9 @@ Raw entry reading and row-aware parsing are separate capabilities. An archive en
 
 ### Raw output limits
 
-A low-level unlimited `EntryDataReader` may be available for trusted callers. The library also provides a bounded reader and a high-level copy operation with an `EntryReadLimits`-style decompressed-byte budget.
+A low-level unlimited `EntryDataReader` is available to trusted callers. The library also provides bounded `entry_reader_with_limits` and `copy_entry_to` paths using `EntryReadLimits` decompressed-byte accounting.
 
-Required behavior:
+Implemented behavior:
 
 - count decompressed bytes returned or copied;
 - use checked counters;
@@ -275,9 +275,11 @@ Required behavior:
 - distinguish limit exhaustion from normal EOF;
 - do not report a truncated stream as successful completion;
 - preserve a typed pgdumpx resource error through the `std::io::Read` error source;
-- make the CLI `extract` command use the bounded high-level path.
+- make the CLI `extract` command use the bounded high-level path with a finite 1 GiB default.
 
-Large-object entries with OID framing may use a separate API rather than being forced into a flat byte stream.
+Because the copy path streams to its destination, bytes written before a later limit/input/writer failure cannot be rolled back; the operation still reports failure. Exact semantics are documented in `docs/RAW-EXTRACTION.md`.
+
+Large-object entries with OID framing may use a separate future API rather than being forced into a flat table-data stream.
 
 ## 11. COPY text parsing
 
@@ -400,16 +402,14 @@ The design rejects:
 
 Compression is an internal streaming boundary. Archive framing identifies the algorithm; a small abstraction returns a `Read` implementation for decompressed bytes.
 
-Final v0.1 algorithms:
+v0.1 implements:
 
 - none;
 - gzip;
 - LZ4;
 - Zstandard.
 
-The first end-to-end slice implements none and gzip for archive 1.16. LZ4, Zstandard, and older version representations follow after the row-search path is working.
-
-Compression dependencies are not part of the public API. Backend selection is evidence-based rather than governed by an ambiguous “Pure Rust” label.
+Compression dependencies are not part of the public API. Backend selection is evidence-based rather than governed by an ambiguous “Pure Rust” label. LZ4 and Zstandard are optional library features and are enabled by the default CLI; disabled backends remain recognizable in metadata and fail selected-entry reads explicitly.
 
 ## 14. Error architecture
 
@@ -460,6 +460,8 @@ pub struct Limits {
 }
 ```
 
+`Limits::default()` is finite and compatibility-oriented; callers can provide stricter values through the public limit-aware constructors/open path.
+
 ### Row-scan limits
 
 Equivalent in purpose to:
@@ -481,6 +483,8 @@ Accounting rules:
 - counters use checked arithmetic;
 - early match does not consume later rows.
 
+The scan budgets are optional; the `find` CLI exposes positive-`u64` row/byte overrides and otherwise leaves them unlimited.
+
 ### Raw extraction limits
 
 Equivalent in purpose to:
@@ -491,25 +495,23 @@ pub struct EntryReadLimits {
 }
 ```
 
-Raw limit exhaustion is an error, not successful truncation.
-
-Exact defaults are decided from compatibility fixtures, usability, fuzzing, and CLI needs.
+Raw limit exhaustion is an error, not successful truncation. Trusted library callers may select an unlimited low-level read; the CLI uses a finite 1 GiB default and explicit positive-`u64` override.
 
 ## 16. Version and compatibility policy
 
-The final v0.1 target is archive versions 1.14, 1.15, and 1.16.
+v0.1 supports archive versions 1.14, 1.15, and 1.16 through deliberate version gates.
 
 Version-specific fields are decoded deliberately. In particular, archive 1.15 introduced explicit compression-algorithm information and 1.16 introduced additional large-object metadata/relkind-related changes.
 
 Unsupported versions return a typed error rather than being parsed optimistically.
 
-Delivery begins with archive 1.16. Intended versus fixture-verified support is tracked in `docs/COMPATIBILITY.md`; the narrow alpha must not be described as complete v0.1 compatibility.
+Fixture-verified support is tracked in `docs/COMPATIBILITY.md`; version/backend cells are not expanded beyond production-path fixture evidence.
 
 ## 17. Safety policy
 
 Every archive byte is untrusted.
 
-Initial rules:
+Rules:
 
 - no project-authored `unsafe` without a separately accepted ADR;
 - checked integer conversions, offsets, and counters;
@@ -521,7 +523,7 @@ Initial rules:
 - provide a bounded raw decompression path;
 - keep first-match filtering on the same bounded path as iteration;
 - reject unsupported representations before COPY parsing;
-- fuzz parser and accounting boundaries before stable release.
+- maintain deterministic malformed-input regressions and bounded fuzz coverage for parser/accounting boundaries.
 
 The no-panic invariant does not claim recovery from global allocator exhaustion or OS-level failures.
 
@@ -533,9 +535,9 @@ The architecture avoids global mutable state that would prevent future parallel 
 
 Parallel extraction must be benchmarked; it is not automatically beneficial for compressed input or one storage device.
 
-## 19. CLI as an early library consumer
+## 19. CLI as a library consumer
 
-The CLI must not duplicate parser logic. Planned v0.1 commands are:
+The implemented v0.1 commands are:
 
 ```text
 inspect
@@ -544,11 +546,11 @@ extract
 find
 ```
 
-`find` is included in the first vertical slice and delegates to table lookup, streaming decompression, COPY parsing, column lookup, limits, and `find_first`.
+All four delegate to the public library path. `inspect`/`list` stop at metadata; `extract` uses table lookup plus bounded raw copying; `find` composes table lookup, streaming decompression, COPY parsing, column lookup, scan limits, and first-match search.
 
-`extract` writes the decompressed selected table-data body as binary-safe bytes. It does not add DDL or a COPY statement wrapper and uses the bounded raw-copy path.
+`extract` writes the decompressed selected table-data body as binary-safe bytes. It does not add DDL or a COPY statement wrapper and uses the bounded raw-copy path. Bytes already streamed before a later error cannot be rolled back; completion is signaled by process status.
 
-v0.1 CLI identifiers and values are UTF-8, while the Rust API remains byte-oriented.
+v0.1 CLI identifiers and query values are UTF-8, while the Rust API remains byte-oriented. Table selectors use exactly one ASCII `.` with two non-empty components and no SQL identifier quoting.
 
 Exit behavior:
 
@@ -560,9 +562,9 @@ Exit behavior:
 
 Diagnostics remain on stderr so binary stdout is not corrupted.
 
-## 20. Vertical-slice delivery
+## 20. Delivery history
 
-The first usable alpha is deliberately narrow:
+v0.1 was delivered as vertical slices so the complete row-inspection path was exercised before compatibility and release-readiness expansion:
 
 ```text
 workspace + CI
@@ -573,11 +575,13 @@ workspace + CI
     -> COPY rows + columns
     -> find_first
     -> pgdumpx find
+    -> complete limits/raw extraction/CLI semantics
+    -> archive 1.14/1.15 + LZ4/Zstandard compatibility
+    -> fuzzing + benchmarks
+    -> CI/rustdoc/packaging/final audit
 ```
 
-After this path works with official fixtures, development expands to full limits, raw extraction semantics, archive 1.14/1.15, LZ4/Zstandard, fuzzing, and benchmarks.
-
-The final v0.1 scope remains unchanged. This sequence exposes user value and integration risks earlier than a horizontal layer-by-layer roadmap.
+This history is sequencing evidence, not a statement that current v0.1 remains at an alpha slice. Normative behavior is defined by `docs/REQUIREMENTS.md`; final evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`.
 
 ## 21. Testing architecture
 
@@ -622,11 +626,11 @@ Cover column lookup, first/middle/late/absent match, first of multiple matches, 
 
 ### CLI integration tests
 
-Cover binary `extract` stdout, diagnostics on stderr, UTF-8 argument behavior, and exit `0`/`1`/`2+` semantics.
+Cover binary `extract` stdout, diagnostics on stderr, UTF-8 argument behavior, exact selector grammar, limit semantics, partial raw output on non-success, and exit `0`/`1`/`2+` semantics.
 
 ### Differential checks
 
-Where practical, compare selected decompressed bytes or logical rows with `pg_restore` output and adjacent libraries for equivalent operations.
+Where operations are semantically equivalent, CI compares selected decompressed bytes/logical rows with official `pg_restore` output.
 
 ### Fuzzing
 
@@ -638,11 +642,13 @@ arbitrary framed bytes   -> output or typed Err(...), never parser panic
 arbitrary COPY bytes     -> rows or typed Err(...), never parser panic
 ```
 
+Six production-path fuzz targets plus a committed regression corpus exercise archive open/TOC, entry framing, COPY rows, COPY metadata, and limit accounting. Ordinary CI builds and smoke-runs them; longer campaigns remain separately reproducible.
+
 ## 22. Performance policy
 
 Performance is a product requirement but not a correctness exception.
 
-Benchmarks measure at least:
+The reproducible v0.1 benchmark harness measures:
 
 - archive open / TOC time;
 - peak RSS during open;
@@ -652,9 +658,9 @@ Benchmarks measure at least:
 - compression-specific throughput;
 - raw-output and row-scan accounting overhead.
 
-Published benchmark reports record hardware, OS, commit, fixture/generator, archive version, compression, command/API path, match position, warm-up/repetition method, and measurement tool.
+Benchmark reports record hardware, OS, commit, fixture/generator, archive version, compression, command/API path, match position, warm-up/repetition method, and measurement tool.
 
-Comparisons against PostgreSQL tools or libraries are included only when they answer a concrete question and semantic differences are stated.
+Comparisons against PostgreSQL tools or libraries are included only when they answer a concrete question and semantic differences are stated. Ordinary CI compiles/smokes the benchmark runner rather than generating performance claims. See `benchmarks/README.md`.
 
 ## 23. Accepted ADRs
 
