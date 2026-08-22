@@ -232,8 +232,8 @@ impl<R: Read + Seek> Archive<R> {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let source = File::open("backup.dump")?;
     /// let mut archive = Archive::open(BufReader::new(source))?;
-    /// let table = archive.table(b"public", b"events").ok_or("table not found")?;
-    /// let data_id = table.data_entry_id().ok_or("table has no data entry")?;
+    /// let table = archive.table(b"public", b"events").expect("table metadata");
+    /// let data_id = table.data_entry_id().expect("table-data entry");
     /// let limits = EntryReadLimits::unlimited().with_max_decompressed_bytes(64 * 1024 * 1024);
     /// let output = File::create("events.copy")?;
     /// let mut output = BufWriter::new(output);
