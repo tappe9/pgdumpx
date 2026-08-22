@@ -145,7 +145,7 @@ impl<R: Read + Seek> Archive<R> {
         &mut self,
         id: DumpId,
         limits: EntryReadLimits,
-    ) -> Result<Option<EntryDataReader<'_, R>>, PgDumpError>;
+    ) -> Result<Option<BoundedEntryDataReader<'_, R>>, PgDumpError>;
 
     pub fn copy_entry_to<W: Write>(
         &mut self,
@@ -156,7 +156,7 @@ impl<R: Read + Seek> Archive<R> {
 }
 ```
 
-`EntryDataReader` implements `std::io::Read` and yields decompressed entry bytes. If a limit-aware reader exhausts its budget, the `Read` error must preserve a typed pgdumpx resource error as its source; high-level pgdumpx operations map it back to `PgDumpError`.
+`EntryDataReader` implements `std::io::Read` and yields decompressed entry bytes. `BoundedEntryDataReader` wraps the same validated/decompressed path and applies the raw-output budget. If a bounded reader exhausts its budget, the `Read` error preserves a typed pgdumpx resource error as its source; high-level pgdumpx operations map it back to `PgDumpError`.
 
 Raw limits count decompressed bytes returned or copied. Crossing the limit is an error and must not be presented as a successful truncated stream. A deliberately truncating API, if ever added, must be named separately.
 
@@ -337,7 +337,7 @@ impl Row<'_> {
 
 `FieldRef::Bytes` contains logical field bytes after PostgreSQL COPY text escape decoding. It does not expose the escaped on-wire spelling.
 
-A row-reader direction:
+A row-reader direction matching the implemented v0.1 surface:
 
 ```rust
 pub struct CopyRowReader<R> {
@@ -345,7 +345,14 @@ pub struct CopyRowReader<R> {
 }
 
 impl<R: Read> CopyRowReader<R> {
-    pub fn new(reader: R, limits: CopyLimits) -> Self;
+    pub fn new(reader: R) -> Self;
+    pub fn with_limits(reader: R, limits: Limits) -> Self;
+    pub fn with_scan_limits(reader: R, scan_limits: ScanLimits) -> Self;
+    pub fn with_limits_and_scan_limits(
+        reader: R,
+        limits: Limits,
+        scan_limits: ScanLimits,
+    ) -> Self;
     pub fn next_row(&mut self) -> Result<Option<Row<'_>>, PgDumpError>;
 }
 ```
@@ -487,7 +494,7 @@ impl<R: Read> TableRowReader<'_, R> {
 }
 ```
 
-The exact split between default and explicit-limit methods may change during implementation. Callers must have a first-class way to supply scan limits to the same streaming search path.
+The default method performs the same streaming scan without an additional operation-level budget; constructor-level scan limits still apply. `find_first_with_limits` adds a budget measured from that call's current stream position.
 
 Example:
 
@@ -504,14 +511,15 @@ let row = rows.find_first(|row| {
 
 Semantics:
 
-- scan rows in COPY order from the beginning of the selected data entry;
+- scan rows in COPY order from the reader's current position; a fresh `TableRowReader` starts at the beginning of the selected data entry;
 - call the predicate once for each fully parsed row within budget;
 - when it returns `true`, copy that row into `OwnedRow` and stop;
-- return `Ok(None)` if the stream ends without a match;
+- return `Ok(None)` if the remaining stream ends without a match;
 - reuse the same buffer for non-matching rows;
 - do not buffer the complete table;
 - preserve byte-oriented fields so non-UTF-8 values can be matched;
-- enforce structural and total-work limits on the same streaming path.
+- enforce structural and total-work limits on the same streaming path;
+- do not rewind a reader that has already yielded rows.
 
 The closure API deliberately avoids a SQL parser. Callers may implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
 
@@ -529,7 +537,7 @@ seek to table-data entry  = direct seek when offset is recorded
 find row inside table     = sequential decompression + COPY scan
 ```
 
-A match near the start can terminate quickly. A late or absent match may process the complete selected entry unless a configured budget stops the operation. Worst-case unrestricted work is proportional to selected table-data size.
+A match near the start can terminate quickly. A late or absent match may process the complete selected entry for a fresh reader, or all remaining selected data after prior row reads, unless a configured budget stops the operation. Worst-case unrestricted work is proportional to the remaining selected table-data size.
 
 Public documentation must not imply `O(1)`/`O(log n)` row lookup or database-index semantics.
 
