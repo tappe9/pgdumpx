@@ -59,10 +59,14 @@ fn path_open_preserves_existing_malformed_archive_taxonomy() {
 fn path_open_remains_metadata_only_when_payload_bytes_are_absent() {
     let path = temporary_path("metadata-only");
     let bytes = build_archive(&two_table_entries());
-    assert!(bytes.len() < 2_048, "test fixture must not contain entry payloads");
+    assert!(
+        bytes.len() < 2_048,
+        "test fixture must not contain entry payloads"
+    );
     std::fs::write(&path, bytes).expect("test archive must be writable");
 
-    let archive = Archive::open_path(&path).expect("metadata-only open must not read payload bytes");
+    let archive =
+        Archive::open_path(&path).expect("metadata-only open must not read payload bytes");
     assert!(archive.table(b"public", b"orders").is_some());
     drop(archive);
     std::fs::remove_file(&path).expect("test archive must be removable");
