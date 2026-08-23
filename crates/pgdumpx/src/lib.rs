@@ -115,10 +115,13 @@ mod custom;
 mod entry;
 mod error;
 mod error_taxonomy;
+mod extraction_plan;
+mod file;
 mod io;
 mod limits;
 mod model;
 mod raw_entry;
+mod selector;
 mod table_rows;
 
 #[cfg(test)]
@@ -142,10 +145,12 @@ pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
 pub use error_taxonomy::{ErrorCategory, LimitContext, ResourceLimit};
+pub use extraction_plan::{ExtractionPlan, ExtractionPlanError, ResolvedExtractionPlan};
 pub use limits::{Limits, ScanLimits};
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
 };
 pub use raw_entry::{BoundedEntryDataReader, EntryReadLimits};
+pub use selector::TableSelector;
 pub use table_rows::TableRowReader;
