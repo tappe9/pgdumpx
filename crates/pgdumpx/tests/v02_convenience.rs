@@ -45,6 +45,30 @@ fn path_open_preserves_typed_file_io_source() {
 }
 
 #[test]
+fn path_open_preserves_existing_malformed_archive_taxonomy() {
+    let path = temporary_path("malformed");
+    std::fs::write(&path, b"NOTPGDMP").expect("test archive must be writable");
+
+    let error = Archive::open_path(&path).unwrap_err();
+    std::fs::remove_file(&path).expect("test archive must be removable");
+
+    assert!(matches!(error, PgDumpError::InvalidArchiveMagic { .. }));
+}
+
+#[test]
+fn path_open_remains_metadata_only_when_payload_bytes_are_absent() {
+    let path = temporary_path("metadata-only");
+    let bytes = build_archive(&two_table_entries());
+    assert!(bytes.len() < 2_048, "test fixture must not contain entry payloads");
+    std::fs::write(&path, bytes).expect("test archive must be writable");
+
+    let archive = Archive::open_path(&path).expect("metadata-only open must not read payload bytes");
+    assert!(archive.table(b"public", b"orders").is_some());
+    drop(archive);
+    std::fs::remove_file(&path).expect("test archive must be removable");
+}
+
+#[test]
 fn owned_table_selector_round_trips_exact_non_utf8_bytes() {
     let schema = [0xfe, b's'];
     let name = [0xff, b't'];
@@ -95,11 +119,39 @@ fn extraction_plan_preserves_order_limits_and_rejects_duplicates() {
 }
 
 #[test]
+fn logical_plan_reresolves_selectors_against_each_archive_instance() {
+    let plan = ExtractionPlan::new(vec![TableSelector::new(b"public", b"orders")]).unwrap();
+
+    {
+        let first = Archive::open(Cursor::new(build_archive(&two_table_entries()))).unwrap();
+        let resolved = plan.preflight(&first).unwrap();
+        assert_eq!(resolved.tables()[0].table_entry_id().as_i32(), 1);
+        assert_eq!(resolved.tables()[0].data_entry_id().unwrap().as_i32(), 2);
+    }
+
+    let second_entries = vec![
+        EntrySpec::table(11, b"public", b"orders", b"41"),
+        EntrySpec::table_data(12, b"public", b"orders", b"41", vec![b"11".to_vec()]),
+    ];
+    let second = Archive::open(Cursor::new(build_archive(&second_entries))).unwrap();
+    let resolved = plan.preflight(&second).unwrap();
+
+    assert_eq!(resolved.tables()[0].table_entry_id().as_i32(), 11);
+    assert_eq!(resolved.tables()[0].data_entry_id().unwrap().as_i32(), 12);
+}
+
+#[test]
 fn preflight_resolves_all_targets_in_order_without_payload_io() {
     let bytes_read = Rc::new(Cell::new(0_u64));
-    let reader = TrackingReader::new(build_archive(&two_table_entries()), Rc::clone(&bytes_read));
+    let seek_count = Rc::new(Cell::new(0_u64));
+    let reader = TrackingReader::new(
+        build_archive(&two_table_entries()),
+        Rc::clone(&bytes_read),
+        Rc::clone(&seek_count),
+    );
     let archive = Archive::open(reader).unwrap();
-    let after_open = bytes_read.get();
+    let after_open_bytes = bytes_read.get();
+    let after_open_seeks = seek_count.get();
     let plan = ExtractionPlan::new(vec![
         TableSelector::new(b"warehouse", b"inventory"),
         TableSelector::new(b"public", b"orders"),
@@ -108,7 +160,8 @@ fn preflight_resolves_all_targets_in_order_without_payload_io() {
 
     let resolved = plan.preflight(&archive).unwrap();
 
-    assert_eq!(bytes_read.get(), after_open);
+    assert_eq!(bytes_read.get(), after_open_bytes);
+    assert_eq!(seek_count.get(), after_open_seeks);
     assert_eq!(resolved.tables().len(), 2);
     assert_eq!(resolved.tables()[0].name(), b"inventory");
     assert_eq!(resolved.tables()[1].name(), b"orders");
@@ -139,17 +192,23 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn temporary_path(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("pgdumpx-v02-{label}-{}.dump", std::process::id()))
+}
+
 #[derive(Debug)]
 struct TrackingReader {
     inner: Cursor<Vec<u8>>,
     bytes_read: Rc<Cell<u64>>,
+    seek_count: Rc<Cell<u64>>,
 }
 
 impl TrackingReader {
-    fn new(bytes: Vec<u8>, bytes_read: Rc<Cell<u64>>) -> Self {
+    fn new(bytes: Vec<u8>, bytes_read: Rc<Cell<u64>>, seek_count: Rc<Cell<u64>>) -> Self {
         Self {
             inner: Cursor::new(bytes),
             bytes_read,
+            seek_count,
         }
     }
 }
@@ -169,6 +228,12 @@ impl Read for TrackingReader {
 
 impl Seek for TrackingReader {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.seek_count.set(
+            self.seek_count
+                .get()
+                .checked_add(1)
+                .expect("test seek count does not overflow"),
+        );
         self.inner.seek(position)
     }
 }
