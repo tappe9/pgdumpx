@@ -48,12 +48,12 @@ fn path_open_preserves_typed_file_io_source() {
 fn owned_table_selector_round_trips_exact_non_utf8_bytes() {
     let schema = [0xfe, b's'];
     let name = [0xff, b't'];
-    let selector = TableSelector::new(&schema, &name);
+    let selector = TableSelector::new(schema, name);
     let stored = selector.clone();
 
     assert_eq!(stored.schema(), schema.as_slice());
     assert_eq!(stored.name(), name.as_slice());
-    assert_eq!(stored, TableSelector::new(&schema, &name));
+    assert_eq!(stored, TableSelector::new(schema, name));
     assert_ne!(stored, TableSelector::new(b"public", b"orders"));
 }
 
