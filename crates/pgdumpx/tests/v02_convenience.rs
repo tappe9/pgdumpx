@@ -22,11 +22,9 @@ fn opens_official_fixture_from_path_and_honors_explicit_limits() {
     let archive = Archive::open_path(&path).expect("path convenience must open official fixture");
     assert!(archive.table(b"public", b"orders").is_some());
 
-    let error = Archive::open_path_with_limits(
-        &path,
-        Limits::default_compatible().with_max_toc_entries(0),
-    )
-    .unwrap_err();
+    let error =
+        Archive::open_path_with_limits(&path, Limits::default_compatible().with_max_toc_entries(0))
+            .unwrap_err();
     assert!(matches!(
         error,
         PgDumpError::TocEntryLimitExceeded { limit: 0, .. }
@@ -69,9 +67,11 @@ fn selector_resolution_matches_existing_exact_table_lookup() {
 
     assert_eq!(selected.table_entry_id(), direct.table_entry_id());
     assert_eq!(selected.data_entry_id(), direct.data_entry_id());
-    assert!(archive
-        .resolve_table(&TableSelector::new(b"PUBLIC", b"orders"))
-        .is_none());
+    assert!(
+        archive
+            .resolve_table(&TableSelector::new(b"PUBLIC", b"orders"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -79,11 +79,9 @@ fn extraction_plan_preserves_order_limits_and_rejects_duplicates() {
     let orders = TableSelector::new(b"public", b"orders");
     let inventory = TableSelector::new(b"warehouse", b"inventory");
     let limits = EntryReadLimits::unlimited().with_max_decompressed_bytes(4096);
-    let plan = ExtractionPlan::with_entry_read_limits(
-        vec![orders.clone(), inventory.clone()],
-        limits,
-    )
-    .unwrap();
+    let plan =
+        ExtractionPlan::with_entry_read_limits(vec![orders.clone(), inventory.clone()], limits)
+            .unwrap();
 
     assert_eq!(plan.selectors(), &[orders.clone(), inventory.clone()]);
     assert_eq!(plan.entry_read_limits(), limits);
@@ -121,7 +119,10 @@ fn preflight_resolves_all_targets_in_order_without_payload_io() {
 fn preflight_fails_before_payload_io_for_missing_table_or_table_data() {
     let archive = Archive::open(Cursor::new(build_archive(&two_table_entries()))).unwrap();
     let missing = ExtractionPlan::new(vec![TableSelector::new(b"public", b"missing")]).unwrap();
-    assert!(matches!(missing.preflight(&archive), Err(PgDumpError::TableNotFound)));
+    assert!(matches!(
+        missing.preflight(&archive),
+        Err(PgDumpError::TableNotFound)
+    ));
 
     let entries = vec![EntrySpec::table(1, b"public", b"empty", b"41")];
     let archive = Archive::open(Cursor::new(build_archive(&entries))).unwrap();
@@ -177,13 +178,7 @@ fn two_table_entries() -> Vec<EntrySpec> {
         EntrySpec::table(1, b"public", b"orders", b"41"),
         EntrySpec::table_data(2, b"public", b"orders", b"41", vec![b"1".to_vec()]),
         EntrySpec::table(3, b"warehouse", b"inventory", b"42"),
-        EntrySpec::table_data(
-            4,
-            b"warehouse",
-            b"inventory",
-            b"42",
-            vec![b"3".to_vec()],
-        ),
+        EntrySpec::table_data(4, b"warehouse", b"inventory", b"42", vec![b"3".to_vec()]),
     ]
 }
 
