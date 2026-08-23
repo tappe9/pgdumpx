@@ -1,9 +1,5 @@
 use crate::{Archive, Limits, PgDumpError};
-use std::{
-    fs::File,
-    io::BufReader,
-    path::Path,
-};
+use std::{fs::File, io::BufReader, path::Path};
 
 impl Archive<BufReader<File>> {
     /// Opens a PostgreSQL custom-format archive from a filesystem path.
