@@ -22,7 +22,11 @@ fn filters_schema_object_type_and_name_with_and_semantics_in_toc_order() {
             .iter()
             .map(|matched| matched.entry().description_bytes())
             .collect::<Vec<_>>(),
-        vec![b"TABLE".as_slice(), b"TABLE DATA".as_slice(), b"INDEX".as_slice()]
+        vec![
+            b"TABLE".as_slice(),
+            b"TABLE DATA".as_slice(),
+            b"INDEX".as_slice()
+        ]
     );
 
     let exact = MetadataFilter::new()
@@ -68,7 +72,10 @@ fn matches_non_utf8_schema_and_name_as_exact_bytes() {
     let matches = archive.filter_metadata(&filter);
 
     assert_eq!(dump_ids(&matches), vec![7]);
-    assert_eq!(matches[0].entry().namespace_bytes(), Some(schema.as_slice()));
+    assert_eq!(
+        matches[0].entry().namespace_bytes(),
+        Some(schema.as_slice())
+    );
     assert_eq!(matches[0].entry().name_bytes(), name.as_slice());
 
     let lossy_lookalike = MetadataFilter::new()
@@ -131,9 +138,14 @@ fn only_normal_tables_with_concrete_namespaces_convert_to_table_selectors() {
     assert_eq!(dump_ids(&schema_less), vec![5]);
     assert!(schema_less[0].table_selector().is_none());
 
-    let table_data = archive.filter_metadata(&MetadataFilter::new().with_object_type(b"TABLE DATA"));
+    let table_data =
+        archive.filter_metadata(&MetadataFilter::new().with_object_type(b"TABLE DATA"));
     assert_eq!(dump_ids(&table_data), vec![2, 8]);
-    assert!(table_data.iter().all(|matched| matched.table_selector().is_none()));
+    assert!(
+        table_data
+            .iter()
+            .all(|matched| matched.table_selector().is_none())
+    );
 }
 
 fn dump_ids(matches: &[pgdumpx::MetadataMatch<'_>]) -> Vec<i32> {
@@ -188,14 +200,14 @@ impl Seek for TrackingReader {
 fn metadata_entries() -> Vec<EntrySpec> {
     vec![
         EntrySpec::table(1, Some(b"public"), b"orders", b"41"),
-        EntrySpec::table_data(
-            2,
+        EntrySpec::table_data(2, Some(b"public"), b"orders", b"41", vec![b"1".to_vec()]),
+        EntrySpec::generic(
+            3,
             Some(b"public"),
-            b"orders",
-            b"41",
-            vec![b"1".to_vec()],
+            b"orders_pkey",
+            b"INDEX",
+            SECTION_POST_DATA,
         ),
-        EntrySpec::generic(3, Some(b"public"), b"orders_pkey", b"INDEX", SECTION_POST_DATA),
         EntrySpec::table(4, Some(b"warehouse"), b"orders", b"42"),
         EntrySpec::table(5, None, b"schema_less", b"43"),
         EntrySpec::table(6, Some(b""), b"empty_schema", b"44"),
