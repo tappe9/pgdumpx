@@ -66,7 +66,7 @@ GENERATOR_VERSION="$(docker exec "${CONTAINER}" pg_dump --version | tr -d '\r')"
     || fail "unexpected pg_dump version: ${GENERATOR_VERSION}"
 readonly GENERATOR_VERSION
 
-echo "Loading deterministic benchmark dataset (${ROW_COUNT} rows)"
+echo "Loading deterministic benchmark dataset (${ROW_COUNT} rows per table)"
 docker exec "${CONTAINER}" \
     psql \
     --username=postgres \
@@ -75,13 +75,16 @@ docker exec "${CONTAINER}" \
     --set="row_count=${ROW_COUNT}" \
     --file=/benchmark/dataset.sql >/dev/null
 
-ACTUAL_COUNT="$(
-    docker exec "${CONTAINER}" \
-        psql --username=postgres --dbname="${DATABASE}" --no-psqlrc --tuples-only --no-align \
-        --command='SELECT count(*) FROM bench.rows;' \
-        | tr -d '[:space:]'
-)"
-[[ "${ACTUAL_COUNT}" == "${ROW_COUNT}" ]] || fail "expected ${ROW_COUNT} rows, got ${ACTUAL_COUNT}"
+for table in rows rows_secondary; do
+    actual_count="$(
+        docker exec "${CONTAINER}" \
+            psql --username=postgres --dbname="${DATABASE}" --no-psqlrc --tuples-only --no-align \
+            --command="SELECT count(*) FROM bench.${table};" \
+            | tr -d '[:space:]'
+    )"
+    [[ "${actual_count}" == "${ROW_COUNT}" ]] \
+        || fail "expected ${ROW_COUNT} rows in bench.${table}, got ${actual_count}"
+done
 
 MIDDLE_ROW="$(( (ROW_COUNT + 1) / 2 ))"
 for expected in "1:early" "${MIDDLE_ROW}:middle" "${ROW_COUNT}:late"; do
@@ -97,10 +100,12 @@ for expected in "1:early" "${MIDDLE_ROW}:middle" "${ROW_COUNT}:late"; do
 done
 
 printf 'key\tvalue\n' > "${MANIFEST}"
-printf 'dataset_version\t1\n' >> "${MANIFEST}"
+printf 'dataset_version\t2\n' >> "${MANIFEST}"
 printf 'row_count\t%s\n' "${ROW_COUNT}" >> "${MANIFEST}"
+printf 'rows_per_table\t%s\n' "${ROW_COUNT}" >> "${MANIFEST}"
 printf 'schema\tbench\n' >> "${MANIFEST}"
 printf 'table\trows\n' >> "${MANIFEST}"
+printf 'secondary_table\trows_secondary\n' >> "${MANIFEST}"
 printf 'match_column\tmatch_key\n' >> "${MANIFEST}"
 printf 'early_row\t1\n' >> "${MANIFEST}"
 printf 'middle_row\t%s\n' "${MIDDLE_ROW}" >> "${MANIFEST}"
@@ -140,11 +145,14 @@ do
         --no-comments \
         --strict-names \
         --table=bench.rows \
+        --table=bench.rows_secondary \
         --file="${container_archive}"
 
-    docker exec "${CONTAINER}" pg_restore --list "${container_archive}" \
-        | grep -Eq 'TABLE DATA[[:space:]]+bench[[:space:]]+rows' \
+    restore_list="$(docker exec "${CONTAINER}" pg_restore --list "${container_archive}")"
+    grep -Eq 'TABLE DATA[[:space:]]+bench[[:space:]]+rows([[:space:]]|$)' <<< "${restore_list}" \
         || fail "TABLE DATA bench.rows is missing from ${name} archive"
+    grep -Eq 'TABLE DATA[[:space:]]+bench[[:space:]]+rows_secondary([[:space:]]|$)' <<< "${restore_list}" \
+        || fail "TABLE DATA bench.rows_secondary is missing from ${name} archive"
 
     docker cp "${CONTAINER}:${container_archive}" "${archive}" >/dev/null
     chmod 0644 "${archive}"
@@ -170,7 +178,7 @@ PY
     printf 'archive.%s.path\t%s\n' "${name}" "${archive}" >> "${MANIFEST}"
     printf 'archive.%s.compress\t%s\n' "${name}" "${compress}" >> "${MANIFEST}"
     printf 'archive.%s.sha256\t%s\n' "${name}" "${archive_sha256}" >> "${MANIFEST}"
-    printf 'archive.%s.command\tpg_dump -Fc --compress=%s --table=bench.rows\n' "${name}" "${compress}" >> "${MANIFEST}"
+    printf 'archive.%s.command\tpg_dump -Fc --compress=%s --table=bench.rows --table=bench.rows_secondary\n' "${name}" "${compress}" >> "${MANIFEST}"
 done
 
 echo "Benchmark dataset written to ${DATA_DIR}"

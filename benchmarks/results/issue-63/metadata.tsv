@@ -1,0 +1,56 @@
+key	value
+commit	39ba66895438fea2a77a53e83af6505aa92a2f58
+working_tree_dirty	false
+os	Linux runnervm76f27 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux 
+cpu	AMD EPYC 7763 64-Core Processor
+rustc	rustc 1.98.0 (88d9e12ae 2026-08-18) 
+cargo	cargo 1.98.0 (797e8a9bc 2026-08-05) 
+runner	crates/pgdumpx/examples/buffer_tuning_runner.rs
+copy_buffer_path	crates/pgdumpx/src/raw_entry.rs:COPY_BUFFER_BYTES
+copy_buffer_expression	8 * 1024
+gzip_input_buffer_path	crates/pgdumpx/src/entry.rs:COMPRESSED_INPUT_BUFFER_BYTES
+gzip_input_buffer_expression	8 * 1024
+baseline_buffer_bytes	8192
+candidate_buffer_bytes	4096 8192 16384 32768
+candidate_method	detached worktree; change one private production constant at a time; rebuild production code
+copy_candidate_compressions	none gzip lz4 zstd
+gzip_input_candidate_compressions	gzip
+correctness_preflight	cargo test --package pgdumpx --all-features
+measurement_clock	std::time::Instant
+peak_rss_tool	GNU time %M (KiB)
+warmup_iterations	1
+measured_repetitions	5
+peak_rss_repetitions	3
+dataset_manifest	/home/runner/work/pgdumpx/pgdumpx/target/benchmark-data/manifest.tsv
+dataset.dataset_version	2
+dataset.row_count	100000
+dataset.rows_per_table	100000
+dataset.schema	bench
+dataset.table	rows
+dataset.secondary_table	rows_secondary
+dataset.match_column	match_key
+dataset.early_row	1
+dataset.middle_row	50000
+dataset.late_row	100000
+dataset.generator	pg_dump (PostgreSQL) 18.4 (Debian 18.4-1.pgdg12+1)
+dataset.image_tag	postgres:18.4-bookworm
+dataset.image_digest	postgres@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
+dataset.platform	linux/amd64
+dataset.archive_version	1.16.0
+dataset.source_sha256	bbf8882e69ad06af70fd9ff632efa88a24471c60e270cda365d332c13e41db1c
+dataset.archive.none.path	/home/runner/work/pgdumpx/pgdumpx/target/benchmark-data/pgdumpx-bench-none.dump
+dataset.archive.none.compress	none
+dataset.archive.none.sha256	d99960f032be582bc8840e99e04c6e94adffc59d7887650298e7d9661daf4ef7
+dataset.archive.none.command	pg_dump -Fc --compress=none --table=bench.rows --table=bench.rows_secondary
+dataset.archive.gzip.path	/home/runner/work/pgdumpx/pgdumpx/target/benchmark-data/pgdumpx-bench-gzip.dump
+dataset.archive.gzip.compress	gzip:6
+dataset.archive.gzip.sha256	768326e66c504f6b0e31950bc42c8114fabc303e4e577efb2b8e65504a736403
+dataset.archive.gzip.command	pg_dump -Fc --compress=gzip:6 --table=bench.rows --table=bench.rows_secondary
+dataset.archive.lz4.path	/home/runner/work/pgdumpx/pgdumpx/target/benchmark-data/pgdumpx-bench-lz4.dump
+dataset.archive.lz4.compress	lz4:1
+dataset.archive.lz4.sha256	24a010fc7a00f46cec7ac0db24b302636373a734b509b890b94e5ea52ae37d00
+dataset.archive.lz4.command	pg_dump -Fc --compress=lz4:1 --table=bench.rows --table=bench.rows_secondary
+dataset.archive.zstd.path	/home/runner/work/pgdumpx/pgdumpx/target/benchmark-data/pgdumpx-bench-zstd.dump
+dataset.archive.zstd.compress	zstd:3
+dataset.archive.zstd.sha256	527c0ee27dcd25698fbd37ec05907f1200a72d31aed0c0ed6948ff240f7047e2
+dataset.archive.zstd.command	pg_dump -Fc --compress=zstd:3 --table=bench.rows --table=bench.rows_secondary
