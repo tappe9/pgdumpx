@@ -125,6 +125,7 @@ mod extraction_plan;
 mod file;
 mod io;
 mod limits;
+mod metadata_filter;
 mod model;
 mod raw_entry;
 mod selector;
@@ -156,6 +157,7 @@ pub use extraction_plan::{
     ExtractionTarget, ResolvedExtractionPlan,
 };
 pub use limits::{Limits, ScanLimits};
+pub use metadata_filter::{MetadataFilter, MetadataMatch};
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
     DumpId, Section, TableRef, TocEntry,
