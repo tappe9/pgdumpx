@@ -44,11 +44,17 @@
 //! # Sequential row search
 //!
 //! [`CopyRowReader::find_first`] and [`TableRowReader::find_first`] are sequential scans
-//! from the reader's current position. A freshly created [`TableRowReader`] starts at the
-//! beginning of the selected `TABLE DATA` entry, but there is no row-level value index in
-//! the archive. An early match terminates immediately; a late or absent match can process
-//! the rest of the selected entry unless [`ScanLimits`] stops it. Worst-case unrestricted
-//! work is proportional to the remaining selected table-data size.
+//! from the reader's current position. [`TableRowReader::find_first_equal`] adds a reusable
+//! named-column exact-equality convenience layer without changing that predicate API or
+//! scan path. Column names and [`FieldRef::Bytes`] targets are exact bytes, targets are
+//! compared after COPY-text unescaping, and [`FieldRef::Null`] remains distinct from empty
+//! or literal `b"\\N"` bytes. No collation, SQL coercion, or typed-value comparison occurs.
+//!
+//! A freshly created [`TableRowReader`] starts at the beginning of the selected
+//! `TABLE DATA` entry, but there is no row-level value index in the archive. An early match
+//! terminates immediately; a late or absent match can process the rest of the selected
+//! entry unless [`ScanLimits`] stops it. Worst-case unrestricted work is proportional to
+//! the remaining selected table-data size.
 //!
 //! # Raw extraction and partial output
 //!
@@ -86,25 +92,24 @@
 //! bounded sequential scan of one selected table-data entry.
 //!
 //! ```no_run
-//! use pgdumpx::{Archive, FieldRef, ScanLimits};
+//! use pgdumpx::{Archive, ColumnEqualityResult, FieldRef, ScanLimits};
 //! use std::{fs::File, io::BufReader};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let file = File::open("backup.dump")?;
 //! let mut archive = Archive::open(BufReader::new(file))?;
 //! let mut rows = archive.table_rows(b"public", b"orders")?;
-//! let Some(order_number) = rows.column_index(b"order_number")? else {
-//!     return Ok(());
-//! };
 //!
 //! let limits = ScanLimits::unlimited()
 //!     .with_max_rows(100_000)
 //!     .with_max_decompressed_bytes(64 * 1024 * 1024);
-//! let matched = rows.find_first_with_limits(limits, |row| {
-//!     row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
-//! })?;
+//! let matched = rows.find_first_equal_with_limits(
+//!     limits,
+//!     b"order_number",
+//!     FieldRef::Bytes(b"123456"),
+//! )?;
 //!
-//! if let Some(row) = matched {
+//! if let ColumnEqualityResult::Match(row) = matched {
 //!     assert!(!row.fields().is_empty());
 //! }
 //! # Ok(())
@@ -164,4 +169,4 @@ pub use model::{
 };
 pub use raw_entry::{BoundedEntryDataReader, EntryReadLimits};
 pub use selector::TableSelector;
-pub use table_rows::TableRowReader;
+pub use table_rows::{ColumnEqualityResult, TableRowReader};
