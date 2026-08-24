@@ -36,7 +36,7 @@ done
 (( REPETITIONS > 0 )) || fail "PGDUMPX_BUFFER_BENCH_REPETITIONS must be greater than zero"
 (( RSS_REPETITIONS > 0 )) || fail "PGDUMPX_BUFFER_BENCH_RSS_REPETITIONS must be greater than zero"
 
-read -r -a candidate_values <<< "${CANDIDATES}"
+IFS=' ' read -r -a candidate_values <<< "${CANDIDATES}"
 (( ${#candidate_values[@]} > 0 )) || fail "at least one buffer candidate is required"
 baseline_found=false
 for candidate in "${candidate_values[@]}"; do
