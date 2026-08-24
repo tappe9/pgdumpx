@@ -57,6 +57,12 @@
 //! destination cannot be rolled back. The operation still returns an error and never
 //! reports a partial stream as successful extraction.
 //!
+//! [`ExtractionPlan::execute`] extends that same bounded raw path to multiple tables while
+//! preserving the archive's single mutable seek invariant. It completes metadata preflight
+//! for every selector before requesting the first destination, then executes targets in
+//! deterministic plan order. If a target fails, earlier completed outcomes are retained,
+//! the current target may already have partial output, and later targets are not started.
+//!
 //! # Typed errors
 //!
 //! [`PgDumpError`] is the detailed error type. [`PgDumpError::category`] exposes a stable
@@ -145,7 +151,10 @@ pub use copy_metadata::{Column, TableDataRepresentation};
 pub use entry::EntryDataReader;
 pub use error::PgDumpError;
 pub use error_taxonomy::{ErrorCategory, LimitContext, ResourceLimit};
-pub use extraction_plan::{ExtractionPlan, ExtractionPlanError, ResolvedExtractionPlan};
+pub use extraction_plan::{
+    ExtractionExecutionError, ExtractionOutcome, ExtractionPlan, ExtractionPlanError,
+    ExtractionTarget, ResolvedExtractionPlan,
+};
 pub use limits::{Limits, ScanLimits};
 pub use model::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, DataLocation,
