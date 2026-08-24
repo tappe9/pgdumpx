@@ -1,8 +1,24 @@
 use crate::{
-    Column, CopyRowReader, DumpId, EntryDataReader, Limits, OwnedRow, PgDumpError, Row, ScanLimits,
-    copy_metadata::TableDataMetadata,
+    Column, CopyRowReader, DumpId, EntryDataReader, FieldRef, Limits, OwnedRow, PgDumpError, Row,
+    ScanLimits, copy_metadata::TableDataMetadata,
 };
 use std::io::Read;
+
+/// Result of a named-column exact-equality row search.
+///
+/// `Match` owns only the first matching row. `NoMatch` means the named column was valid
+/// but no remaining row matched. `ColumnNotFound` means valid COPY column metadata did not
+/// contain the requested exact byte name; unavailable or malformed metadata remains a
+/// typed [`PgDumpError`] instead.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ColumnEqualityResult {
+    /// The first matching row, copied into owned storage.
+    Match(OwnedRow),
+    /// The named column exists, but no remaining row matched the requested value.
+    NoMatch,
+    /// Valid COPY metadata did not contain the requested exact byte column name.
+    ColumnNotFound,
+}
 
 /// A lending COPY-text row stream for one selected `TABLE DATA` entry.
 ///
@@ -127,6 +143,49 @@ impl<'a, R: Read> TableRowReader<'a, R> {
         F: FnMut(&Row<'_>) -> bool,
     {
         self.rows.find_first_with_limits(scan_limits, predicate)
+    }
+
+    /// Finds the first row whose named column exactly equals one logical COPY value.
+    ///
+    /// The column name is resolved exactly once from already-parsed metadata before any
+    /// row is scanned. [`FieldRef::Bytes`] compares logical post-unescape bytes exactly;
+    /// [`FieldRef::Null`] matches only SQL NULL, so empty bytes and literal `b"\\N"` bytes
+    /// remain distinct. No UTF-8 conversion, collation, SQL coercion, or typed comparison
+    /// is performed.
+    ///
+    /// This convenience method preserves the same sequential scan, early termination,
+    /// reader-wide limits, typed errors, and owned-match behavior as [`Self::find_first`].
+    pub fn find_first_equal(
+        &mut self,
+        column: &[u8],
+        expected: FieldRef<'_>,
+    ) -> Result<ColumnEqualityResult, PgDumpError> {
+        self.find_first_equal_with_limits(ScanLimits::unlimited(), column, expected)
+    }
+
+    /// Finds the first exact named-column equality match with operation-level limits.
+    ///
+    /// Column resolution happens before the operation budget starts scanning rows. If the
+    /// name is absent, [`ColumnEqualityResult::ColumnNotFound`] is returned without row
+    /// consumption. Metadata failures remain their existing typed [`PgDumpError`] values.
+    /// For a valid column, this delegates directly to [`Self::find_first_with_limits`], so
+    /// row/decompressed-byte accounting and early termination are unchanged.
+    pub fn find_first_equal_with_limits(
+        &mut self,
+        scan_limits: ScanLimits,
+        column: &[u8],
+        expected: FieldRef<'_>,
+    ) -> Result<ColumnEqualityResult, PgDumpError> {
+        let Some(column_index) = self.column_index(column)? else {
+            return Ok(ColumnEqualityResult::ColumnNotFound);
+        };
+
+        match self
+            .find_first_with_limits(scan_limits, |row| row.field(column_index) == Some(expected))?
+        {
+            Some(row) => Ok(ColumnEqualityResult::Match(row)),
+            None => Ok(ColumnEqualityResult::NoMatch),
+        }
     }
 
     #[cfg(test)]
