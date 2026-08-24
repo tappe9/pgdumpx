@@ -133,7 +133,9 @@ impl ExtractionExecutionError {
 impl fmt::Display for ExtractionExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Preflight { source } => write!(formatter, "extraction plan preflight failed: {source}"),
+            Self::Preflight { source } => {
+                write!(formatter, "extraction plan preflight failed: {source}")
+            }
             Self::Target {
                 target,
                 completed,
@@ -299,7 +301,7 @@ impl ExtractionPlan {
     {
         let targets = {
             let resolved = self
-                .preflight(&*archive)
+                .preflight(archive)
                 .map_err(|source| ExtractionExecutionError::Preflight { source })?;
             let mut targets = Vec::with_capacity(resolved.tables().len());
 
