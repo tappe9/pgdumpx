@@ -13,12 +13,12 @@ const SECTION_DATA: i32 = 3;
 const ORDERS_PAYLOAD: &[u8] = b"orders-data\n";
 const INVENTORY_PAYLOAD: &[u8] = b"inventory-data\n";
 const ORDERS_ZLIB: &[u8] = &[
-    0x78, 0x9c, 0xcb, 0x2f, 0x4a, 0x49, 0x2d, 0x2a, 0xd6, 0x4d, 0x49, 0x2c, 0x49, 0xe4,
-    0x02, 0x00, 0x1e, 0xfe, 0x04, 0x61,
+    0x78, 0x9c, 0xcb, 0x2f, 0x4a, 0x49, 0x2d, 0x2a, 0xd6, 0x4d, 0x49, 0x2c, 0x49, 0xe4, 0x02, 0x00,
+    0x1e, 0xfe, 0x04, 0x61,
 ];
 const INVENTORY_ZLIB: &[u8] = &[
-    0x78, 0x9c, 0xcb, 0xcc, 0x2b, 0x4b, 0xcd, 0x2b, 0xc9, 0x2f, 0xaa, 0xd4, 0x4d, 0x49,
-    0x2c, 0x49, 0xe4, 0x02, 0x00, 0x31, 0xaa, 0x05, 0xc0,
+    0x78, 0x9c, 0xcb, 0xcc, 0x2b, 0x4b, 0xcd, 0x2b, 0xc9, 0x2f, 0xaa, 0xd4, 0x4d, 0x49, 0x2c, 0x49,
+    0xe4, 0x02, 0x00, 0x31, 0xaa, 0x05, 0xc0,
 ];
 
 #[test]
@@ -127,7 +127,7 @@ fn mid_target_output_failure_stops_before_later_target() {
         })
         .unwrap_err();
 
-    assert_eq!(started.borrow().as_slice(), &[orders.clone()]);
+    assert_eq!(started.borrow().as_slice(), std::slice::from_ref(&orders));
     assert!(inventory_output.borrow().is_empty());
     assert!(error.completed().is_empty());
     assert_eq!(error.failed_target().unwrap().selector(), &orders);
@@ -205,7 +205,7 @@ fn per_target_raw_limit_exhaustion_is_error_and_stops_later_target() {
         })
         .unwrap_err();
 
-    assert_eq!(started.borrow().as_slice(), &[orders.clone()]);
+    assert_eq!(started.borrow().as_slice(), std::slice::from_ref(&orders));
     assert_eq!(output.borrow().as_slice(), &ORDERS_PAYLOAD[..4]);
     assert!(error.completed().is_empty());
     assert_eq!(error.failed_target().unwrap().selector(), &orders);
@@ -269,10 +269,7 @@ impl FailAfter {
 impl Write for FailAfter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.remaining == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "intentional destination failure",
-            ));
+            return Err(io::Error::other("intentional destination failure"));
         }
         let accepted = bytes.len().min(self.remaining);
         self.remaining -= accepted;
