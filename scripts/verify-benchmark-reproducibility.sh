@@ -46,29 +46,38 @@ cargo build \
     --all-features
 [[ -x "${CLI}" ]] || fail "pgdumpx CLI not found at ${CLI}"
 
-reference_sha=""
-for compression in none gzip lz4 zstd; do
-    first_output="${WORK_DIR}/first-${compression}.copy"
-    second_output="${WORK_DIR}/second-${compression}.copy"
+for table in rows rows_secondary; do
+    reference_sha=""
+    for compression in none gzip lz4 zstd; do
+        first_output="${WORK_DIR}/first-${table}-${compression}.copy"
+        second_output="${WORK_DIR}/second-${table}-${compression}.copy"
 
-    "${CLI}" extract "${FIRST}/pgdumpx-bench-${compression}.dump" bench.rows > "${first_output}"
-    "${CLI}" extract "${SECOND}/pgdumpx-bench-${compression}.dump" bench.rows > "${second_output}"
+        "${CLI}" extract "${FIRST}/pgdumpx-bench-${compression}.dump" "bench.${table}" > "${first_output}"
+        "${CLI}" extract "${SECOND}/pgdumpx-bench-${compression}.dump" "bench.${table}" > "${second_output}"
 
-    cmp -s "${first_output}" "${second_output}" \
-        || fail "${compression} extraction differs across two regenerations"
+        cmp -s "${first_output}" "${second_output}" \
+            || fail "${compression} extraction for bench.${table} differs across two regenerations"
 
-    current_sha="$(sha256sum "${first_output}" | awk '{print $1}')"
-    if [[ -z "${reference_sha}" ]]; then
-        reference_sha="${current_sha}"
-    elif [[ "${current_sha}" != "${reference_sha}" ]]; then
-        fail "${compression} extraction differs from the none-compression logical dataset"
-    fi
-    echo "${compression}: ${current_sha}"
+        current_sha="$(sha256sum "${first_output}" | awk '{print $1}')"
+        if [[ -z "${reference_sha}" ]]; then
+            reference_sha="${current_sha}"
+        elif [[ "${current_sha}" != "${reference_sha}" ]]; then
+            fail "${compression} extraction for bench.${table} differs from the none-compression logical dataset"
+        fi
+        echo "${table}/${compression}: ${current_sha}"
+    done
+    echo "bench.${table}: logical COPY SHA-256=${reference_sha}"
 done
 
-first_rows="$(awk -F '\t' '$1 == "row_count" { print $2 }' "${FIRST}/manifest.tsv")"
-second_rows="$(awk -F '\t' '$1 == "row_count" { print $2 }' "${SECOND}/manifest.tsv")"
-[[ "${first_rows}" == "${ROW_COUNT}" && "${second_rows}" == "${ROW_COUNT}" ]] \
-    || fail "manifest row counts do not match requested dataset size"
+for generated in "${FIRST}" "${SECOND}"; do
+    generated_rows="$(awk -F '\t' '$1 == "row_count" { print $2 }' "${generated}/manifest.tsv")"
+    generated_version="$(awk -F '\t' '$1 == "dataset_version" { print $2 }' "${generated}/manifest.tsv")"
+    generated_secondary="$(awk -F '\t' '$1 == "secondary_table" { print $2 }' "${generated}/manifest.tsv")"
+    [[ "${generated_rows}" == "${ROW_COUNT}" ]] \
+        || fail "manifest row count does not match requested dataset size"
+    [[ "${generated_version}" == "2" ]] || fail "expected dataset_version=2"
+    [[ "${generated_secondary}" == "rows_secondary" ]] \
+        || fail "manifest is missing bench.rows_secondary metadata"
+done
 
-echo "Reproducibility verified for ${ROW_COUNT} rows; logical COPY SHA-256=${reference_sha}"
+echo "Reproducibility verified for two ${ROW_COUNT}-row tables across all compression modes"
