@@ -1,15 +1,14 @@
 # pgdumpx benchmark harness
 
-Status: **v0.1 reproducible performance-evidence harness implemented; ordinary CI compiles/smokes it without publishing performance results.**
+Status: **reproducible v0.1 performance-evidence harness implemented; v0.2 adds bounded sequential multi-table and internal buffer-tuning scenarios. Ordinary CI compiles/smokes benchmark targets without publishing performance results.**
 
-This directory defines the reproducible performance-evidence harness for pgdumpx v0.1.
-It intentionally measures the public production archive, decompression, COPY-row, and limit paths. It does not contain a benchmark-only parser or decompressor.
+This directory defines the reproducible performance-evidence harness for pgdumpx. It measures public production archive, decompression, COPY-row, limit, raw-extraction, and sequential multi-table paths. It does not contain a benchmark-only parser, extractor, or decompressor.
 
 No benchmark result in this directory is a product performance claim by itself. Any published quantitative claim must retain the environment and dataset metadata emitted by this harness.
 
 ## What is measured
 
-The runner covers the v0.1 performance requirements:
+The original v0.1 runner covers:
 
 | Operation | Production path | Primary units |
 | --- | --- | --- |
@@ -18,6 +17,13 @@ The runner covers the v0.1 performance requirements:
 | COPY row parsing | `Archive::table_rows` + `TableRowReader::next_row` | rows/s |
 | first match | `Archive::table_rows` + column lookup + `find_first` | evaluated rows/s |
 | bounded first match | same path + `find_first_with_limits` | evaluated rows/s |
+
+The v0.2 tuning runner adds:
+
+| Scenario | Production path | Primary units |
+| --- | --- | --- |
+| single-table extraction | `Archive::table` + `Archive::copy_entry_to` | decompressed bytes/s, peak RSS |
+| sequential multi-table extraction | `ExtractionPlan::execute` for two selectors | decompressed bytes/s, peak RSS |
 
 `find` cases use deterministic values at the first row (`early`), middle row (`middle`), final row (`late`), and a value that does not exist (`absent`). The predicate counts rows actually evaluated, so early termination is visible in the output without adding a row-index shortcut.
 
@@ -31,7 +37,7 @@ Large benchmark archives are not committed. Generate them with:
 bash scripts/generate-benchmark-dataset.sh
 ```
 
-The default logical dataset contains 250,000 rows. Override the size without changing the data formula:
+The default logical dataset contains 250,000 rows **per table** in `bench.rows` and `bench.rows_secondary`. Override the size without changing either table's deterministic data formula:
 
 ```bash
 PGDUMPX_BENCH_ROWS=1000000 \
@@ -45,13 +51,13 @@ The generator uses:
 - `benchmarks/dataset.sql` as the deterministic row definition;
 - archive format 1.16.0;
 - `none`, `gzip:6`, `lz4:1`, and `zstd:3` custom archives;
-- `pg_restore --list` validation for the expected `TABLE DATA bench.rows` entry.
+- `pg_restore --list` validation for the expected `TABLE DATA bench.rows` and `TABLE DATA bench.rows_secondary` entries.
 
-Generated files live under `target/benchmark-data/` by default and therefore do not add large archives to the repository. `manifest.tsv` records the row count, generator version, pinned image, source hash, archive version, compression settings, generation command summary, and each generated archive checksum.
+Generated files live under `target/benchmark-data/` by default and therefore do not add large archives to the repository. `manifest.tsv` records the rows per table, generator version, pinned image, source hash, archive version, compression settings, generation command summary, and each generated archive checksum.
 
 The logical dataset is deterministic; custom archive bytes are not required to be byte-for-byte identical between regenerations because PostgreSQL records archive metadata such as creation time. Reproducibility is therefore checked at the production-path decompressed table-data boundary rather than by requiring identical archive SHA-256 values.
 
-To generate the dataset twice and verify that all four compression variants yield identical logical table-data bytes through `pgdumpx extract`:
+To generate the dataset twice and verify that both tables in all four compression variants yield identical logical table-data bytes through `pgdumpx extract`:
 
 ```bash
 PGDUMPX_BENCH_REPRO_ROWS=101 \
@@ -60,7 +66,7 @@ PGDUMPX_BENCH_REPRO_ROWS=101 \
 
 This check deliberately uses a small row count because it validates determinism, not throughput.
 
-## Running the benchmark matrix
+## Running the v0.1 benchmark matrix
 
 Generate data first, then run:
 
@@ -125,14 +131,18 @@ For `open`, `File::open` happens before the timer and `Archive::open` is the tim
 
 For `extract`, `rows`, and `find`, `Archive::open` happens before the timer. The timed region begins before table/table-data selection and includes the corresponding public production operation. This separates metadata-open cost from selected-entry work while retaining normal table lookup, validated entry seek, decompression, COPY parsing, and limit behavior.
 
+For the v0.2 tuning runner, `Archive::open` also happens before the timer. The `single` timed region starts before `Archive::table` and includes `copy_entry_to`. The `multi` timed region wraps Issue #60's `ExtractionPlan::execute`; construction of the fixed two-selector plan happens before timing so the measurement focuses on the sequential production execution path.
+
 Warm-up iterations execute the same operation before recorded repetitions. They are intended to reduce one-time process/cache effects; the harness is not a cold-storage benchmark. Any report that needs cold-cache behavior must state and implement that separately.
 
 ## Peak RSS
 
-Peak resident memory is measured by `scripts/measure-peak-rss.sh` using GNU `time` `%M`, whose documented unit is KiB. The default matrix records peak RSS for:
+Peak resident memory is measured by `scripts/measure-peak-rss.sh` using GNU `time` `%M`, whose documented unit is KiB. The default v0.1 matrix records peak RSS for:
 
 - archive open, for every compression variant;
 - selected-entry extraction, for every compression variant.
+
+The v0.2 buffer-tuning matrix records separate peak-RSS process repetitions for every tested candidate/scenario/compression combination.
 
 On Linux, install the `time` package if `/usr/bin/time` is unavailable. On macOS, install GNU time (for example through Homebrew, which normally exposes it as `gtime`). The wrapper rejects a non-GNU implementation instead of guessing at platform-specific units.
 
@@ -164,9 +174,41 @@ These use `find_first_with_limits` and therefore measure the production parser-c
 
 The early/middle/late/absent position matrix itself uses the unlimited path so match-position cost is not conflated with budget-accounting mode.
 
+## v0.2 buffer-size tuning
+
+Issue #63 adds `crates/pgdumpx/examples/buffer_tuning_runner.rs`, `scripts/run-buffer-tuning-benchmarks.sh`, and `scripts/summarize-buffer-tuning.py` for bounded, evidence-driven internal tuning.
+
+Generate the two-table dataset, run the candidate matrix, then summarize it:
+
+```bash
+bash scripts/generate-benchmark-dataset.sh
+
+PGDUMPX_BUFFER_BENCH_WARMUP=1 \
+PGDUMPX_BUFFER_BENCH_REPETITIONS=5 \
+PGDUMPX_BUFFER_BENCH_RSS_REPETITIONS=3 \
+PGDUMPX_BUFFER_BENCH_RESULTS_DIR=target/benchmark-results/buffer-tuning \
+  bash scripts/run-buffer-tuning-benchmarks.sh
+
+python3 scripts/summarize-buffer-tuning.py \
+  target/benchmark-results/buffer-tuning
+```
+
+The default candidate set is the small bounded set `4096 8192 16384 32768`, with the current 8192-byte production value as the baseline. The script evaluates two private production constants **independently**:
+
+- `COPY_BUFFER_BYTES`: none/gzip/LZ4/Zstandard, each for single and sequential multi-table extraction;
+- gzip `COMPRESSED_INPUT_BUFFER_BYTES`: gzip only, each for single and sequential multi-table extraction.
+
+Each candidate is tested by changing one private constant in a detached worktree and rebuilding the same production path. This does not add a public runtime buffer knob, a benchmark-only extractor/decompressor, a parallel path, or a different compression backend.
+
+Before measurement, the script runs `cargo test --package pgdumpx --all-features` so the selected configuration remains anchored to the existing correctness, `ScanLimits`, `EntryReadLimits`, decompression-error, and partial-output regression suite.
+
+The summarizer uses medians per measured case and a predeclared selection rule: a non-baseline candidate must improve geometric-mean throughput by at least 5%, have no case worse than -3%, and increase median peak RSS by no more than 2048 KiB. If no candidate meets all thresholds, 8 KiB is retained.
+
+The Issue #63 evidence is checked in under `benchmarks/results/issue-63/`. That recorded run retained **8 KiB for both production constants**; see its README and TSV summaries for the exact environment, repetitions, and decision. This is a tuning decision, not a public speedup claim.
+
 ## Compile and smoke checks
 
-The runner is a normal crate example, so the workspace `--all-targets --all-features` lint/MSRV checks compile it. A focused local smoke sequence is:
+Both runners are normal crate examples, so workspace `--all-targets --all-features` lint/MSRV checks compile them. A focused local smoke sequence for the original runner is:
 
 ```bash
 PGDUMPX_BENCH_ROWS=101 \
@@ -178,7 +220,7 @@ PGDUMPX_BENCH_RESULTS_DIR=target/benchmark-results/smoke \
   bash scripts/run-benchmarks.sh
 ```
 
-The completed Issue #33 CI matrix builds the all-feature benchmark target and runs its `--help` smoke path on Ubuntu. Full benchmark execution intentionally remains outside ordinary pull-request CI so CI noise is not presented as performance evidence.
+Ordinary CI builds and runs only each benchmark runner's `--help` path. Full benchmark execution intentionally remains outside ordinary pull-request CI so CI noise is not presented as performance evidence.
 
 ## Comparator policy
 

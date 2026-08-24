@@ -152,11 +152,15 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build benchmark target
-        run: cargo build -p pgdumpx --example benchmark_runner --all-features
+      - name: Build benchmark targets
+        run: |
+          cargo build -p pgdumpx --example benchmark_runner --all-features
+          cargo build -p pgdumpx --example buffer_tuning_runner --all-features
 
-      - name: Smoke benchmark CLI without performance execution
-        run: cargo run -p pgdumpx --example benchmark_runner --all-features -- --help
+      - name: Smoke benchmark CLIs without performance execution
+        run: |
+          cargo run -p pgdumpx --example benchmark_runner --all-features -- --help
+          cargo run -p pgdumpx --example buffer_tuning_runner --all-features -- --help
 
   compatibility-differential:
     name: Compatibility differential
