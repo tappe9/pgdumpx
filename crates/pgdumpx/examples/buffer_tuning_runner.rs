@@ -7,7 +7,7 @@ use std::{
     fmt,
     fs::File,
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::ExitCode,
     time::{Duration, Instant},
 };
