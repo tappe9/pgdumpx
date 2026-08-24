@@ -74,6 +74,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "Running fixed production correctness and limit regression tests"
+cargo test \
+    --manifest-path "${ROOT}/Cargo.toml" \
+    --package pgdumpx \
+    --all-features
+
 cpu_model="unknown"
 if command -v lscpu >/dev/null 2>&1; then
     cpu_model="$(lscpu | awk -F: '/Model name/{sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
@@ -86,10 +92,14 @@ rustc_version="$(rustc --version | tr '\t\r\n' '   ')"
 cargo_version="$(cargo --version | tr '\t\r\n' '   ')"
 dirty="false"
 [[ -z "$(git -C "${ROOT}" status --porcelain)" ]] || dirty="true"
-production_buffer_expression="$(
+copy_buffer_expression="$(
     sed -n 's/^const COPY_BUFFER_BYTES: usize = \(.*\);$/\1/p' "${ROOT}/crates/pgdumpx/src/raw_entry.rs"
 )"
-[[ -n "${production_buffer_expression}" ]] || fail "COPY_BUFFER_BYTES production constant was not found"
+gzip_input_buffer_expression="$(
+    sed -n 's/^const COMPRESSED_INPUT_BUFFER_BYTES: usize = \(.*\);$/\1/p' "${ROOT}/crates/pgdumpx/src/entry.rs"
+)"
+[[ -n "${copy_buffer_expression}" ]] || fail "COPY_BUFFER_BYTES production constant was not found"
+[[ -n "${gzip_input_buffer_expression}" ]] || fail "COMPRESSED_INPUT_BUFFER_BYTES production constant was not found"
 
 {
     printf 'key\tvalue\n'
@@ -100,11 +110,16 @@ production_buffer_expression="$(
     printf 'rustc\t%s\n' "${rustc_version}"
     printf 'cargo\t%s\n' "${cargo_version}"
     printf 'runner\tcrates/pgdumpx/examples/buffer_tuning_runner.rs\n'
-    printf 'production_buffer_path\tcrates/pgdumpx/src/raw_entry.rs:COPY_BUFFER_BYTES\n'
-    printf 'production_buffer_expression\t%s\n' "${production_buffer_expression}"
+    printf 'copy_buffer_path\tcrates/pgdumpx/src/raw_entry.rs:COPY_BUFFER_BYTES\n'
+    printf 'copy_buffer_expression\t%s\n' "${copy_buffer_expression}"
+    printf 'gzip_input_buffer_path\tcrates/pgdumpx/src/entry.rs:COMPRESSED_INPUT_BUFFER_BYTES\n'
+    printf 'gzip_input_buffer_expression\t%s\n' "${gzip_input_buffer_expression}"
     printf 'baseline_buffer_bytes\t%s\n' "${BASELINE_BUFFER_BYTES}"
     printf 'candidate_buffer_bytes\t%s\n' "${CANDIDATES}"
-    printf 'candidate_method\tdetached worktree; replace private COPY_BUFFER_BYTES; rebuild production code\n'
+    printf 'candidate_method\tdetached worktree; change one private production constant at a time; rebuild production code\n'
+    printf 'copy_candidate_compressions\tnone gzip lz4 zstd\n'
+    printf 'gzip_input_candidate_compressions\tgzip\n'
+    printf 'correctness_preflight\tcargo test --package pgdumpx --all-features\n'
     printf 'measurement_clock\tstd::time::Instant\n'
     printf 'peak_rss_tool\tGNU time %%M (KiB)\n'
     printf 'warmup_iterations\t%s\n' "${WARMUP}"
@@ -116,60 +131,83 @@ production_buffer_expression="$(
     done
 } > "${METADATA}"
 
-printf 'buffer_bytes\tscenario\tcompression\tarchive_version\trepetition\telapsed_ns\tunits\tunit\tunits_per_second\toutcome\n' > "${THROUGHPUT}"
+printf 'buffer_kind\tbuffer_bytes\tscenario\tcompression\tarchive_version\trepetition\telapsed_ns\tunits\tunit\tunits_per_second\toutcome\n' > "${THROUGHPUT}"
 
-for candidate in "${candidate_values[@]}"; do
-    worktree="${WORKTREE_ROOT}/${candidate}"
-    worktrees+=("${worktree}")
-    git -C "${ROOT}" worktree add --detach "${worktree}" "${COMMIT}" >/dev/null
+run_candidate_kind() {
+    local kind="$1"
+    local source_path constant_name
+    local -a compressions
 
-    python3 - "${worktree}/crates/pgdumpx/src/raw_entry.rs" "${candidate}" <<'PY'
+    case "${kind}" in
+        copy)
+            source_path="crates/pgdumpx/src/raw_entry.rs"
+            constant_name="COPY_BUFFER_BYTES"
+            compressions=(none gzip lz4 zstd)
+            ;;
+        gzip-input)
+            source_path="crates/pgdumpx/src/entry.rs"
+            constant_name="COMPRESSED_INPUT_BUFFER_BYTES"
+            compressions=(gzip)
+            ;;
+        *) fail "unknown buffer kind: ${kind}" ;;
+    esac
+
+    for candidate in "${candidate_values[@]}"; do
+        worktree="${WORKTREE_ROOT}/${kind}-${candidate}"
+        worktrees+=("${worktree}")
+        git -C "${ROOT}" worktree add --detach "${worktree}" "${COMMIT}" >/dev/null
+
+        python3 - "${worktree}/${source_path}" "${constant_name}" "${candidate}" <<'PY'
 from pathlib import Path
 import re
 import sys
 
 path = Path(sys.argv[1])
-candidate = int(sys.argv[2])
+constant_name = sys.argv[2]
+candidate = int(sys.argv[3])
 text = path.read_text()
-pattern = re.compile(r"^const COPY_BUFFER_BYTES: usize = [^;]+;$", re.MULTILINE)
-updated, count = pattern.subn(f"const COPY_BUFFER_BYTES: usize = {candidate};", text)
+pattern = re.compile(rf"^const {re.escape(constant_name)}: usize = [^;]+;$", re.MULTILINE)
+updated, count = pattern.subn(f"const {constant_name}: usize = {candidate};", text)
 if count != 1:
-    raise SystemExit(f"expected exactly one COPY_BUFFER_BYTES constant, found {count}")
+    raise SystemExit(f"expected exactly one {constant_name} constant, found {count}")
 path.write_text(updated)
 PY
 
-    target_dir="${ROOT}/target/buffer-tuning-build/${candidate}"
-    echo "Building ${candidate}-byte production candidate"
-    CARGO_TARGET_DIR="${target_dir}" cargo build \
-        --manifest-path "${worktree}/Cargo.toml" \
-        --release \
-        --package pgdumpx \
-        --example buffer_tuning_runner \
-        --all-features
-    runner="${target_dir}/release/examples/buffer_tuning_runner"
-    [[ -x "${runner}" ]] || fail "candidate runner not found at ${runner}"
+        target_dir="${ROOT}/target/buffer-tuning-build/${kind}-${candidate}"
+        echo "Building ${kind} ${candidate}-byte production candidate"
+        CARGO_TARGET_DIR="${target_dir}" cargo build \
+            --manifest-path "${worktree}/Cargo.toml" \
+            --release \
+            --package pgdumpx \
+            --example buffer_tuning_runner \
+            --all-features
+        runner="${target_dir}/release/examples/buffer_tuning_runner"
+        [[ -x "${runner}" ]] || fail "candidate runner not found at ${runner}"
 
-    for compression in none gzip lz4 zstd; do
-        archive="${DATA_DIR}/pgdumpx-bench-${compression}.dump"
-        for scenario in single multi; do
-            output="$(mktemp)"
-            "${runner}" "${scenario}" "${archive}" \
-                --warmup "${WARMUP}" \
-                --repetitions "${REPETITIONS}" > "${output}"
-            tail -n +2 "${output}" | awk -v candidate="${candidate}" \
-                'BEGIN { OFS="\t" } { print candidate, $0 }' >> "${THROUGHPUT}"
-            rm -f "${output}"
+        for compression in "${compressions[@]}"; do
+            archive="${DATA_DIR}/pgdumpx-bench-${compression}.dump"
+            for scenario in single multi; do
+                output="$(mktemp)"
+                "${runner}" "${scenario}" "${archive}" \
+                    --warmup "${WARMUP}" \
+                    --repetitions "${REPETITIONS}" > "${output}"
+                tail -n +2 "${output}" | awk -v kind="${kind}" -v candidate="${candidate}" \
+                    'BEGIN { OFS="\t" } { print kind, candidate, $0 }' >> "${THROUGHPUT}"
+                rm -f "${output}"
 
-            for rss_repetition in $(seq 1 "${RSS_REPETITIONS}"); do
-                bash "${ROOT}/scripts/measure-peak-rss.sh" \
-                    "${RSS_RESULTS}" \
-                    "buffer=${candidate}/${compression}/${scenario}/repetition=${rss_repetition}" -- \
-                    "${runner}" "${scenario}" "${archive}" --warmup 0 --repetitions 1
+                for rss_repetition in $(seq 1 "${RSS_REPETITIONS}"); do
+                    bash "${ROOT}/scripts/measure-peak-rss.sh" \
+                        "${RSS_RESULTS}" \
+                        "kind=${kind}/buffer=${candidate}/${compression}/${scenario}/repetition=${rss_repetition}" -- \
+                        "${runner}" "${scenario}" "${archive}" --warmup 0 --repetitions 1
+                done
             done
         done
     done
+}
 
-done
+run_candidate_kind copy
+run_candidate_kind gzip-input
 
 echo "Buffer tuning metadata: ${METADATA}"
 echo "Buffer tuning throughput: ${THROUGHPUT}"

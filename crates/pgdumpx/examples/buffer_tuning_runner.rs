@@ -1,6 +1,4 @@
-use pgdumpx::{
-    Archive, Compression, EntryReadLimits, ExtractionPlan, TableSelector,
-};
+use pgdumpx::{Archive, Compression, EntryReadLimits, ExtractionPlan, TableSelector};
 use std::{
     env,
     error::Error,

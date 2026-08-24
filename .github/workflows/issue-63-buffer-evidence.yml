@@ -13,10 +13,11 @@ jobs:
     name: Reproducible buffer evidence
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout branch head
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
