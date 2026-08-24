@@ -1,16 +1,11 @@
 use crate::{Archive, TableSelector, TocEntry};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum NamespaceCriterion {
+    #[default]
     Any,
     Absent,
     Exact(Vec<u8>),
-}
-
-impl Default for NamespaceCriterion {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 /// An owned reusable filter over already-parsed archive TOC metadata.
