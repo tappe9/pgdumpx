@@ -180,9 +180,9 @@ impl<'a, R: Read> TableRowReader<'a, R> {
             return Ok(ColumnEqualityResult::ColumnNotFound);
         };
 
-        match self.find_first_with_limits(scan_limits, |row| {
-            row.field(column_index) == Some(expected)
-        })? {
+        match self
+            .find_first_with_limits(scan_limits, |row| row.field(column_index) == Some(expected))?
+        {
             Some(row) => Ok(ColumnEqualityResult::Match(row)),
             None => Ok(ColumnEqualityResult::NoMatch),
         }
