@@ -1,6 +1,4 @@
-use pgdumpx::{
-    Archive, ColumnEqualityResult, FieldRef, OwnedField, PgDumpError, ScanLimits,
-};
+use pgdumpx::{Archive, ColumnEqualityResult, FieldRef, OwnedField, PgDumpError, ScanLimits};
 use std::{io::Cursor, path::PathBuf};
 
 const FIRST_PHYSICAL_ROW: &[u8] = b"1\tEARLY-100\tcustomer-a\tplain\t\n";
