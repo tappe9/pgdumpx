@@ -1,5 +1,9 @@
-use crate::{Archive, EntryReadLimits, PgDumpError, TableRef, TableSelector};
-use std::{error::Error, fmt};
+use crate::{Archive, DumpId, EntryReadLimits, PgDumpError, TableRef, TableSelector};
+use std::{
+    error::Error,
+    fmt,
+    io::{self, Read, Seek, Write},
+};
 
 /// Errors produced while constructing a reusable [`ExtractionPlan`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,17 +37,138 @@ impl fmt::Display for ExtractionPlanError {
 
 impl Error for ExtractionPlanError {}
 
+/// One archive-specific table-data target resolved for plan execution.
+///
+/// The selector remains owned and byte-oriented. The two dump IDs are copied from the
+/// metadata preflight so no archive borrow is retained while sequential entry reads mutate
+/// the archive's single seekable source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractionTarget {
+    selector: TableSelector,
+    table_entry_id: DumpId,
+    data_entry_id: DumpId,
+}
+
+impl ExtractionTarget {
+    /// Returns the logical table selector that produced this target.
+    pub const fn selector(&self) -> &TableSelector {
+        &self.selector
+    }
+
+    /// Returns the resolved `TABLE` dump ID for this archive.
+    pub const fn table_entry_id(&self) -> DumpId {
+        self.table_entry_id
+    }
+
+    /// Returns the resolved `TABLE DATA` dump ID copied by execution.
+    pub const fn data_entry_id(&self) -> DumpId {
+        self.data_entry_id
+    }
+}
+
+/// Successful result for one target in an [`ExtractionPlan`] execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractionOutcome {
+    target: ExtractionTarget,
+    copied_bytes: u64,
+}
+
+impl ExtractionOutcome {
+    /// Returns the archive-specific target that completed successfully.
+    pub const fn target(&self) -> &ExtractionTarget {
+        &self.target
+    }
+
+    /// Returns the number of decompressed bytes accepted by that target's destination.
+    pub const fn copied_bytes(&self) -> u64 {
+        self.copied_bytes
+    }
+}
+
+/// Failure while executing an [`ExtractionPlan`] against one archive.
+///
+/// A preflight failure occurs before any destination is requested and therefore has no
+/// failed target or completed outcomes. A target failure retains the outcomes that fully
+/// completed earlier in plan order and identifies the target that failed. Bytes already
+/// accepted by the failing target cannot be rolled back; the embedded [`PgDumpError`]
+/// preserves the existing raw-entry dump-ID, limit, decompression, input, or output context.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ExtractionExecutionError {
+    /// Metadata preflight rejected the logical plan before target execution began.
+    Preflight { source: PgDumpError },
+    /// One target failed after zero or more earlier targets completed.
+    Target {
+        target: ExtractionTarget,
+        completed: Vec<ExtractionOutcome>,
+        source: PgDumpError,
+    },
+}
+
+impl ExtractionExecutionError {
+    /// Returns targets that fully completed before this failure, in plan order.
+    pub fn completed(&self) -> &[ExtractionOutcome] {
+        match self {
+            Self::Preflight { .. } => &[],
+            Self::Target { completed, .. } => completed,
+        }
+    }
+
+    /// Returns the target that failed after preflight, or `None` for a preflight failure.
+    pub const fn failed_target(&self) -> Option<&ExtractionTarget> {
+        match self {
+            Self::Preflight { .. } => None,
+            Self::Target { target, .. } => Some(target),
+        }
+    }
+
+    /// Returns the detailed existing pgdumpx error for this execution failure.
+    pub const fn pgdump_error(&self) -> &PgDumpError {
+        match self {
+            Self::Preflight { source } | Self::Target { source, .. } => source,
+        }
+    }
+}
+
+impl fmt::Display for ExtractionExecutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Preflight { source } => write!(formatter, "extraction plan preflight failed: {source}"),
+            Self::Target {
+                target,
+                completed,
+                source,
+            } => write!(
+                formatter,
+                "extraction target failed after {} completed target(s): schema={:?}, table={:?}: {source}",
+                completed.len(),
+                target.selector().schema(),
+                target.selector().name()
+            ),
+        }
+    }
+}
+
+impl Error for ExtractionExecutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.pgdump_error())
+    }
+}
+
 /// An owned reusable plan describing ordered table extraction intent.
 ///
 /// A plan stores only logical [`TableSelector`] values and the existing raw-output
 /// [`EntryReadLimits`] policy. It never stores dump IDs, file offsets, readers, or other
-/// archive-specific seek state, so the same plan can be preflighted independently against
+/// archive-specific seek state, so the same plan can be preflighted or executed against
 /// multiple archives. Selector order is preserved exactly as supplied by the caller.
 ///
 /// Duplicate selectors are rejected during construction. [`ExtractionPlan::preflight`]
 /// resolves all selectors and their related `TABLE DATA` entries using archive metadata
-/// only; it does not seek to or decompress payloads. Extraction execution and output-file
-/// policy are intentionally outside this abstraction.
+/// only; it does not seek to or decompress payloads. [`ExtractionPlan::execute`] always
+/// completes that full metadata preflight before requesting the first destination, then
+/// streams each target sequentially through the existing bounded raw-entry copy path.
+/// Destination creation, naming, overwrite, framing, and atomic-output policy remain the
+/// caller's responsibility.
 ///
 /// # Example
 ///
@@ -143,6 +268,99 @@ impl ExtractionPlan {
             tables,
             entry_read_limits: self.entry_read_limits,
         })
+    }
+
+    /// Executes this plan as deterministic bounded sequential raw table-data streams.
+    ///
+    /// The complete logical plan is preflighted before `destination_for` is called even
+    /// once. Archive-specific dump IDs are then copied into owned [`ExtractionTarget`]
+    /// values so the metadata borrow ends before the archive's mutable seekable source is
+    /// used. Targets execute strictly in selector order and each one calls
+    /// [`Archive::copy_entry_to`] with this plan's [`EntryReadLimits`]. No entry is fully
+    /// buffered and no second archive handle is opened.
+    ///
+    /// `destination_for` supplies output policy only. An error creating a destination is
+    /// reported as [`PgDumpError::EntryOutputIo`] with zero written bytes for that target.
+    /// The executor does not add path naming, overwrite, framing, flush, or rollback policy.
+    ///
+    /// If one target fails, later destinations are never requested. Earlier successful
+    /// targets remain listed in [`ExtractionExecutionError::completed`]. Bytes already
+    /// accepted by the failing destination cannot be rolled back and the operation returns
+    /// an error rather than reporting partial extraction as success.
+    pub fn execute<R, W, F>(
+        &self,
+        archive: &mut Archive<R>,
+        mut destination_for: F,
+    ) -> Result<Vec<ExtractionOutcome>, ExtractionExecutionError>
+    where
+        R: Read + Seek,
+        W: Write,
+        F: FnMut(&ExtractionTarget) -> io::Result<W>,
+    {
+        let targets = {
+            let resolved = self
+                .preflight(&*archive)
+                .map_err(|source| ExtractionExecutionError::Preflight { source })?;
+            let mut targets = Vec::with_capacity(resolved.tables().len());
+
+            for (selector, table) in self.selectors.iter().zip(resolved.tables()) {
+                let Some(data_entry_id) = table.data_entry_id() else {
+                    return Err(ExtractionExecutionError::Preflight {
+                        source: PgDumpError::TableDataEntryUnavailable {
+                            table_id: table.table_entry_id().as_i32(),
+                        },
+                    });
+                };
+                targets.push(ExtractionTarget {
+                    selector: selector.clone(),
+                    table_entry_id: table.table_entry_id(),
+                    data_entry_id,
+                });
+            }
+
+            targets
+        };
+
+        let mut completed = Vec::with_capacity(targets.len());
+        for target in targets {
+            let mut destination = match destination_for(&target) {
+                Ok(destination) => destination,
+                Err(source) => {
+                    let error = PgDumpError::EntryOutputIo {
+                        dump_id: target.data_entry_id().as_i32(),
+                        written: 0,
+                        source,
+                    };
+                    return Err(ExtractionExecutionError::Target {
+                        target,
+                        completed,
+                        source: error,
+                    });
+                }
+            };
+
+            let copied_bytes = match archive.copy_entry_to(
+                target.data_entry_id(),
+                &mut destination,
+                self.entry_read_limits,
+            ) {
+                Ok(copied_bytes) => copied_bytes,
+                Err(source) => {
+                    return Err(ExtractionExecutionError::Target {
+                        target,
+                        completed,
+                        source,
+                    });
+                }
+            };
+
+            completed.push(ExtractionOutcome {
+                target,
+                copied_bytes,
+            });
+        }
+
+        Ok(completed)
     }
 }
 
