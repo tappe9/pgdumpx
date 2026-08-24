@@ -1,4 +1,7 @@
-use pgdumpx::{Archive, Compression, EntryReadLimits, FieldRef, OwnedField, OwnedRow, ScanLimits};
+use pgdumpx::{
+    Archive, ColumnEqualityResult, Compression, EntryReadLimits, FieldRef, OwnedField, OwnedRow,
+    ScanLimits,
+};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -195,21 +198,23 @@ fn find(arguments: &FindArguments) -> Result<Option<OwnedRow>, CliError> {
     let mut rows = archive
         .table_rows(arguments.schema.as_bytes(), arguments.table.as_bytes())
         .map_err(|source| CliError::runtime(format!("archive error: {source}")))?;
-    let column_index = rows
-        .column_index(arguments.column.as_bytes())
-        .map_err(|source| CliError::runtime(format!("archive error: {source}")))?
-        .ok_or_else(|| {
-            CliError::runtime(format!(
-                "column {:?} was not found in {}.{}",
-                arguments.column, arguments.schema, arguments.table
-            ))
-        })?;
-    let expected = arguments.value.as_bytes();
 
-    rows.find_first_with_limits(arguments.scan_limits, |row| {
-        row.field(column_index) == Some(FieldRef::Bytes(expected))
-    })
-    .map_err(|source| CliError::runtime(format!("archive error: {source}")))
+    let result = rows
+        .find_first_equal_with_limits(
+            arguments.scan_limits,
+            arguments.column.as_bytes(),
+            FieldRef::Bytes(arguments.value.as_bytes()),
+        )
+        .map_err(|source| CliError::runtime(format!("archive error: {source}")))?;
+
+    match result {
+        ColumnEqualityResult::Match(row) => Ok(Some(row)),
+        ColumnEqualityResult::NoMatch => Ok(None),
+        ColumnEqualityResult::ColumnNotFound => Err(CliError::runtime(format!(
+            "column {:?} was not found in {}.{}",
+            arguments.column, arguments.schema, arguments.table
+        ))),
+    }
 }
 
 fn write_row<W: Write>(output: &mut W, row: &OwnedRow) -> io::Result<()> {
@@ -217,7 +222,6 @@ fn write_row<W: Write>(output: &mut W, row: &OwnedRow) -> io::Result<()> {
         if index != 0 {
             output.write_all(b"\t")?;
         }
-
         match field {
             OwnedField::Null => output.write_all(br"\N")?,
             OwnedField::Bytes(bytes) => write_field_bytes(output, bytes)?,
