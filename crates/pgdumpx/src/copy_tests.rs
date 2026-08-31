@@ -86,6 +86,16 @@ fn malformed_terminator_error_makes_bounded_search_terminal() {
 }
 
 #[test]
+fn malformed_escape_error_is_terminal() {
+    let mut rows = CopyRowReader::new(Cursor::new(b"trailing\\".as_slice()));
+    assert!(matches!(
+        rows.next_row().unwrap_err(),
+        PgDumpError::MalformedCopyEscape { row: 1, .. }
+    ));
+    assert!(rows.next_row().unwrap().is_none());
+}
+
+#[test]
 fn source_io_error_is_terminal_even_when_the_source_could_resume() {
     let mut rows = CopyRowReader::new(ErrorOnceReader::new());
     assert!(matches!(
