@@ -2,8 +2,7 @@ use crate::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, Limits,
     PgDumpError,
     custom::primitives::{
-        ArchiveIntegerSize, ArchiveOffsetSize, read_archive_integer,
-        read_retained_archive_string,
+        ArchiveIntegerSize, ArchiveOffsetSize, read_archive_integer, read_retained_archive_string,
     },
     io::archive_reader::ArchiveReader,
     metadata_budget::MetadataBudget,
@@ -21,6 +20,7 @@ pub(crate) struct ParsedHeader {
     pub(crate) offset_size: ArchiveOffsetSize,
 }
 
+#[cfg(test)]
 pub(crate) fn read_header<R: Read>(
     reader: &mut ArchiveReader<R>,
     limits: Limits,
@@ -100,13 +100,8 @@ pub(crate) fn read_header_with_budget<R: Read>(
         budget,
         "archive server version",
     )?;
-    let dump_version = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        budget,
-        "archive dump version",
-    )?;
+    let dump_version =
+        read_required_string(reader, integer_size, limits, budget, "archive dump version")?;
 
     Ok(ParsedHeader {
         header: ArchiveHeader::new(
