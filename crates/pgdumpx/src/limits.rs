@@ -1,8 +1,10 @@
 /// Finite structural limits used while opening archives and parsing COPY metadata/rows.
 ///
-/// These limits protect individual structures and allocations: TOC cardinality,
-/// archive-string length, per-entry dependency count, one physical COPY row, and one
-/// row/column layout. They do **not** bound the total amount of decompressed data or
+/// These limits protect both individual structures and aggregate retained metadata:
+/// TOC cardinality, one archive-string length, one entry's dependency count, cumulative
+/// retained header/TOC string bytes, cumulative retained dependencies, variable-length
+/// names duplicated into derived metadata/index structures, one physical COPY row, and
+/// one row/column layout. They do **not** bound the total amount of decompressed data or
 /// number of rows processed by a long scan; use [`ScanLimits`] for that. They also do
 /// not bound raw selected-entry output; use [`crate::EntryReadLimits`] for that.
 ///
@@ -14,6 +16,9 @@ pub struct Limits {
     max_toc_entries: usize,
     max_string_bytes: usize,
     max_dependencies_per_entry: usize,
+    max_metadata_string_bytes: usize,
+    max_metadata_dependencies: usize,
+    max_metadata_index_bytes: usize,
     max_row_bytes: usize,
     max_fields_per_row: usize,
 }
@@ -22,19 +27,26 @@ impl Limits {
     const DEFAULT_MAX_TOC_ENTRIES: usize = 100_000;
     const DEFAULT_MAX_STRING_BYTES: usize = 16 * 1024 * 1024;
     const DEFAULT_MAX_DEPENDENCIES_PER_ENTRY: usize = 100_000;
+    const DEFAULT_MAX_METADATA_STRING_BYTES: usize = 256 * 1024 * 1024;
+    const DEFAULT_MAX_METADATA_DEPENDENCIES: usize = 1_000_000;
+    const DEFAULT_MAX_METADATA_INDEX_BYTES: usize = 64 * 1024 * 1024;
     const DEFAULT_MAX_ROW_BYTES: usize = 16 * 1024 * 1024;
     const DEFAULT_MAX_FIELDS_PER_ROW: usize = 4 * 1024;
 
     /// Returns the compatibility-oriented finite defaults used by [`Default`].
     ///
     /// v0.1 defaults allow 100,000 TOC entries, 16 MiB per archive string,
-    /// 100,000 dependencies per TOC entry, 16 MiB per physical COPY row, and
-    /// 4,096 fields/columns per row layout.
+    /// 100,000 dependencies per TOC entry, 256 MiB of retained header/TOC string bytes,
+    /// 1,000,000 retained dependencies, 64 MiB of variable-length derived/index names,
+    /// 16 MiB per physical COPY row, and 4,096 fields/columns per row layout.
     pub const fn default_compatible() -> Self {
         Self {
             max_toc_entries: Self::DEFAULT_MAX_TOC_ENTRIES,
             max_string_bytes: Self::DEFAULT_MAX_STRING_BYTES,
             max_dependencies_per_entry: Self::DEFAULT_MAX_DEPENDENCIES_PER_ENTRY,
+            max_metadata_string_bytes: Self::DEFAULT_MAX_METADATA_STRING_BYTES,
+            max_metadata_dependencies: Self::DEFAULT_MAX_METADATA_DEPENDENCIES,
+            max_metadata_index_bytes: Self::DEFAULT_MAX_METADATA_INDEX_BYTES,
             max_row_bytes: Self::DEFAULT_MAX_ROW_BYTES,
             max_fields_per_row: Self::DEFAULT_MAX_FIELDS_PER_ROW,
         }
@@ -53,6 +65,27 @@ impl Limits {
     /// Returns the inclusive maximum dependency count accepted for one TOC entry.
     pub const fn max_dependencies_per_entry(self) -> usize {
         self.max_dependencies_per_entry
+    }
+
+    /// Returns the inclusive cumulative byte budget for retained header and TOC strings.
+    ///
+    /// Encoded NULL values and temporary textual dependency spellings do not consume this
+    /// budget. The parsed [`crate::ArchiveString`] values retained by the archive do.
+    pub const fn max_metadata_string_bytes(self) -> usize {
+        self.max_metadata_string_bytes
+    }
+
+    /// Returns the inclusive cumulative dependency count retained across all TOC entries.
+    pub const fn max_metadata_dependencies(self) -> usize {
+        self.max_metadata_dependencies
+    }
+
+    /// Returns the inclusive byte budget for variable-length derived metadata/index names.
+    ///
+    /// This covers table schema/name lookup keys and the ordered plus lookup copies of COPY
+    /// column names. Fixed-size map entries remain bounded by the TOC and field-count limits.
+    pub const fn max_metadata_index_bytes(self) -> usize {
+        self.max_metadata_index_bytes
     }
 
     /// Returns the inclusive maximum physical byte length of one COPY text row.
@@ -86,6 +119,27 @@ impl Limits {
     #[must_use]
     pub const fn with_max_dependencies_per_entry(mut self, value: usize) -> Self {
         self.max_dependencies_per_entry = value;
+        self
+    }
+
+    /// Returns a configuration with a different cumulative retained string-byte budget.
+    #[must_use]
+    pub const fn with_max_metadata_string_bytes(mut self, value: usize) -> Self {
+        self.max_metadata_string_bytes = value;
+        self
+    }
+
+    /// Returns a configuration with a different cumulative retained dependency budget.
+    #[must_use]
+    pub const fn with_max_metadata_dependencies(mut self, value: usize) -> Self {
+        self.max_metadata_dependencies = value;
+        self
+    }
+
+    /// Returns a configuration with a different derived/index name-byte budget.
+    #[must_use]
+    pub const fn with_max_metadata_index_bytes(mut self, value: usize) -> Self {
+        self.max_metadata_index_bytes = value;
         self
     }
 
