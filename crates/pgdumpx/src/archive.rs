@@ -1,9 +1,7 @@
 use crate::{
     ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, Limits, PgDumpError,
     TableRef, TableRowReader, TocEntry,
-    copy_metadata::{
-        TableDataMetadata, parse_table_data_metadata_with_limits_and_budget,
-    },
+    copy_metadata::{TableDataMetadata, parse_table_data_metadata_with_limits_and_budget},
     custom::{
         data::{BLK_DATA, CustomChunkReader},
         header::read_header_with_budget,
@@ -430,10 +428,7 @@ fn insert_table_with_schema(
                 context: "table name index",
                 requested: 1,
             })?;
-        tables.insert(
-            clone_index_bytes(name, "table name key", budget)?,
-            table_id,
-        );
+        tables.insert(clone_index_bytes(name, "table name key", budget)?, table_id);
         return Ok(());
     }
 
@@ -444,10 +439,7 @@ fn insert_table_with_schema(
             context: "table name index",
             requested: 1,
         })?;
-    tables.insert(
-        clone_index_bytes(name, "table name key", budget)?,
-        table_id,
-    );
+    tables.insert(clone_index_bytes(name, "table name key", budget)?, table_id);
     schemas.insert(
         clone_index_bytes(schema, "table schema key", budget)?,
         tables,
