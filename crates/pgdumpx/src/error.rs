@@ -40,6 +40,12 @@ pub enum PgDumpError {
     },
     /// Memory for a bounded archive string could not be reserved.
     ArchiveStringAllocationFailed { length: u64, offset: u64 },
+    /// Retained header and TOC strings exceed the configured aggregate byte budget.
+    MetadataStringByteLimitExceeded {
+        limit: u64,
+        attempted: u64,
+        offset: u64,
+    },
     /// A required header or TOC string was encoded as NULL.
     MissingRequiredArchiveString { field: &'static str, offset: u64 },
     /// The encoded TOC entry count is negative.
@@ -71,12 +77,25 @@ pub enum PgDumpError {
         count: u64,
         offset: u64,
     },
+    /// Dependencies retained across all TOC entries exceed the aggregate count budget.
+    MetadataDependencyLimitExceeded {
+        entry_id: i32,
+        limit: u64,
+        attempted: u64,
+        offset: u64,
+    },
     /// Two TOC entries use the same dump ID.
     DuplicateDumpId { dump_id: i32 },
     /// Memory for an archive metadata index could not be reserved.
     ArchiveIndexAllocationFailed {
         context: &'static str,
         requested: u64,
+    },
+    /// Variable-length names retained by derived metadata/indexes exceed their byte budget.
+    MetadataIndexByteLimitExceeded {
+        context: &'static str,
+        limit: u64,
+        attempted: u64,
     },
     /// Two `TABLE` entries have the same byte-oriented identity.
     DuplicateTableIdentity {
@@ -312,6 +331,14 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "could not reserve {length} bytes for archive string at byte offset {offset}"
             ),
+            Self::MetadataStringByteLimitExceeded {
+                limit,
+                attempted,
+                offset,
+            } => write!(
+                formatter,
+                "retained metadata strings reached {attempted} bytes at archive byte offset {offset}, exceeding aggregate limit {limit}"
+            ),
             Self::MissingRequiredArchiveString { field, offset } => write!(
                 formatter,
                 "required {field} is NULL at archive byte offset {offset}"
@@ -365,12 +392,29 @@ impl fmt::Display for PgDumpError {
                 formatter,
                 "could not reserve {count} dependencies for dump ID {entry_id} at byte offset {offset}"
             ),
+            Self::MetadataDependencyLimitExceeded {
+                entry_id,
+                limit,
+                attempted,
+                offset,
+            } => write!(
+                formatter,
+                "retained metadata dependencies reached {attempted} while reading dump ID {entry_id} at byte offset {offset}, exceeding aggregate limit {limit}"
+            ),
             Self::DuplicateDumpId { dump_id } => {
                 write!(formatter, "duplicate dump ID {dump_id} in archive TOC")
             }
             Self::ArchiveIndexAllocationFailed { context, requested } => write!(
                 formatter,
                 "could not reserve {requested} elements or bytes for {context}"
+            ),
+            Self::MetadataIndexByteLimitExceeded {
+                context,
+                limit,
+                attempted,
+            } => write!(
+                formatter,
+                "derived metadata/index names for {context} reached {attempted} bytes, exceeding aggregate limit {limit}"
             ),
             Self::DuplicateTableIdentity {
                 first_table_id,
