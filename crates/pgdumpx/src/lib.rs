@@ -143,6 +143,8 @@ mod copy_tests;
 #[cfg(test)]
 mod error_tests;
 #[cfg(test)]
+mod extraction_plan_tests;
+#[cfg(test)]
 mod metadata_open_tests;
 #[cfg(test)]
 mod raw_entry_tests;
