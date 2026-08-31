@@ -1,7 +1,9 @@
 use crate::{Archive, DumpId, EntryReadLimits, PgDumpError, TableRef, TableSelector};
 use std::{
+    collections::{HashSet, TryReserveError},
     error::Error,
     fmt,
+    hash::Hash,
     io::{self, Read, Seek, Write},
 };
 
@@ -11,13 +13,25 @@ use std::{
 pub enum ExtractionPlanError {
     /// The same exact byte-oriented table selector appears more than once.
     DuplicateSelector { selector: TableSelector },
+    /// Memory for the auxiliary duplicate-selector index could not be reserved.
+    ///
+    /// `selector` retains the first input selector as deterministic failure context without
+    /// requiring another allocation after the reservation failure.
+    DuplicateIndexAllocationFailed {
+        selector: TableSelector,
+        requested: usize,
+    },
 }
 
 impl ExtractionPlanError {
     /// Returns the selector associated with this plan-construction failure.
+    ///
+    /// A duplicate error returns the first repeated selector in input order. An auxiliary
+    /// allocation error returns the first input selector retained as deterministic context.
     pub const fn selector(&self) -> &TableSelector {
         match self {
-            Self::DuplicateSelector { selector } => selector,
+            Self::DuplicateSelector { selector }
+            | Self::DuplicateIndexAllocationFailed { selector, .. } => selector,
         }
     }
 }
@@ -31,11 +45,38 @@ impl fmt::Display for ExtractionPlanError {
                 selector.schema(),
                 selector.name()
             ),
+            Self::DuplicateIndexAllocationFailed {
+                selector,
+                requested,
+            } => write!(
+                formatter,
+                "failed to reserve duplicate-selector index for {requested} extraction target(s): first schema={:?}, table={:?}",
+                selector.schema(),
+                selector.name()
+            ),
         }
     }
 }
 
 impl Error for ExtractionPlanError {}
+
+/// Returns the input index of the first repeated key using one pre-reserved hash lookup per key.
+pub(crate) fn first_duplicate_index<I, K>(keys: I) -> Result<Option<usize>, TryReserveError>
+where
+    I: ExactSizeIterator<Item = K>,
+    K: Eq + Hash,
+{
+    let mut seen = HashSet::new();
+    seen.try_reserve(keys.len())?;
+
+    for (index, key) in keys.enumerate() {
+        if !seen.insert(key) {
+            return Ok(Some(index));
+        }
+    }
+
+    Ok(None)
+}
 
 /// One archive-specific table-data target resolved for plan execution.
 ///
@@ -166,7 +207,8 @@ impl Error for ExtractionExecutionError {
 /// archive-specific seek state, so the same plan can be preflighted or executed against
 /// multiple archives. Selector order is preserved exactly as supplied by the caller.
 ///
-/// Duplicate selectors are rejected during construction. [`ExtractionPlan::preflight`]
+/// Duplicate selectors are rejected during construction by an expected-linear, input-order
+/// membership pass over exact `(schema, table)` byte keys. [`ExtractionPlan::preflight`]
 /// resolves all selectors and their related `TABLE DATA` entries using archive metadata
 /// only; it does not seek to or decompress payloads. [`ExtractionPlan::execute`] always
 /// completes that full metadata preflight before requesting the first destination, then
@@ -217,12 +259,31 @@ impl ExtractionPlan {
         selectors: Vec<TableSelector>,
         entry_read_limits: EntryReadLimits,
     ) -> Result<Self, ExtractionPlanError> {
-        for (index, selector) in selectors.iter().enumerate() {
-            if selectors[..index].contains(selector) {
-                return Err(ExtractionPlanError::DuplicateSelector {
-                    selector: selector.clone(),
+        let duplicate_index = match first_duplicate_index(
+            selectors
+                .iter()
+                .map(|selector| (selector.schema(), selector.name())),
+        ) {
+            Ok(duplicate_index) => duplicate_index,
+            Err(_) => {
+                let requested = selectors.len();
+                let selector = selectors
+                    .into_iter()
+                    .next()
+                    .expect("a nonzero reservation failure has an input selector");
+                return Err(ExtractionPlanError::DuplicateIndexAllocationFailed {
+                    selector,
+                    requested,
                 });
             }
+        };
+
+        if let Some(index) = duplicate_index {
+            let selector = selectors
+                .into_iter()
+                .nth(index)
+                .expect("duplicate index originated from the selector iterator");
+            return Err(ExtractionPlanError::DuplicateSelector { selector });
         }
 
         Ok(Self {
