@@ -4,8 +4,7 @@ use std::{cell::Cell, io::Cursor, path::PathBuf};
 #[test]
 fn standalone_reader_never_exposes_bytes_after_a_rejected_row() {
     let limits = Limits::default().with_max_row_bytes(3);
-    let mut rows =
-        CopyRowReader::with_limits(Cursor::new(b"abcd\nnext\n".as_slice()), limits);
+    let mut rows = CopyRowReader::with_limits(Cursor::new(b"abcd\nnext\n".as_slice()), limits);
 
     assert!(matches!(
         rows.next_row().unwrap_err(),
@@ -22,11 +21,9 @@ fn standalone_reader_never_exposes_bytes_after_a_rejected_row() {
 #[test]
 fn archive_backed_reader_and_searches_are_terminal_after_a_parse_error() {
     let limits = Limits::default().with_max_row_bytes(3);
-    let mut archive = Archive::open_with_limits(
-        Cursor::new(fixture("pg18-none-copy-basic.dump")),
-        limits,
-    )
-    .unwrap();
+    let mut archive =
+        Archive::open_with_limits(Cursor::new(fixture("pg18-none-copy-basic.dump")), limits)
+            .unwrap();
     let mut rows = archive.table_rows(b"public", b"orders").unwrap();
 
     assert!(matches!(
