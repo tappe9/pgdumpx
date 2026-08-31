@@ -24,12 +24,10 @@ fn unique_key_validation_hashes_each_key_once_after_reserving() {
 #[test]
 fn validation_stops_at_the_first_repeated_key_in_input_order() {
     let hash_calls = Rc::new(Cell::new(0_usize));
-    let keys = [1_u64, 2, 3, 2, 1]
-        .into_iter()
-        .map(|value| CountedKey {
-            value,
-            hash_calls: Rc::clone(&hash_calls),
-        });
+    let keys = [1_u64, 2, 3, 2, 1].into_iter().map(|value| CountedKey {
+        value,
+        hash_calls: Rc::clone(&hash_calls),
+    });
 
     assert_eq!(first_duplicate_index(keys).unwrap(), Some(3));
     assert_eq!(hash_calls.get(), 4);
