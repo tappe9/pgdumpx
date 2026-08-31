@@ -67,6 +67,8 @@ impl ExtractionTarget {
 }
 
 /// Successful result for one target in an [`ExtractionPlan`] execution.
+///
+/// Completion means both bounded copying and destination flushing succeeded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractionOutcome {
     target: ExtractionTarget,
@@ -283,7 +285,11 @@ impl ExtractionPlan {
     ///
     /// `destination_for` supplies output policy only. An error creating a destination is
     /// reported as [`PgDumpError::EntryOutputIo`] with zero written bytes for that target.
-    /// The executor does not add path naming, overwrite, framing, flush, or rollback policy.
+    /// After [`Archive::copy_entry_to`] succeeds, the executor flushes the destination before
+    /// reporting the target as completed. A flush failure is reported as
+    /// [`PgDumpError::EntryOutputIo`] with the number of bytes accepted by the destination.
+    /// The executor does not add path naming, overwrite, framing, filesystem durability
+    /// (`fsync`/`sync_all`), or rollback policy.
     ///
     /// If one target fails, later destinations are never requested. Earlier successful
     /// targets remain listed in [`ExtractionExecutionError::completed`]. Bytes already
@@ -355,6 +361,19 @@ impl ExtractionPlan {
                     });
                 }
             };
+
+            if let Err(source) = destination.flush() {
+                let error = PgDumpError::EntryOutputIo {
+                    dump_id: target.data_entry_id().as_i32(),
+                    written: copied_bytes,
+                    source,
+                };
+                return Err(ExtractionExecutionError::Target {
+                    target,
+                    completed,
+                    source: error,
+                });
+            }
 
             completed.push(ExtractionOutcome {
                 target,
