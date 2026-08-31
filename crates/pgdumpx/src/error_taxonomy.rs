@@ -124,7 +124,8 @@ impl PgDumpError {
             Self::CopyColumnMetadataUnavailable { .. }
             | Self::MalformedCopyStatement { .. }
             | Self::MalformedCopyEscape { .. }
-            | Self::MalformedCopyTerminator { .. } => ErrorCategory::Copy,
+            | Self::MalformedCopyTerminator { .. }
+            | Self::CopyRowFieldCountMismatch { .. } => ErrorCategory::Copy,
             Self::UnsupportedTableDataRepresentation { .. } => ErrorCategory::Representation,
             Self::InvalidUtf8 { .. } => ErrorCategory::Encoding,
             Self::ArchiveStringLimitExceeded { .. }
@@ -233,6 +234,7 @@ impl PgDumpError {
             | Self::DecompressionFailed { .. }
             | Self::EntryDecompressedByteLimitExceeded { .. }
             | Self::EntryDecompressedByteCountOverflow { .. }
+            | Self::CopyRowFieldCountMismatch { .. }
             | Self::ScanRowLimitExceeded { .. }
             | Self::CopyRowAllocationFailed { .. }
             | Self::CopyFieldAllocationFailed { .. }
@@ -270,7 +272,8 @@ impl PgDumpError {
             | Self::DecompressionFailed { dump_id, .. }
             | Self::EntryDecompressedByteLimitExceeded { dump_id, .. }
             | Self::EntryDecompressedByteCountOverflow { dump_id, .. }
-            | Self::EntryOutputIo { dump_id, .. } => *dump_id,
+            | Self::EntryOutputIo { dump_id, .. }
+            | Self::CopyRowFieldCountMismatch { dump_id, .. } => *dump_id,
             Self::DuplicateTableIdentity { first_table_id, .. } => *first_table_id,
             Self::AmbiguousTableDataRelationship { data_id }
             | Self::ConflictingTableDataRelationship { data_id, .. } => *data_id,
@@ -327,6 +330,7 @@ impl PgDumpError {
             | Self::MalformedCopyTerminator { row, .. }
             | Self::CopyRowByteLimitExceeded { row, .. }
             | Self::CopyFieldCountLimitExceeded { row, .. }
+            | Self::CopyRowFieldCountMismatch { row, .. }
             | Self::ScanRowLimitExceeded { row, .. }
             | Self::ScanDecompressedByteLimitExceeded { row, .. }
             | Self::CopyRowAllocationFailed { row, .. }
