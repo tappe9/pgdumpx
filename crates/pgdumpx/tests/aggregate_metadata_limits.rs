@@ -121,7 +121,9 @@ fn auxiliary_index_names_accept_exact_limit_and_reject_one_over() {
         Limits::default().with_max_metadata_index_bytes(exact),
     )
     .expect("the exact aggregate index-byte limit is inclusive");
-    let table = archive.table(b"public", b"orders").expect("table is indexed");
+    let table = archive
+        .table(b"public", b"orders")
+        .expect("table is indexed");
     assert_eq!(table.columns().unwrap().len(), 2);
 
     let error = open_with(
