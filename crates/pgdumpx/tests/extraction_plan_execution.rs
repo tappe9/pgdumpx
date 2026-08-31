@@ -306,10 +306,7 @@ fn flush_failure_preserves_earlier_completed_outcomes() {
             dump_id, written, ..
         } => {
             assert_eq!(*dump_id, 4);
-            assert_eq!(
-                *written,
-                u64::try_from(INVENTORY_PAYLOAD.len()).unwrap()
-            );
+            assert_eq!(*written, u64::try_from(INVENTORY_PAYLOAD.len()).unwrap());
         }
         other => panic!("expected EntryOutputIo, got {other:?}"),
     }
