@@ -2,9 +2,11 @@ use crate::{
     ArchiveHeader, ArchiveString, ArchiveTimestamp, ArchiveVersion, Compression, Limits,
     PgDumpError,
     custom::primitives::{
-        ArchiveIntegerSize, ArchiveOffsetSize, read_archive_integer, read_archive_string,
+        ArchiveIntegerSize, ArchiveOffsetSize, read_archive_integer,
+        read_retained_archive_string,
     },
     io::archive_reader::ArchiveReader,
+    metadata_budget::MetadataBudget,
 };
 use std::io::Read;
 
@@ -22,6 +24,15 @@ pub(crate) struct ParsedHeader {
 pub(crate) fn read_header<R: Read>(
     reader: &mut ArchiveReader<R>,
     limits: Limits,
+) -> Result<ParsedHeader, PgDumpError> {
+    let mut budget = MetadataBudget::new(limits)?;
+    read_header_with_budget(reader, limits, &mut budget)
+}
+
+pub(crate) fn read_header_with_budget<R: Read>(
+    reader: &mut ArchiveReader<R>,
+    limits: Limits,
+    budget: &mut MetadataBudget,
 ) -> Result<ParsedHeader, PgDumpError> {
     let magic_offset = reader.offset();
     let mut magic = [0_u8; ARCHIVE_MAGIC.len()];
@@ -75,11 +86,27 @@ pub(crate) fn read_header<R: Read>(
         read_archive_integer(reader, integer_size)?,
         read_archive_integer(reader, integer_size)?,
     );
-    let database_name =
-        read_required_string(reader, integer_size, limits, "archive database name")?;
-    let server_version =
-        read_required_string(reader, integer_size, limits, "archive server version")?;
-    let dump_version = read_required_string(reader, integer_size, limits, "archive dump version")?;
+    let database_name = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "archive database name",
+    )?;
+    let server_version = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "archive server version",
+    )?;
+    let dump_version = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "archive dump version",
+    )?;
 
     Ok(ParsedHeader {
         header: ArchiveHeader::new(
@@ -132,10 +159,16 @@ fn read_required_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
     limits: Limits,
+    budget: &mut MetadataBudget,
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.max_string_bytes())?
-        .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
+    let bytes = read_retained_archive_string(
+        reader,
+        integer_size,
+        limits.max_string_bytes(),
+        budget,
+    )?
+    .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
