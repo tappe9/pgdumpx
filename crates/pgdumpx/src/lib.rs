@@ -130,6 +130,7 @@ mod extraction_plan;
 mod file;
 mod io;
 mod limits;
+mod metadata_budget;
 mod metadata_filter;
 mod model;
 mod raw_entry;
