@@ -29,6 +29,7 @@ pub(crate) fn read_toc<R: Read>(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn read_toc_for_version<R: Read>(
     reader: &mut ArchiveReader<R>,
     version: ArchiveVersion,
@@ -167,13 +168,8 @@ fn read_toc_entry<R: Read>(
         None
     };
     let owner = read_optional_string(reader, integer_size, limits, budget)?;
-    let with_oids = read_required_string(
-        reader,
-        integer_size,
-        limits,
-        budget,
-        "TOC with-OIDs flag",
-    )?;
+    let with_oids =
+        read_required_string(reader, integer_size, limits, budget, "TOC with-OIDs flag")?;
     let dependencies = read_dependencies(reader, integer_size, limits, id, budget)?;
     let data_location = match read_archive_offset(reader, offset_size)? {
         ArchiveOffset::PositionNotSet => DataLocation::Unknown,
