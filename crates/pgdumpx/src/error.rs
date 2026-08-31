@@ -210,6 +210,13 @@ pub enum PgDumpError {
         actual: u64,
         byte_offset: u64,
     },
+    /// One archive-backed COPY row disagrees with valid column metadata.
+    CopyRowFieldCountMismatch {
+        dump_id: i32,
+        row: u64,
+        expected: u64,
+        actual: u64,
+    },
     /// One scan attempted to consume more complete rows than its configured budget.
     ScanRowLimitExceeded { row: u64, limit: u64, consumed: u64 },
     /// One scan consumed more decompressed COPY bytes than its configured budget.
@@ -552,6 +559,15 @@ impl fmt::Display for PgDumpError {
             } => write!(
                 formatter,
                 "COPY row {row} reached {actual} fields at offset {byte_offset}, exceeding limit {limit}"
+            ),
+            Self::CopyRowFieldCountMismatch {
+                dump_id,
+                row,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "COPY row {row} for dump ID {dump_id} has {actual} fields, expected {expected} from column metadata"
             ),
             Self::ScanRowLimitExceeded {
                 row,
