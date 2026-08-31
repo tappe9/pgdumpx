@@ -17,8 +17,14 @@ impl MetadataBudget {
             string_bytes: 0,
             dependencies: 0,
             index_bytes: 0,
-            max_string_bytes: to_u64(limits.max_metadata_string_bytes(), 0)?,
-            max_dependencies: to_u64(limits.max_metadata_dependencies(), 0)?,
+            max_string_bytes: to_u64(
+                limits.max_metadata_string_bytes(),
+                0,
+            )?,
+            max_dependencies: to_u64(
+                limits.max_metadata_dependencies(),
+                0,
+            )?,
             max_index_bytes: to_u64(limits.max_metadata_index_bytes(), 0)?,
         })
     }
