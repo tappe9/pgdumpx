@@ -2,9 +2,10 @@ use crate::{
     ArchiveVersion, Limits, PgDumpError,
     custom::primitives::{
         ArchiveIntegerSize, ArchiveOffset, ArchiveOffsetSize, read_archive_integer,
-        read_archive_offset, read_archive_string,
+        read_archive_offset, read_archive_string, read_retained_archive_string,
     },
     io::archive_reader::ArchiveReader,
+    metadata_budget::MetadataBudget,
     model::{ArchiveString, DataLocation, DumpId, Section, TocEntry},
 };
 use std::io::Read;
@@ -34,6 +35,25 @@ pub(crate) fn read_toc_for_version<R: Read>(
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
     limits: Limits,
+) -> Result<Vec<TocEntry>, PgDumpError> {
+    let mut budget = MetadataBudget::new(limits)?;
+    read_toc_for_version_with_budget(
+        reader,
+        version,
+        integer_size,
+        offset_size,
+        limits,
+        &mut budget,
+    )
+}
+
+pub(crate) fn read_toc_for_version_with_budget<R: Read>(
+    reader: &mut ArchiveReader<R>,
+    version: ArchiveVersion,
+    integer_size: ArchiveIntegerSize,
+    offset_size: ArchiveOffsetSize,
+    limits: Limits,
+    budget: &mut MetadataBudget,
 ) -> Result<Vec<TocEntry>, PgDumpError> {
     let count_offset = reader.offset();
     let encoded_count = read_archive_integer(reader, integer_size)?;
@@ -71,6 +91,7 @@ pub(crate) fn read_toc_for_version<R: Read>(
             integer_size,
             offset_size,
             limits,
+            budget,
         )?);
     }
 
@@ -83,6 +104,7 @@ fn read_toc_entry<R: Read>(
     integer_size: ArchiveIntegerSize,
     offset_size: ArchiveOffsetSize,
     limits: Limits,
+    budget: &mut MetadataBudget,
 ) -> Result<TocEntry, PgDumpError> {
     let id_offset = reader.offset();
     let id_value = read_archive_integer(reader, integer_size)?;
@@ -95,11 +117,23 @@ fn read_toc_entry<R: Read>(
     let id = DumpId::from_valid(id_value);
 
     let has_data = read_archive_integer(reader, integer_size)? != 0;
-    let catalog_table_oid =
-        read_required_string(reader, integer_size, limits, "TOC catalog table OID")?;
-    let catalog_oid = read_required_string(reader, integer_size, limits, "TOC catalog object OID")?;
-    let name = read_required_string(reader, integer_size, limits, "TOC tag")?;
-    let description = read_required_string(reader, integer_size, limits, "TOC description")?;
+    let catalog_table_oid = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "TOC catalog table OID",
+    )?;
+    let catalog_oid = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "TOC catalog object OID",
+    )?;
+    let name = read_required_string(reader, integer_size, limits, budget, "TOC tag")?;
+    let description =
+        read_required_string(reader, integer_size, limits, budget, "TOC description")?;
 
     let section_offset = reader.offset();
     let section_value = read_archive_integer(reader, integer_size)?;
@@ -117,13 +151,13 @@ fn read_toc_entry<R: Read>(
         }
     };
 
-    let definition = read_optional_string(reader, integer_size, limits)?;
-    let drop_statement = read_optional_string(reader, integer_size, limits)?;
-    let copy_statement = read_optional_string(reader, integer_size, limits)?;
-    let namespace = read_optional_string(reader, integer_size, limits)?;
-    let tablespace = read_optional_string(reader, integer_size, limits)?;
+    let definition = read_optional_string(reader, integer_size, limits, budget)?;
+    let drop_statement = read_optional_string(reader, integer_size, limits, budget)?;
+    let copy_statement = read_optional_string(reader, integer_size, limits, budget)?;
+    let namespace = read_optional_string(reader, integer_size, limits, budget)?;
+    let tablespace = read_optional_string(reader, integer_size, limits, budget)?;
     let table_access_method = if version >= ARCHIVE_VERSION_1_14 {
-        read_optional_string(reader, integer_size, limits)?
+        read_optional_string(reader, integer_size, limits, budget)?
     } else {
         None
     };
@@ -132,9 +166,15 @@ fn read_toc_entry<R: Read>(
     } else {
         None
     };
-    let owner = read_optional_string(reader, integer_size, limits)?;
-    let with_oids = read_required_string(reader, integer_size, limits, "TOC with-OIDs flag")?;
-    let dependencies = read_dependencies(reader, integer_size, limits, id)?;
+    let owner = read_optional_string(reader, integer_size, limits, budget)?;
+    let with_oids = read_required_string(
+        reader,
+        integer_size,
+        limits,
+        budget,
+        "TOC with-OIDs flag",
+    )?;
+    let dependencies = read_dependencies(reader, integer_size, limits, id, budget)?;
     let data_location = match read_archive_offset(reader, offset_size)? {
         ArchiveOffset::PositionNotSet => DataLocation::Unknown,
         ArchiveOffset::Position(offset) => DataLocation::Offset(offset),
@@ -168,6 +208,7 @@ fn read_dependencies<R: Read>(
     integer_size: ArchiveIntegerSize,
     limits: Limits,
     entry_id: DumpId,
+    budget: &mut MetadataBudget,
 ) -> Result<Vec<DumpId>, PgDumpError> {
     let mut dependencies = Vec::new();
 
@@ -192,6 +233,7 @@ fn read_dependencies<R: Read>(
         }
 
         let dependency = parse_dependency(&bytes, entry_id, offset)?;
+        budget.charge_dependency(entry_id, offset)?;
         let next_count = dependencies
             .len()
             .checked_add(1)
@@ -252,11 +294,17 @@ fn read_required_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
     limits: Limits,
+    budget: &mut MetadataBudget,
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_archive_string(reader, integer_size, limits.max_string_bytes())?
-        .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
+    let bytes = read_retained_archive_string(
+        reader,
+        integer_size,
+        limits.max_string_bytes(),
+        budget,
+    )?
+    .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
 
@@ -264,11 +312,15 @@ fn read_optional_string<R: Read>(
     reader: &mut ArchiveReader<R>,
     integer_size: ArchiveIntegerSize,
     limits: Limits,
+    budget: &mut MetadataBudget,
 ) -> Result<Option<ArchiveString>, PgDumpError> {
-    Ok(
-        read_archive_string(reader, integer_size, limits.max_string_bytes())?
-            .map(ArchiveString::from_bytes),
-    )
+    Ok(read_retained_archive_string(
+        reader,
+        integer_size,
+        limits.max_string_bytes(),
+        budget,
+    )?
+    .map(ArchiveString::from_bytes))
 }
 
 fn to_u64(value: usize, offset: u64) -> Result<u64, PgDumpError> {
