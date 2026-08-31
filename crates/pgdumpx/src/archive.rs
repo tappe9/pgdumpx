@@ -1,17 +1,20 @@
 use crate::{
     ArchiveHeader, Compression, DataLocation, DumpId, EntryDataReader, Limits, PgDumpError,
     TableRef, TableRowReader, TocEntry,
-    copy_metadata::{TableDataMetadata, parse_table_data_metadata_with_limits},
+    copy_metadata::{
+        TableDataMetadata, parse_table_data_metadata_with_limits_and_budget,
+    },
     custom::{
         data::{BLK_DATA, CustomChunkReader},
-        header::read_header,
+        header::read_header_with_budget,
         primitives::read_archive_integer,
-        toc::read_toc_for_version,
+        toc::read_toc_for_version_with_budget,
     },
     io::archive_reader::ArchiveReader,
+    metadata_budget::MetadataBudget,
 };
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     io::{Read, Seek, SeekFrom},
 };
 
@@ -48,24 +51,27 @@ impl<R: Read + Seek> Archive<R> {
 
     /// Opens a supported archive-format 1.14–1.16 archive with structural limits.
     ///
-    /// `limits` bounds TOC/string/dependency cardinalities and the COPY row/column
-    /// structures that are prepared or later parsed. These structural limits do not
-    /// impose a total row-scan or raw decompressed-output budget; see [`crate::ScanLimits`]
-    /// and [`crate::EntryReadLimits`] for those independent controls.
+    /// `limits` bounds per-item TOC/string/dependency cardinalities, cumulative retained
+    /// metadata strings and dependencies, variable-length derived/index names, and COPY
+    /// row/column structures. These structural limits do not impose a total row-scan or raw
+    /// decompressed-output budget; see [`crate::ScanLimits`] and [`crate::EntryReadLimits`]
+    /// for those independent controls.
     ///
     /// The source is consumed sequentially only far enough to parse the archive header
     /// and TOC. Payload decompression remains lazy.
     pub fn open_with_limits(reader: R, limits: Limits) -> Result<Self, PgDumpError> {
         let mut reader = ArchiveReader::new(reader);
-        let parsed_header = read_header(&mut reader, limits)?;
-        let entries = read_toc_for_version(
+        let mut budget = MetadataBudget::new(limits)?;
+        let parsed_header = read_header_with_budget(&mut reader, limits, &mut budget)?;
+        let entries = read_toc_for_version_with_budget(
             &mut reader,
             parsed_header.header.version(),
             parsed_header.integer_size,
             parsed_header.offset_size,
             limits,
+            &mut budget,
         )?;
-        let index = ArchiveIndex::build_with_limits(&entries, limits)?;
+        let index = ArchiveIndex::build_with_limits(&entries, limits, &mut budget)?;
 
         Ok(Self {
             reader: reader.into_inner(),
@@ -268,7 +274,11 @@ struct ArchiveIndex {
 }
 
 impl ArchiveIndex {
-    fn build_with_limits(entries: &[TocEntry], limits: Limits) -> Result<Self, PgDumpError> {
+    fn build_with_limits(
+        entries: &[TocEntry],
+        limits: Limits,
+        budget: &mut MetadataBudget,
+    ) -> Result<Self, PgDumpError> {
         let mut by_dump_id = HashMap::new();
         reserve_map(&mut by_dump_id, entries.len(), "dump-ID index")?;
         for (index, entry) in entries.iter().enumerate() {
@@ -295,11 +305,13 @@ impl ArchiveIndex {
                     schema,
                     entry.name_bytes(),
                     entry.id(),
+                    budget,
                 )?,
                 None => insert_schema_less_table(
                     &mut tables_without_schema,
                     entry.name_bytes(),
                     entry.id(),
+                    budget,
                 )?,
             }
         }
@@ -319,10 +331,11 @@ impl ArchiveIndex {
         )?;
 
         for data in entries.iter().filter(|entry| entry.is_table_data()) {
-            let metadata = parse_table_data_metadata_with_limits(
+            let metadata = parse_table_data_metadata_with_limits_and_budget(
                 data.id(),
                 data.copy_statement_bytes(),
                 limits,
+                budget,
             )?;
             table_data_metadata.insert(data.id(), metadata);
 
@@ -402,38 +415,43 @@ fn insert_table_with_schema(
     schema: &[u8],
     name: &[u8],
     table_id: DumpId,
+    budget: &mut MetadataBudget,
 ) -> Result<(), PgDumpError> {
-    match schemas.entry(clone_index_bytes(schema, "table schema key")?) {
-        Entry::Occupied(mut occupied) => {
-            let tables = occupied.get_mut();
-            tables
-                .try_reserve(1)
-                .map_err(|_| PgDumpError::ArchiveIndexAllocationFailed {
-                    context: "table name index",
-                    requested: 1,
-                })?;
-            if let Some(previous) =
-                tables.insert(clone_index_bytes(name, "table name key")?, table_id)
-            {
-                return Err(PgDumpError::DuplicateTableIdentity {
-                    first_table_id: previous.as_i32(),
-                    second_table_id: table_id.as_i32(),
-                });
-            }
+    if let Some(tables) = schemas.get_mut(schema) {
+        if let Some(previous) = tables.get(name) {
+            return Err(PgDumpError::DuplicateTableIdentity {
+                first_table_id: previous.as_i32(),
+                second_table_id: table_id.as_i32(),
+            });
         }
-        Entry::Vacant(vacant) => {
-            let mut tables = HashMap::new();
-            tables
-                .try_reserve(1)
-                .map_err(|_| PgDumpError::ArchiveIndexAllocationFailed {
-                    context: "table name index",
-                    requested: 1,
-                })?;
-            tables.insert(clone_index_bytes(name, "table name key")?, table_id);
-            vacant.insert(tables);
-        }
+        tables
+            .try_reserve(1)
+            .map_err(|_| PgDumpError::ArchiveIndexAllocationFailed {
+                context: "table name index",
+                requested: 1,
+            })?;
+        tables.insert(
+            clone_index_bytes(name, "table name key", budget)?,
+            table_id,
+        );
+        return Ok(());
     }
 
+    let mut tables = HashMap::new();
+    tables
+        .try_reserve(1)
+        .map_err(|_| PgDumpError::ArchiveIndexAllocationFailed {
+            context: "table name index",
+            requested: 1,
+        })?;
+    tables.insert(
+        clone_index_bytes(name, "table name key", budget)?,
+        table_id,
+    );
+    schemas.insert(
+        clone_index_bytes(schema, "table schema key", budget)?,
+        tables,
+    );
     Ok(())
 }
 
@@ -441,16 +459,18 @@ fn insert_schema_less_table(
     tables: &mut HashMap<Vec<u8>, DumpId>,
     name: &[u8],
     table_id: DumpId,
+    budget: &mut MetadataBudget,
 ) -> Result<(), PgDumpError> {
-    if let Some(previous) = tables.insert(
-        clone_index_bytes(name, "schema-less table name key")?,
-        table_id,
-    ) {
+    if let Some(previous) = tables.get(name) {
         return Err(PgDumpError::DuplicateTableIdentity {
             first_table_id: previous.as_i32(),
             second_table_id: table_id.as_i32(),
         });
     }
+    tables.insert(
+        clone_index_bytes(name, "schema-less table name key", budget)?,
+        table_id,
+    );
     Ok(())
 }
 
@@ -468,7 +488,12 @@ fn catalog_oids_compatible(table_oid: &[u8], data_oid: &[u8]) -> bool {
     table_oid == data_oid || table_oid == b"0" || data_oid == b"0"
 }
 
-fn clone_index_bytes(bytes: &[u8], context: &'static str) -> Result<Vec<u8>, PgDumpError> {
+fn clone_index_bytes(
+    bytes: &[u8],
+    context: &'static str,
+    budget: &mut MetadataBudget,
+) -> Result<Vec<u8>, PgDumpError> {
+    budget.charge_index_bytes(bytes.len(), context)?;
     let requested =
         u64::try_from(bytes.len()).map_err(|_| PgDumpError::ArithmeticOverflow { offset: 0 })?;
     let mut copy = Vec::new();
