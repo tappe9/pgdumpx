@@ -219,6 +219,102 @@ fn per_target_raw_limit_exhaustion_is_error_and_stops_later_target() {
     ));
 }
 
+#[test]
+fn flush_failure_reports_copied_bytes_and_stops_before_later_target() {
+    let mut archive = Archive::open(Cursor::new(two_table_archive(0))).unwrap();
+    let orders = TableSelector::new(b"public", b"orders");
+    let inventory = TableSelector::new(b"warehouse", b"inventory");
+    let plan = ExtractionPlan::new(vec![orders.clone(), inventory.clone()]).unwrap();
+    let started = Rc::new(RefCell::new(Vec::<TableSelector>::new()));
+    let orders_output = Rc::new(RefCell::new(Vec::new()));
+    let inventory_output = Rc::new(RefCell::new(Vec::new()));
+
+    let error = plan
+        .execute(&mut archive, {
+            let started = Rc::clone(&started);
+            let orders_output = Rc::clone(&orders_output);
+            let inventory_output = Rc::clone(&inventory_output);
+            let orders = orders.clone();
+            move |target| {
+                started.borrow_mut().push(target.selector().clone());
+                if target.selector() == &orders {
+                    Ok(TestWriter::Flush(FailOnFlush(SharedWriter(Rc::clone(
+                        &orders_output,
+                    )))))
+                } else {
+                    Ok(TestWriter::Shared(SharedWriter(Rc::clone(
+                        &inventory_output,
+                    ))))
+                }
+            }
+        })
+        .unwrap_err();
+
+    assert_eq!(started.borrow().as_slice(), std::slice::from_ref(&orders));
+    assert_eq!(orders_output.borrow().as_slice(), ORDERS_PAYLOAD);
+    assert!(inventory_output.borrow().is_empty());
+    assert!(error.completed().is_empty());
+    assert_eq!(error.failed_target().unwrap().selector(), &orders);
+    match error.pgdump_error() {
+        PgDumpError::EntryOutputIo {
+            dump_id, written, ..
+        } => {
+            assert_eq!(*dump_id, 2);
+            assert_eq!(*written, u64::try_from(ORDERS_PAYLOAD.len()).unwrap());
+        }
+        other => panic!("expected EntryOutputIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn flush_failure_preserves_earlier_completed_outcomes() {
+    let mut archive = Archive::open(Cursor::new(two_table_archive(0))).unwrap();
+    let orders = TableSelector::new(b"public", b"orders");
+    let inventory = TableSelector::new(b"warehouse", b"inventory");
+    let plan = ExtractionPlan::new(vec![orders.clone(), inventory.clone()]).unwrap();
+    let orders_output = Rc::new(RefCell::new(Vec::new()));
+    let inventory_output = Rc::new(RefCell::new(Vec::new()));
+
+    let error = plan
+        .execute(&mut archive, {
+            let orders = orders.clone();
+            let orders_output = Rc::clone(&orders_output);
+            let inventory_output = Rc::clone(&inventory_output);
+            move |target| {
+                if target.selector() == &orders {
+                    Ok(TestWriter::Shared(SharedWriter(Rc::clone(&orders_output))))
+                } else {
+                    Ok(TestWriter::Flush(FailOnFlush(SharedWriter(Rc::clone(
+                        &inventory_output,
+                    )))))
+                }
+            }
+        })
+        .unwrap_err();
+
+    assert_eq!(orders_output.borrow().as_slice(), ORDERS_PAYLOAD);
+    assert_eq!(inventory_output.borrow().as_slice(), INVENTORY_PAYLOAD);
+    assert_eq!(error.completed().len(), 1);
+    assert_eq!(error.completed()[0].target().selector(), &orders);
+    assert_eq!(
+        error.completed()[0].copied_bytes(),
+        u64::try_from(ORDERS_PAYLOAD.len()).unwrap()
+    );
+    assert_eq!(error.failed_target().unwrap().selector(), &inventory);
+    match error.pgdump_error() {
+        PgDumpError::EntryOutputIo {
+            dump_id, written, ..
+        } => {
+            assert_eq!(*dump_id, 4);
+            assert_eq!(
+                *written,
+                u64::try_from(INVENTORY_PAYLOAD.len()).unwrap()
+            );
+        }
+        other => panic!("expected EntryOutputIo, got {other:?}"),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SharedWriter(Rc<RefCell<Vec<u8>>>);
 
@@ -237,6 +333,7 @@ impl Write for SharedWriter {
 enum TestWriter {
     Shared(SharedWriter),
     Fail(FailAfter),
+    Flush(FailOnFlush),
 }
 
 impl Write for TestWriter {
@@ -244,6 +341,7 @@ impl Write for TestWriter {
         match self {
             Self::Shared(writer) => writer.write(bytes),
             Self::Fail(writer) => writer.write(bytes),
+            Self::Flush(writer) => writer.write(bytes),
         }
     }
 
@@ -251,7 +349,21 @@ impl Write for TestWriter {
         match self {
             Self::Shared(writer) => writer.flush(),
             Self::Fail(writer) => writer.flush(),
+            Self::Flush(writer) => writer.flush(),
         }
+    }
+}
+
+#[derive(Debug)]
+struct FailOnFlush(SharedWriter);
+
+impl Write for FailOnFlush {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::other("intentional flush failure"))
     }
 }
 
