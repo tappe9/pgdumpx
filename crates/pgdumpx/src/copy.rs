@@ -243,6 +243,12 @@ impl ScanBudget {
 /// across subsequent row operations on this reader. Operation-level limits passed
 /// to [`CopyRowReader::find_first_with_limits`] add a second budget measured from
 /// that call's current stream position.
+///
+/// Any error returned while reading or parsing a row makes this reader terminal.
+/// The current record may already be partially consumed, and pgdumpx does not try
+/// to resynchronize malformed COPY input or retry a source-I/O failure. Subsequent
+/// row-reading and search calls therefore return `Ok(None)` without exposing bytes
+/// from the rejected record or any later record.
 pub struct CopyRowReader<R> {
     input: CopyInput<R>,
     limits: Limits,
@@ -325,6 +331,10 @@ impl<R: Read> CopyRowReader<R> {
     /// storage, so Rust prevents another mutable operation on this reader while
     /// that row is still used.
     ///
+    /// Any error makes the reader terminal because the rejected physical record may
+    /// have been partially consumed. Later `next_row` or search calls return
+    /// `Ok(None)`; the original failing call retains its existing typed error context.
+    ///
     /// ```compile_fail
     /// use pgdumpx::{CopyRowReader, PgDumpError};
     /// use std::io::Cursor;
@@ -399,6 +409,11 @@ impl<R: Read> CopyRowReader<R> {
             return Ok(None);
         }
 
+        // Assume terminal until a complete line-delimited row has been parsed. Any
+        // early-returning error then leaves the reader safely terminal without
+        // replacing the original typed error or attempting record resynchronization.
+        self.finished = true;
+
         self.raw_row.clear();
         self.logical_bytes.clear();
         self.field_spans.clear();
@@ -408,13 +423,11 @@ impl<R: Read> CopyRowReader<R> {
         let record_end = self.read_record(row, operation_budget)?;
 
         if self.raw_row.is_empty() && record_end == RecordEnd::Eof {
-            self.finished = true;
             return Ok(None);
         }
 
         if self.raw_row == COPY_TERMINATOR {
             if record_end == RecordEnd::Line {
-                self.finished = true;
                 return Ok(None);
             }
             return Err(PgDumpError::MalformedCopyTerminator {
@@ -440,12 +453,11 @@ impl<R: Read> CopyRowReader<R> {
             row_start,
         )?;
 
-        if record_end == RecordEnd::Eof {
-            self.finished = true;
-        } else {
+        if record_end == RecordEnd::Line {
             self.next_row_number = row
                 .checked_add(1)
                 .ok_or(PgDumpError::CopyRowNumberOverflow { row })?;
+            self.finished = false;
         }
 
         Ok(Some(Row {
