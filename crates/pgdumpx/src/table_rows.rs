@@ -223,7 +223,6 @@ impl<'a, R: Read> TableRowReader<'a, R> {
             predicate(row)
         });
         self.next_row_number = next_row_number;
-        let result = result?;
 
         if let Some((row, expected, actual)) = mismatch {
             self.failed = true;
@@ -235,7 +234,7 @@ impl<'a, R: Read> TableRowReader<'a, R> {
             });
         }
 
-        Ok(result)
+        result
     }
 
     /// Finds the first row whose named column exactly equals one logical COPY value.
