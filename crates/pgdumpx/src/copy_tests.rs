@@ -1,4 +1,4 @@
-use crate::{CopyRowReader, FieldRef, Limits, PgDumpError};
+use crate::{CopyRowReader, FieldRef, Limits, PgDumpError, ScanLimits};
 use std::{
     cell::Cell,
     io::{self, Cursor, Read},
@@ -17,7 +17,7 @@ fn row_byte_limit_accepts_below_and_exact_and_rejects_above() {
         assert!(rows.next_row().unwrap().is_none());
     }
 
-    let mut rows = CopyRowReader::with_limits(Cursor::new(b"abcde\n".as_slice()), limits);
+    let mut rows = CopyRowReader::with_limits(Cursor::new(b"abcde\nnext\n".as_slice()), limits);
     assert!(matches!(
         rows.next_row().unwrap_err(),
         PgDumpError::CopyRowByteLimitExceeded {
@@ -27,6 +27,7 @@ fn row_byte_limit_accepts_below_and_exact_and_rejects_above() {
             ..
         }
     ));
+    assert!(rows.next_row().unwrap().is_none());
 }
 
 #[test]
@@ -40,7 +41,8 @@ fn field_count_limit_accepts_below_and_exact_and_rejects_above() {
         assert_eq!(rows.next_row().unwrap().unwrap().len(), expected_fields);
     }
 
-    let mut rows = CopyRowReader::with_limits(Cursor::new(b"a\tb\tc\td\n".as_slice()), limits);
+    let mut rows =
+        CopyRowReader::with_limits(Cursor::new(b"a\tb\tc\td\nnext\n".as_slice()), limits);
     assert!(matches!(
         rows.next_row().unwrap_err(),
         PgDumpError::CopyFieldCountLimitExceeded {
@@ -50,6 +52,57 @@ fn field_count_limit_accepts_below_and_exact_and_rejects_above() {
             ..
         }
     ));
+
+    let predicate_calls = Cell::new(0_u32);
+    assert!(
+        rows.find_first(|_| {
+            predicate_calls.set(predicate_calls.get() + 1);
+            true
+        })
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(predicate_calls.get(), 0);
+}
+
+#[test]
+fn malformed_terminator_error_makes_bounded_search_terminal() {
+    let mut rows = CopyRowReader::new(Cursor::new(b"prefix\\.\nnext\n".as_slice()));
+    assert!(matches!(
+        rows.next_row().unwrap_err(),
+        PgDumpError::MalformedCopyTerminator { row: 1, .. }
+    ));
+
+    let predicate_calls = Cell::new(0_u32);
+    assert!(
+        rows.find_first_with_limits(ScanLimits::unlimited(), |_| {
+            predicate_calls.set(predicate_calls.get() + 1);
+            true
+        })
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(predicate_calls.get(), 0);
+}
+
+#[test]
+fn malformed_escape_error_is_terminal() {
+    let mut rows = CopyRowReader::new(Cursor::new(b"trailing\\".as_slice()));
+    assert!(matches!(
+        rows.next_row().unwrap_err(),
+        PgDumpError::MalformedCopyEscape { row: 1, .. }
+    ));
+    assert!(rows.next_row().unwrap().is_none());
+}
+
+#[test]
+fn source_io_error_is_terminal_even_when_the_source_could_resume() {
+    let mut rows = CopyRowReader::new(ErrorOnceReader::new());
+    assert!(matches!(
+        rows.next_row().unwrap_err(),
+        PgDumpError::CopyIo { row: 1, .. }
+    ));
+    assert!(rows.next_row().unwrap().is_none());
 }
 
 #[test]
@@ -111,6 +164,7 @@ fn consumed_byte_counter_overflow_is_typed_and_controlled() {
             increment: 1,
         }
     ));
+    assert!(rows.next_row().unwrap().is_none());
 }
 
 fn accounting_checkpoints<R: Read>(mut rows: CopyRowReader<R>) -> (u64, u64) {
@@ -121,6 +175,37 @@ fn accounting_checkpoints<R: Read>(mut rows: CopyRowReader<R>) -> (u64, u64) {
     let after_row = rows.consumed_input_bytes();
     assert!(rows.next_row().unwrap().is_none());
     (after_row, rows.consumed_input_bytes())
+}
+
+#[derive(Debug)]
+struct ErrorOnceReader {
+    first: Cursor<&'static [u8]>,
+    tail: Cursor<&'static [u8]>,
+    failed: bool,
+}
+
+impl ErrorOnceReader {
+    fn new() -> Self {
+        Self {
+            first: Cursor::new(b"partial"),
+            tail: Cursor::new(b"\nnext\n"),
+            failed: false,
+        }
+    }
+}
+
+impl Read for ErrorOnceReader {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let read = self.first.read(output)?;
+        if read != 0 {
+            return Ok(read);
+        }
+        if !self.failed {
+            self.failed = true;
+            return Err(io::Error::other("intentional transient source failure"));
+        }
+        self.tail.read(output)
+    }
 }
 
 #[derive(Debug)]

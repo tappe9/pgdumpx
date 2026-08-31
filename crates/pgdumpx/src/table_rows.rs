@@ -34,6 +34,10 @@ pub enum ColumnEqualityResult {
 /// A newly created `TableRowReader` starts at the beginning of the selected table-data
 /// body. After calls to [`TableRowReader::next_row`], searches continue from the current
 /// stream position; they do not rewind the archive.
+///
+/// Any row-reading error makes the composed COPY reader terminal. The original call
+/// returns its existing typed error, while subsequent row-reading or search calls return
+/// `Ok(None)` and never expose bytes from the rejected record or a later record.
 pub struct TableRowReader<'a, R> {
     data_id: DumpId,
     metadata: &'a TableDataMetadata,
@@ -90,6 +94,10 @@ impl<'a, R: Read> TableRowReader<'a, R> {
     /// A returned row borrows reusable parser storage and remains valid only until the
     /// next mutable operation on this reader. Fields are byte-oriented logical COPY
     /// values after escape decoding; they are not required to be UTF-8.
+    ///
+    /// Any error makes row iteration terminal because the underlying record may have
+    /// been partially consumed. Later `next_row` and search calls return `Ok(None)`;
+    /// the original failing call retains its typed archive, parser, limit, or I/O context.
     ///
     /// ```compile_fail
     /// use pgdumpx::{PgDumpError, TableRowReader};
