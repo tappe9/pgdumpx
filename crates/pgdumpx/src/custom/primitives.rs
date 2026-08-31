@@ -1,4 +1,4 @@
-use crate::{PgDumpError, io::archive_reader::ArchiveReader};
+use crate::{PgDumpError, io::archive_reader::ArchiveReader, metadata_budget::MetadataBudget};
 use std::io::Read;
 
 const POSITION_NOT_SET: u8 = 1;
@@ -152,6 +152,30 @@ pub(crate) fn read_archive_string<R: Read>(
     integer_size: ArchiveIntegerSize,
     max_bytes: usize,
 ) -> Result<Option<Vec<u8>>, PgDumpError> {
+    read_archive_string_with(reader, integer_size, max_bytes, |_, _| Ok(()))
+}
+
+pub(crate) fn read_retained_archive_string<R: Read>(
+    reader: &mut ArchiveReader<R>,
+    integer_size: ArchiveIntegerSize,
+    max_bytes: usize,
+    budget: &mut MetadataBudget,
+) -> Result<Option<Vec<u8>>, PgDumpError> {
+    read_archive_string_with(reader, integer_size, max_bytes, |length, offset| {
+        budget.charge_string_bytes(length, offset)
+    })
+}
+
+fn read_archive_string_with<R, F>(
+    reader: &mut ArchiveReader<R>,
+    integer_size: ArchiveIntegerSize,
+    max_bytes: usize,
+    mut before_allocate: F,
+) -> Result<Option<Vec<u8>>, PgDumpError>
+where
+    R: Read,
+    F: FnMut(usize, u64) -> Result<(), PgDumpError>,
+{
     let length_offset = reader.offset();
     let encoded_length = read_archive_integer(reader, integer_size)?;
     if encoded_length < 0 {
@@ -175,6 +199,8 @@ pub(crate) fn read_archive_string<R: Read>(
             offset: length_offset,
         });
     }
+
+    before_allocate(length, length_offset)?;
 
     let mut bytes = Vec::new();
     bytes
