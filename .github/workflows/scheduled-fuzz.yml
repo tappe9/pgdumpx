@@ -1,0 +1,86 @@
+name: Scheduled fuzz campaigns
+
+on:
+  push:
+    paths:
+      - .github/workflows/scheduled-fuzz.yml
+      - scripts/run-fuzz-campaign.py
+      - scripts/test-fuzz-campaign.py
+      - "fuzz/**"
+  schedule:
+    - cron: "29 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-fuzz-${{ github.event_name == 'schedule' && 'scheduled' || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  campaign:
+    name: Fuzz campaign (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - archive_open
+          - toc_metadata
+          - entry_framing
+          - copy_rows
+          - copy_metadata
+          - limit_accounting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CAMPAIGN_SECONDS: ${{ github.event_name == 'push' && '10' || '300' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Build fuzz targets
+        run: cargo +nightly fuzz build --fuzz-dir fuzz
+
+      - name: Run bounded campaign and save status
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python3 scripts/run-fuzz-campaign.py run \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --target "$TARGET" \
+            --max-total-time "$CAMPAIGN_SECONDS" \
+            -- cargo +nightly fuzz run --fuzz-dir fuzz "$TARGET" -- \
+              "-max_total_time=$CAMPAIGN_SECONDS" \
+              -max_len=65536 \
+              -timeout=10 \
+              "-artifact_prefix=fuzz/artifacts/$TARGET/"
+
+      - name: Upload target failure artifacts and execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scheduled-fuzz-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+            fuzz/campaign-results/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+      - name: Propagate saved campaign status
+        if: always()
+        run: |
+          python3 scripts/run-fuzz-campaign.py propagate \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --target "${{ matrix.target }}"
