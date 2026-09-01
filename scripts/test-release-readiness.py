@@ -154,7 +154,7 @@ def verify_release_documents(errors: list[str]) -> None:
         "CHANGELOG.md",
         [
             "# Changelog",
-            "## [0.2.0] - Unreleased",
+            "## [0.2.0]",
             "first public release",
         ],
     )
