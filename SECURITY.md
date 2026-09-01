@@ -76,6 +76,8 @@ Configured limits are enforced incrementally on the normal streaming path and te
 
 Applications processing trusted local backups may choose generous limits. Applications processing untrusted or customer-supplied archives should configure limits appropriate to their service-level and resource constraints.
 
+`pgdumpx find` applies finite defaults of 100,000 complete rows and 64 MiB of parser-consumed decompressed COPY bytes. A one-dimensional override preserves the other finite default. `--unlimited` is an explicit trusted-input opt-in that disables both total-work budgets and must not be used for unreviewed customer-supplied archives merely to bypass a resource error. See [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md).
+
 A low-level unlimited `EntryDataReader` remains available for trusted callers. The library also provides `entry_reader_with_limits` and `copy_entry_to` bounded raw-extraction paths, and `pgdumpx extract` uses the bounded high-level path with a finite 1 GiB default rather than relying on CLI callers to wrap stdout copying themselves.
 
 ## Accounting semantics

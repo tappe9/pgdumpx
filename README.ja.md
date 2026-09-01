@@ -197,22 +197,22 @@ limit到達はsuccessful truncationではなくerrorです。stdoutはstreaming�
 ### `find`
 
 ```text
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \
+pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \
   <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
-optionalなscan-limit flagはそれぞれ正の10進`u64`を1回まで指定でき、`<FILE>`より前に置きます。省略したbudgetはunlimitedです。`--max-rows <N>`はlibrary search pathがevaluateしたcomplete rowを数え、一致rowも含みます。`--max-decompressed-bytes <N>`はparser-consumed physical COPY-byte会計を使い、separator、row terminator、escape spelling、消費したCOPY terminatorを含みますが、decompressor / bufferの未消費lookaheadやlogical decodeによるlength変化は含みません。
+optionalなfinite scan-limit flagはそれぞれ正の10進`u64`を1回まで指定でき、`<FILE>`より前に置きます。option未指定時は、**complete row 100,000件**と**parser-consumed decompressed bytes 67,108,864 bytes (64 MiB)**のinclusiveなdefaultを両方適用します。finite optionを片方だけ指定した場合はその次元だけを上書きし、もう一方のfinite defaultは残ります。trusted workflowでは`--unlimited`により両方のtotal-work budgetを明示的に解除できますが、finite optionとは排他的です。`--max-rows <N>`はlibrary search pathがevaluateしたcomplete rowを数え、一致rowも含みます。`--max-decompressed-bytes <N>`はparser-consumed physical COPY-byte会計を使い、separator、row terminator、escape spelling、消費したCOPY terminatorを含みますが、decompressor / bufferの未消費lookaheadやlogical decodeによるlength変化は含みません。数値の根拠、exact boundary、移行手順は[`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md)を参照してください。
 
 一致時はstdoutへ**正規化したCOPY text 1 record**だけを出力します。fieldはCOPY column順のASCII tab区切りで、record末尾はLFです。NULLは`\N`、empty bytesはempty fieldです。backslash / tab / LF / CRは`\\` / `\t` / `\n` / `\r`、その他のnon-printableまたはnon-ASCII byteは`\377`のような3桁octal escapeで出力します。lossy UTF-8変換を行わず、stdoutをdeterministicかつASCII-safeに保ちます。no matchでは何も出力せず、diagnosticはstderrだけへ出力します。
 
-resource limit到達はclean no-matchではなくoperation failureです。一致rowへ到達する前にbudgetを使い切った場合もstderrへdiagnosticを出し、`2+`で終了します。
+resource limit到達はclean no-matchではなくoperation failureです。一致rowへ到達する前にbudgetを使い切った場合もstderrへdiagnosticを出し、`2`で終了します。
 
 stable exit behavior:
 
 ```text
 0  match found
 1  scan完了、matching rowなし
-2+ usage / I/O / format / integrity / decompression / COPY / encoding /
+2  usage / I/O / format / integrity / decompression / COPY / encoding /
    unsupported representation / unknown column / resource error
 ```
 
@@ -278,6 +278,7 @@ v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](
 - [COPY text contract](docs/COPY-TEXT.md) — row / field byte semantics
 - [Compatibility matrix](docs/COMPATIBILITY.md) — targetとfixture-verified supportの区別
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget / partial-output semantics
+- [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI default、根拠、boundary、migration guidance
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — 最終DoD-to-evidence mapping
 - [Roadmap](ROADMAP.md) — delivered v0.1 slice、planned v0.2 issue sequence、later candidate scope
