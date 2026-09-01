@@ -89,15 +89,13 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
+          components: clippy
 
-      - name: Check library feature set
-        run: cargo check -p pgdumpx ${{ matrix.cargo_args }}
+      - name: Test complete applicable library suite
+        run: cargo test -p pgdumpx ${{ matrix.cargo_args }}
 
-      - name: Verify LZ4 backend availability behavior
-        run: cargo test -p pgdumpx ${{ matrix.cargo_args }} --test lz4_backend
-
-      - name: Verify Zstandard backend availability behavior
-        run: cargo test -p pgdumpx ${{ matrix.cargo_args }} --test zstd_backend
+      - name: Deny warnings across all library targets
+        run: cargo clippy -p pgdumpx --all-targets ${{ matrix.cargo_args }} -- -D warnings
 
   fixture-integrity:
     name: Fixture provenance and compatibility
