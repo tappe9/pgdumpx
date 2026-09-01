@@ -46,6 +46,9 @@ jobs:
       - name: Workflow policy contract
         run: python3 scripts/test-workflow-policy.py
 
+      - name: Release readiness contract
+        run: python3 scripts/test-release-readiness.py
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
