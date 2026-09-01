@@ -1,30 +1,70 @@
 #!/usr/bin/env python3
-"""Verify v0.1 package contents, dependency licenses, and runtime boundaries."""
+"""Verify pgdumpx 0.2.0 package contents and publication boundaries."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.0"
+VERSION = "0.2.0"
+REPOSITORY = "https://github.com/tappe9/pgdumpx"
+MAX_PACKAGE_BYTES = 10_000_000
 PROJECT_PACKAGES = {"pgdumpx", "pgdumpx-cli"}
 PACKAGE_DIRS = {
     "pgdumpx": ROOT / "crates" / "pgdumpx",
     "pgdumpx-cli": ROOT / "crates" / "pgdumpx-cli",
 }
+PACKAGE_EXPECTATIONS = {
+    "pgdumpx": {
+        "description": (
+            "Read-only, bounded inspection, extraction, and row scanning for "
+            "PostgreSQL custom-format dumps"
+        ),
+        "documentation": "https://docs.rs/pgdumpx",
+        "keywords": ["postgresql", "pg-dump", "backup", "parser", "forensics"],
+        "categories": ["database", "parser-implementations"],
+    },
+    "pgdumpx-cli": {
+        "description": (
+            "Command-line inspection, extraction, and row scanning for PostgreSQL "
+            "custom-format dumps"
+        ),
+        "documentation": "https://docs.rs/pgdumpx-cli",
+        "keywords": ["postgresql", "pg-dump", "backup", "cli", "forensics"],
+        "categories": ["database", "command-line-utilities"],
+    },
+}
 REQUIRED_METADATA = {
     "version": VERSION,
     "edition": "2024",
     "license": "MIT OR Apache-2.0",
-    "repository": "https://github.com/tappe9/pgdumpx",
+    "repository": REPOSITORY,
+    "homepage": REPOSITORY,
 }
 LICENSE_FILES = {"LICENSE-APACHE", "LICENSE-MIT"}
 REQUIRED_PACKAGE_FILES = {"README.md", *LICENSE_FILES}
-FORBIDDEN_PACKAGE_PARTS = {"fixtures", "benchmarks", "benchmark-data"}
+FORBIDDEN_PACKAGE_PARTS = {
+    ".github",
+    ".plan",
+    "benchmark-data",
+    "benchmarks",
+    "fixtures",
+    "scripts",
+}
+FORBIDDEN_FILE_NAMES = {
+    ".env",
+    ".npmrc",
+    "credentials",
+    "credentials.toml",
+    "id_rsa",
+    "id_ed25519",
+}
 FORBIDDEN_RUNTIME_PACKAGES = {
     "libpq",
     "libpq-sys",
@@ -120,14 +160,39 @@ def verify_project_metadata(metadata: dict) -> None:
             actual = package.get(key)
             if actual != expected:
                 raise AuditError(f"{name}: metadata {key}={actual!r}, expected {expected!r}")
-        if not package.get("description"):
-            raise AuditError(f"{name}: package description is missing")
+        for key, expected in PACKAGE_EXPECTATIONS[name].items():
+            actual = package.get(key)
+            if actual != expected:
+                raise AuditError(f"{name}: metadata {key}={actual!r}, expected {expected!r}")
         if not package.get("readme"):
             raise AuditError(f"{name}: package readme metadata is missing")
         if package.get("rust_version") != "1.85.0":
             raise AuditError(
                 f"{name}: rust-version={package.get('rust_version')!r}, expected '1.85.0'"
             )
+        if package.get("publish") != ["crates-io"]:
+            raise AuditError(
+                f"{name}: publish={package.get('publish')!r}, expected ['crates-io']"
+            )
+
+    cli = package_by_name(metadata, "pgdumpx-cli")
+    dependencies = [
+        dependency
+        for dependency in cli.get("dependencies", [])
+        if dependency.get("name") == "pgdumpx" and dependency.get("kind") is None
+    ]
+    if len(dependencies) != 1:
+        raise AuditError("pgdumpx-cli: expected one normal pgdumpx dependency")
+    dependency = dependencies[0]
+    if dependency.get("req") != "^0.2.0":
+        raise AuditError(
+            f"pgdumpx-cli: pgdumpx version requirement={dependency.get('req')!r}, "
+            "expected '^0.2.0'"
+        )
+    if not dependency.get("path"):
+        raise AuditError("pgdumpx-cli: pgdumpx workspace dependency must retain its path")
+    if dependency.get("uses_default_features"):
+        raise AuditError("pgdumpx-cli: pgdumpx dependency must disable default features")
 
 
 def verify_license_copies() -> None:
@@ -219,9 +284,6 @@ def license_is_acceptable(expression: str) -> bool:
         index += 1
         value = token in ALLOWED_LICENSE_IDS
         if index < len(tokens) and tokens[index] == "WITH":
-            # No current runtime dependency needs a license exception. If one is
-            # introduced, document and explicitly add support instead of silently
-            # treating it as equivalent to the base license.
             index += 1
             if index >= len(tokens):
                 raise AuditError(f"truncated SPDX WITH expression: {expression!r}")
@@ -302,12 +364,19 @@ def verify_package_contents(package: str) -> None:
 
     rejected = []
     for path in sorted(files):
-        parts = set(Path(path).parts)
-        if parts & FORBIDDEN_PACKAGE_PARTS or path.endswith(".dump"):
+        parts = Path(path).parts
+        lowered_parts = {part.lower() for part in parts}
+        if lowered_parts & FORBIDDEN_PACKAGE_PARTS:
+            rejected.append(path)
+            continue
+        if Path(path).name.lower() in FORBIDDEN_FILE_NAMES:
+            rejected.append(path)
+            continue
+        if path.endswith((".dump", ".pem", ".key")):
             rejected.append(path)
     if rejected:
         raise AuditError(
-            f"{package}: package contains non-distribution fixture/benchmark data:\n  "
+            f"{package}: package contains forbidden repository or sensitive files:\n  "
             + "\n  ".join(rejected)
         )
 
@@ -317,10 +386,23 @@ def verify_package_contents(package: str) -> None:
 
 
 def verify_package_builds() -> None:
-    # Package the two interdependent release crates together. Current stable
-    # Cargo verifies workspace members through its temporary registry overlay,
-    # so this works before pgdumpx 0.1.0 exists on crates.io.
     run("cargo", "package", "--workspace", "--locked")
+
+
+def verify_package_archives() -> None:
+    for package in sorted(PROJECT_PACKAGES):
+        archive = ROOT / "target" / "package" / f"{package}-{VERSION}.crate"
+        if not archive.is_file():
+            raise AuditError(f"{package}: expected package archive is missing: {archive}")
+        size = archive.stat().st_size
+        if size <= 0:
+            raise AuditError(f"{package}: package archive is empty")
+        if size > MAX_PACKAGE_BYTES:
+            raise AuditError(
+                f"{package}: package archive is {size} bytes, exceeding "
+                f"{MAX_PACKAGE_BYTES} bytes"
+            )
+        print(f"{package}: package archive size {size} bytes")
 
 
 def verify_feature_builds() -> None:
@@ -348,18 +430,58 @@ def verify_feature_builds() -> None:
         ),
         ("cargo", "check", "-p", "pgdumpx", "--locked"),
         ("cargo", "check", "-p", "pgdumpx-cli", "--locked"),
-        (
-            "cargo",
-            "test",
-            "-p",
-            "pgdumpx-cli",
-            "--locked",
-            "--test",
-            "compression_defaults",
-        ),
     ]
     for command in commands:
         run(*command)
+
+
+def verify_cli_package_behavior() -> None:
+    run(
+        "cargo",
+        "test",
+        "-p",
+        "pgdumpx-cli",
+        "--locked",
+    )
+
+    with TemporaryDirectory(prefix="pgdumpx-install-") as temporary_root:
+        install_root = Path(temporary_root)
+        run(
+            "cargo",
+            "install",
+            "--path",
+            "crates/pgdumpx-cli",
+            "--locked",
+            "--root",
+            str(install_root),
+            "--force",
+        )
+        executable = "pgdumpx.exe" if os.name == "nt" else "pgdumpx"
+        binary = install_root / "bin" / executable
+        if not binary.is_file():
+            raise AuditError(f"installed CLI binary is missing: {binary}")
+
+        version = run(str(binary), "--version", display_output=False).stdout.strip()
+        if version != f"pgdumpx {VERSION}":
+            raise AuditError(
+                f"installed CLI version output={version!r}, expected 'pgdumpx {VERSION}'"
+            )
+
+        help_output = run(str(binary), "--help", display_output=False).stdout
+        missing_commands = [
+            command
+            for command in ("inspect", "list", "extract", "find")
+            if command not in help_output
+        ]
+        if missing_commands:
+            raise AuditError(
+                "installed CLI help is missing commands: " + ", ".join(missing_commands)
+            )
+        print(f"installed CLI smoke passed: {version}")
+
+
+def verify_library_publish_dry_run() -> None:
+    run("cargo", "publish", "--dry-run", "-p", "pgdumpx", "--locked")
 
 
 def verify_unsafe_policy() -> None:
@@ -386,7 +508,10 @@ def main() -> int:
         for package in sorted(PROJECT_PACKAGES):
             verify_package_contents(package)
         verify_feature_builds()
+        verify_cli_package_behavior()
         verify_package_builds()
+        verify_package_archives()
+        verify_library_publish_dry_run()
 
         after = clean_status()
         if after:

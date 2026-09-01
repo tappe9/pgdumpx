@@ -46,6 +46,9 @@ jobs:
       - name: Workflow policy contract
         run: python3 scripts/test-workflow-policy.py
 
+      - name: Release readiness contract
+        run: python3 scripts/test-release-readiness.py
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -82,7 +85,7 @@ jobs:
       - name: Test workspace with all compression backends
         run: cargo test --workspace --all-features
 
-      - name: Verify default CLI supports all v0.1 compression backends
+      - name: Verify default CLI supports all compression backends
         run: cargo test -p pgdumpx-cli --test compression_defaults
 
   feature-matrix:

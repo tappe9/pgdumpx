@@ -7,11 +7,12 @@ exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tappe9/pgdumpx"
+homepage = "https://github.com/tappe9/pgdumpx"
 readme = "README.md"
 
 [workspace.lints.rust]
