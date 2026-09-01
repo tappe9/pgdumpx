@@ -294,13 +294,9 @@ fn read_required_string<R: Read>(
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_retained_archive_string(
-        reader,
-        integer_size,
-        limits.max_string_bytes(),
-        budget,
-    )?
-    .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
+    let bytes =
+        read_retained_archive_string(reader, integer_size, limits.max_string_bytes(), budget)?
+            .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
 
@@ -310,13 +306,10 @@ fn read_optional_string<R: Read>(
     limits: Limits,
     budget: &mut MetadataBudget,
 ) -> Result<Option<ArchiveString>, PgDumpError> {
-    Ok(read_retained_archive_string(
-        reader,
-        integer_size,
-        limits.max_string_bytes(),
-        budget,
-    )?
-    .map(ArchiveString::from_bytes))
+    Ok(
+        read_retained_archive_string(reader, integer_size, limits.max_string_bytes(), budget)?
+            .map(ArchiveString::from_bytes),
+    )
 }
 
 fn to_u64(value: usize, offset: u64) -> Result<u64, PgDumpError> {

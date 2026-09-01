@@ -17,14 +17,8 @@ impl MetadataBudget {
             string_bytes: 0,
             dependencies: 0,
             index_bytes: 0,
-            max_string_bytes: to_u64(
-                limits.max_metadata_string_bytes(),
-                0,
-            )?,
-            max_dependencies: to_u64(
-                limits.max_metadata_dependencies(),
-                0,
-            )?,
+            max_string_bytes: to_u64(limits.max_metadata_string_bytes(), 0)?,
+            max_dependencies: to_u64(limits.max_metadata_dependencies(), 0)?,
             max_index_bytes: to_u64(limits.max_metadata_index_bytes(), 0)?,
         })
     }
@@ -106,12 +100,9 @@ impl MetadataBudget {
             string_bytes,
             dependencies,
             index_bytes,
-            max_string_bytes: u64::try_from(limits.max_metadata_string_bytes())
-                .unwrap_or(u64::MAX),
-            max_dependencies: u64::try_from(limits.max_metadata_dependencies())
-                .unwrap_or(u64::MAX),
-            max_index_bytes: u64::try_from(limits.max_metadata_index_bytes())
-                .unwrap_or(u64::MAX),
+            max_string_bytes: u64::try_from(limits.max_metadata_string_bytes()).unwrap_or(u64::MAX),
+            max_dependencies: u64::try_from(limits.max_metadata_dependencies()).unwrap_or(u64::MAX),
+            max_index_bytes: u64::try_from(limits.max_metadata_index_bytes()).unwrap_or(u64::MAX),
         }
     }
 }

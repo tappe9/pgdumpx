@@ -164,12 +164,7 @@ pub(crate) fn parse_table_data_metadata_with_limits(
     limits: Limits,
 ) -> Result<TableDataMetadata, PgDumpError> {
     let mut budget = MetadataBudget::new(limits)?;
-    parse_table_data_metadata_with_limits_and_budget(
-        dump_id,
-        copy_statement,
-        limits,
-        &mut budget,
-    )
+    parse_table_data_metadata_with_limits_and_budget(dump_id, copy_statement, limits, &mut budget)
 }
 
 pub(crate) fn parse_table_data_metadata_with_limits_and_budget(

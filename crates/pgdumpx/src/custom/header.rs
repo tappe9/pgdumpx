@@ -158,12 +158,8 @@ fn read_required_string<R: Read>(
     field: &'static str,
 ) -> Result<ArchiveString, PgDumpError> {
     let offset = reader.offset();
-    let bytes = read_retained_archive_string(
-        reader,
-        integer_size,
-        limits.max_string_bytes(),
-        budget,
-    )?
-    .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
+    let bytes =
+        read_retained_archive_string(reader, integer_size, limits.max_string_bytes(), budget)?
+            .ok_or(PgDumpError::MissingRequiredArchiveString { field, offset })?;
     Ok(ArchiveString::from_bytes(bytes))
 }
