@@ -1,6 +1,6 @@
 # pgdumpx Public API Design
 
-Status: **Implemented v0.1 public API contract**
+Status: **Implemented `0.2.0` public API contract**
 
 This document describes the implemented public Rust API shape and the ownership, safety, streaming, row-search, resource-budget, and compatibility contracts that must remain deliberate as the pre-1.0 API evolves. The crate rustdoc is authoritative for exact current signatures and error variants.
 
@@ -43,7 +43,24 @@ impl<R: Read + Seek> Archive<R> {
 }
 ```
 
-Opening parses supported archive metadata, the TOC, relationships, and lookup indexes under finite structural limits. It does not decompress selected entry bodies. A path convenience constructor is not required by the v0.1 public contract; callers can open a `File` and pass it to `Archive::open`.
+Opening parses supported archive metadata, the TOC, relationships, and lookup indexes under finite structural limits. It does not decompress selected entry bodies. Callers can provide any `Read + Seek` source or use the file-oriented convenience API.
+
+## 2.1 File-oriented convenience
+
+The implemented filesystem constructors are specialized on `Archive<BufReader<File>>`:
+
+```rust
+impl Archive<BufReader<File>> {
+    pub fn open_path(path: impl AsRef<Path>) -> Result<Self, PgDumpError>;
+
+    pub fn open_path_with_limits(
+        path: impl AsRef<Path>,
+        limits: Limits,
+    ) -> Result<Self, PgDumpError>;
+}
+```
+
+`Archive::open_path` opens the file, wraps it in `BufReader`, and delegates to the same generic parser. `Archive::open_path_with_limits` does the same with caller-supplied structural limits. Neither constructor introduces a separate parser, eager payload read, row-scan budget, or raw-output policy.
 
 ## 3. Structural limits
 
@@ -307,6 +324,28 @@ impl TableRef<'_> {
 
 The type is a metadata handle only. It does not borrow entry payload bytes. Representation and column access are derived from stored TOC metadata and therefore do not decompress the table-data entry.
 
+## 10.1 Owned table selectors
+
+`TableSelector` stores an archive-independent table identity as owned exact bytes:
+
+```rust
+pub struct TableSelector {
+    // private owned schema and table-name bytes
+}
+
+impl TableSelector {
+    pub fn new(schema: impl AsRef<[u8]>, name: impl AsRef<[u8]>) -> Self;
+    pub fn schema(&self) -> &[u8];
+    pub fn name(&self) -> &[u8];
+}
+
+impl<R> Archive<R> {
+    pub fn resolve_table(&self, selector: &TableSelector) -> Option<TableRef<'_>>;
+}
+```
+
+Construction performs no UTF-8 conversion, case folding, SQL identifier parsing, or archive lookup. Resolution uses the same metadata-only exact-byte index as `Archive::table`, so selectors can be cloned, stored, and reused across archives without retaining archive-specific dump IDs or offsets.
+
 ## 11. Raw entry data
 
 Entry reads are lazy and coordinated through a mutable archive borrow.
@@ -316,6 +355,55 @@ The mutable borrow intentionally prevents two readers from independently seeking
 Raw entry access is lower-level than row-aware access. A readable table-data entry may remain available through raw APIs even when its logical representation is unsupported by the COPY row parser.
 
 Large-object entries with internal OID framing may require a different future API and are not forced into a flat `Read` abstraction.
+
+## 11.1 Reusable extraction plans
+
+`ExtractionPlan` owns logical selectors and one raw-output policy, while archive-specific preflight results borrow the target archive:
+
+```rust
+impl ExtractionPlan {
+    pub fn new(
+        selectors: Vec<TableSelector>,
+    ) -> Result<Self, ExtractionPlanError>;
+
+    pub fn with_entry_read_limits(
+        selectors: Vec<TableSelector>,
+        entry_read_limits: EntryReadLimits,
+    ) -> Result<Self, ExtractionPlanError>;
+
+    pub fn selectors(&self) -> &[TableSelector];
+    pub const fn entry_read_limits(&self) -> EntryReadLimits;
+
+    pub fn preflight<'a, R>(
+        &self,
+        archive: &'a Archive<R>,
+    ) -> Result<ResolvedExtractionPlan<'a>, PgDumpError>;
+}
+```
+
+Plan construction preserves caller order and rejects duplicate exact `(schema, table)` selectors. Preflight resolves every selector and related `TABLE DATA` entry from already-parsed metadata before any payload seek, decompression, output creation, or write. The owned plan never stores dump IDs, offsets, sources, or destinations and can therefore be reused against another archive.
+
+## 11.2 Sequential multi-table execution
+
+The execution signature is:
+
+```rust
+impl ExtractionPlan {
+    pub fn execute<R, W, F>(
+        &self,
+        archive: &mut Archive<R>,
+        destination_for: F,
+    ) -> Result<Vec<ExtractionOutcome>, ExtractionExecutionError>
+    where
+        R: Read + Seek,
+        W: Write,
+        F: FnMut(&ExtractionTarget) -> io::Result<W>;
+}
+```
+
+Execution completes the full preflight before requesting the first destination. It then copies targets sequentially in deterministic selector order through `Archive::copy_entry_to` and the plan's `EntryReadLimits`. This preserves the single mutable seekable-source invariant: there is no concurrent seek, cloned source, or independently reopened handle.
+
+Each target is complete only after bounded copying and destination `flush` both succeed. If a destination cannot be created, copying fails, or flushing fails, later targets are not started. `ExtractionExecutionError` retains earlier completed outcomes and identifies the failed target. Bytes already accepted by the current destination cannot be rolled back, so partial output may coexist with failure; the API never reports that target as successfully extracted.
 
 ## 12. COPY rows and lending semantics
 
@@ -475,6 +563,30 @@ Binary COPY decoding is also deferred.
 
 This distinction keeps low-level archive readability separate from logical row-parser support. The official PostgreSQL 18.4 `--inserts` fixture verifies that raw selected-entry extraction remains available while `table_rows` rejects the representation before COPY parsing.
 
+## 15.1 Metadata filtering
+
+`MetadataFilter` filters already-parsed TOC entries without seeking or decompressing payloads:
+
+```rust
+impl MetadataFilter {
+    pub fn new() -> Self;
+    pub fn with_schema(self, schema: impl AsRef<[u8]>) -> Self;
+    pub fn with_absent_schema(self) -> Self;
+    pub fn with_object_type(self, object_type: impl AsRef<[u8]>) -> Self;
+    pub fn with_name(self, name: impl AsRef<[u8]>) -> Self;
+    pub fn matches(&self, entry: &TocEntry) -> bool;
+}
+
+impl<R> Archive<R> {
+    pub fn filter_metadata<'a>(
+        &'a self,
+        filter: &MetadataFilter,
+    ) -> Vec<MetadataMatch<'a>>;
+}
+```
+
+All configured values use exact byte equality, and matches retain archive order. `with_absent_schema()` matches encoded namespace absence only. `with_schema(b"")` instead requires a present empty namespace; the two states are never conflated. `MetadataMatch::table_selector()` converts only a normal `TABLE` with a present namespace into `TableSelector`; it does not synthesize identity from `TABLE DATA`.
+
 ## 16. First-match filtering
 
 A primary v0.1 API is first-match filtering over the selected table stream:
@@ -526,6 +638,37 @@ Semantics:
 - do not rewind a reader that has already yielded rows.
 
 The closure API deliberately avoids a SQL parser. Callers implement equality, prefix, numeric parsing, or compound application-specific conditions themselves.
+
+## 16.1 Exact named-column equality
+
+The maintained equality convenience API is:
+
+```rust
+pub enum ColumnEqualityResult {
+    Match(OwnedRow),
+    NoMatch,
+    ColumnNotFound,
+}
+
+impl<R: Read> TableRowReader<'_, R> {
+    pub fn find_first_equal(
+        &mut self,
+        column: &[u8],
+        expected: FieldRef<'_>,
+    ) -> Result<ColumnEqualityResult, PgDumpError>;
+
+    pub fn find_first_equal_with_limits(
+        &mut self,
+        scan_limits: ScanLimits,
+        column: &[u8],
+        expected: FieldRef<'_>,
+    ) -> Result<ColumnEqualityResult, PgDumpError>;
+}
+```
+
+The column is resolved exactly once from parsed metadata before scanning. An absent valid name returns `ColumnNotFound` without consuming a row; metadata failures remain typed errors. For a valid column, both methods delegate to the existing sequential `find_first` path and preserve early termination, limits, field-count checks, reader failure semantics, and owned matches.
+
+Equality is byte-exact after COPY-text unescaping. `FieldRef::Null` matches only SQL NULL. It is distinct from `FieldRef::Bytes(b"")` and from literal logical bytes `FieldRef::Bytes(b"\\N")`. There is no UTF-8 conversion, collation, SQL coercion, or typed-value comparison.
 
 ## 17. Row-search performance contract
 
@@ -586,13 +729,13 @@ Limit exhaustion identifies the resource and, where practical, consumed work. Lo
 
 The CLI is not part of the core Rust type system, but its encoding, limit, output, and exit choices align with the byte-oriented API.
 
-Implemented v0.1 commands:
+Implemented commands:
 
 ```text
 pgdumpx inspect <FILE>
 pgdumpx list <FILE>
 pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
 Rules:
@@ -606,7 +749,7 @@ Rules:
 - `find` compares its UTF-8 value bytes with logical post-unescape field bytes;
 - `find` exposes optional positive-`u64` row and parser-consumed decompressed-byte scan budgets;
 - matched `find` output is one normalized ASCII-safe COPY text record;
-- exit `0` means match/success, `find` exit `1` means completed no-match, and exit `2+` means usage/runtime/resource failure.
+- exit `0` means match/success, `find` exit `1` means completed no-match, and exit `2` means usage, input, runtime, or resource failure.
 
 A byte-literal CLI syntax, JSON representation, or full restorable SQL output requires a separate design.
 
@@ -616,7 +759,7 @@ Serde support is not required and is not part of the v0.1 public contract. Prese
 
 ## 22. Threading and parallel access
 
-`Archive<R>` does not promise concurrent reads from one seekable source.
+`Archive<R>` does not promise concurrent reads from one seekable source. Its mutable entry/row access enforces one coordinated seek position, and `ExtractionPlan::execute` deliberately preserves that invariant while processing multiple targets sequentially.
 
 Future parallel extraction should use APIs that can produce independent sources, such as reopening a path or accepting a source factory. This avoids mutex-protected seek thrashing and preserves simple borrowing semantics.
 
@@ -635,7 +778,7 @@ Before v1.0:
 
 ## 24. Deferred APIs
 
-Intentionally deferred beyond v0.1:
+Intentionally deferred beyond the current public API:
 
 ```text
 archive writing

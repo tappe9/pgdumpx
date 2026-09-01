@@ -117,16 +117,16 @@ Run the same baseline quality gates used by CI before opening a pull request:
 ```bash
 cargo fmt --check
 python3 scripts/verify-doc-links.py
+python3 scripts/test-public-documentation.py
+python3 scripts/test-release-readiness.py
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-```
-
-Verify the declared MSRV separately:
-
-```bash
 cargo +1.85.0 check --workspace --all-targets --all-features
+python3 scripts/verify-release-packaging.py
 ```
+
+The packaging verifier performs additional package-content, license, feature, CLI, install, and publish-dry-run checks. Follow the [Release procedure](docs/RELEASING.md) for the staged registry, tag, and GitHub Release sequence; these commands do not publish anything.
 
 ### Dependency advisory changes
 

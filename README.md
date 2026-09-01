@@ -2,7 +2,7 @@
 
 **A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
-> Status: the v0.1 implementation and release-readiness work are complete. v0.2 is planned in [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56), but no v0.2 production code has merged yet. No crate or CLI release has been published yet.
+> Current source version: `0.2.0`. The v0.1 foundation and v0.2 functionality are implemented. Registry commands require the exact package version to be available on crates.io; the source installation path works independently of registry publication.
 
 pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
@@ -16,9 +16,10 @@ A representative use case is:
 
 ## Current development status
 
-- **Implemented on `main`:** the complete v0.1 bounded row-scanning scope, including metadata inspection, four compression backends, bounded raw extraction, COPY row parsing, first-match search, limits, fuzz/benchmark/CI evidence, rustdoc, and packaging/release-readiness verification.
-- **Planned next:** v0.2 starts with file-oriented convenience APIs ([#57](https://github.com/tappe9/pgdumpx/issues/57)), owned byte-oriented table selectors ([#58](https://github.com/tappe9/pgdumpx/issues/58)), and reusable extraction plans ([#59](https://github.com/tappe9/pgdumpx/issues/59)); sequential multi-table execution and selection helpers follow in [#60](https://github.com/tappe9/pgdumpx/issues/60)–[#62](https://github.com/tappe9/pgdumpx/issues/62).
-- **Explicitly deferred from the active v0.2 implementation plan:** parallel extraction, sidecar indexes/restart-point schemes, data-only archive identity support, and v0.3+ data-ecosystem integrations.
+- **v0.1 foundation completed:** metadata inspection, four compression backends, bounded raw extraction, COPY row parsing, first-match search, limits, fuzz/benchmark/CI evidence, rustdoc, and packaging verification.
+- **v0.2 completed:** file-oriented opening, owned byte-oriented selectors, reusable extraction plans, deterministic sequential multi-table extraction, metadata filtering, and exact named-column equality helpers are implemented.
+- **Correctness and maintenance follow-ups completed:** destination flush failures, aggregate metadata budgets, terminal row-reader errors, field-count validation, linear duplicate detection, finite CLI scan defaults, feature-matrix testing, scheduled fuzzing, advisory policy, and workflow hardening are included in the current source.
+- **v0.3+ candidates remain deferred:** parallel extraction, sidecar indexes/restart-point schemes, data-only archive identity support, and data-ecosystem integrations are not active commitments.
 
 See [ROADMAP.md](ROADMAP.md) for delivery order and dependency boundaries.
 
@@ -43,7 +44,7 @@ flowchart TD
     J --> K["Sequential predicate scan<br/>early stop on first match"]
 ```
 
-The v0.1 design emphasizes:
+The implemented design emphasizes:
 
 - **read-only parsing** of PostgreSQL Custom Format archives;
 - no running PostgreSQL server, `libpq`, or `pg_restore` requirement at runtime;
@@ -71,15 +72,15 @@ pgdumpx targets situations where a PostgreSQL dump is useful as an offline data 
 - convert selected row streams into CSV, JSON Lines, Arrow, or Parquet in downstream tools;
 - build Rust, CLI, Python, or analytical tooling on one reusable row-scanning core.
 
-## v0.1 scope
+## Supported scope
 
-v0.1 targets PostgreSQL Custom Format only:
+pgdumpx targets PostgreSQL Custom Format only:
 
 ```bash
 pg_dump -Fc mydb > backup.dump
 ```
 
-The implemented v0.1 compatibility range is archive format versions **1.14 through 1.16** with:
+The implemented compatibility range is archive format versions **1.14 through 1.16** with:
 
 - none;
 - gzip;
@@ -88,7 +89,7 @@ The implemented v0.1 compatibility range is archive format versions **1.14 throu
 
 Fixture-backed verification is deliberately narrower where an older archive version does not have a committed fixture for every backend. The exact version/compression evidence matrix lives in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md); claims there are backed by official PostgreSQL-generated fixtures and production-path differential checks.
 
-Row-aware access targets normal pg_dump table data represented as PostgreSQL `COPY` text. The following are explicitly outside the v0.1 row parser:
+Row-aware access targets normal pg_dump table data represented as PostgreSQL `COPY` text. The following are explicitly outside the row parser:
 
 - `--inserts`;
 - `--column-inserts`;
@@ -97,50 +98,77 @@ Row-aware access targets normal pg_dump table data represented as PostgreSQL `CO
 
 Unsupported logical representations fail through a typed row-API error rather than being guessed as COPY text. Raw entry extraction may still be available when the archive entry itself is structurally readable.
 
+## v0.2 library additions
+
+- `Archive::open_path` and `Archive::open_path_with_limits` provide file-oriented opening while delegating to the same generic `Read + Seek` parser.
+- `TableSelector` owns exact schema and table-name bytes and can be reused across archives.
+- `ExtractionPlan` stores ordered selectors and `EntryReadLimits`. It completes metadata-only preflight for every target before requesting a destination, then executes bounded raw extraction sequentially in deterministic selector order.
+- Multi-table execution keeps one mutable seekable source. It does not open a second handle or claim concurrent extraction.
+- Completed targets remain reported if a later target fails. The current destination may already contain partial bytes, and a destination `flush` failure is returned as an output error rather than successful completion.
+- `MetadataFilter` matches already-parsed TOC metadata by exact schema, object type, and name without reading payloads. An absent namespace is distinct from a present empty namespace.
+- `TableRowReader` provides `find_first_equal` and `find_first_equal_with_limits`; both resolve one column once and compare exact logical COPY bytes. SQL NULL, empty bytes, and literal `b"\\N"` bytes remain distinct.
+
+All row searches remain sequential scans. The helpers add reusable selection policy, not a row-level index.
+
+## Installation
+
+### From crates.io
+
+Registry commands require `0.2.0` to be available on crates.io. Check the exact versions before installing or adding the dependency:
+
+```bash
+cargo info pgdumpx@0.2.0
+cargo info pgdumpx-cli@0.2.0
+cargo install pgdumpx-cli --version 0.2.0 --locked
+```
+
+Library consumers can add:
+
+```toml
+[dependencies]
+pgdumpx = "0.2.0"
+```
+
+### From source
+
+This path works independently of crates.io publication:
+
+```bash
+git clone https://github.com/tappe9/pgdumpx.git
+cd pgdumpx
+cargo install --path crates/pgdumpx-cli --locked
+pgdumpx --help
+```
+
 ## Rust API
 
-The v0.1 library implements metadata inspection, selected-entry streaming, COPY row access, first-match search, structural/scan/raw-extraction limits, contextual typed errors, and all four supported compression backends.
+The library implements metadata inspection, selected-entry streaming, COPY row access, reusable extraction policy, exact equality search, structural/scan/raw-extraction limits, contextual typed errors, and all four supported compression backends.
 
 ```rust
-use pgdumpx::{Archive, FieldRef};
+use pgdumpx::{Archive, ColumnEqualityResult, FieldRef, ScanLimits};
 
-let file = std::fs::File::open("backup.dump")?;
-let mut archive = Archive::open(file)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut archive = Archive::open_path("backup.dump")?;
+    let mut rows = archive.table_rows(b"public", b"orders")?;
+    let scan_limits = ScanLimits::unlimited()
+        .with_max_rows(100_000)
+        .with_max_decompressed_bytes(64 * 1024 * 1024);
 
-println!("archive version: {:?}", archive.header().version());
+    let result = rows.find_first_equal_with_limits(
+        scan_limits,
+        b"order_number",
+        FieldRef::Bytes(b"123456"),
+    )?;
 
-for entry in archive.entries() {
-    println!("{entry:?}");
-}
+    if let ColumnEqualityResult::Match(row) = result {
+        println!("{row:?}");
+    }
 
-let mut rows = archive.table_rows(b"public", b"orders")?;
-while let Some(row) = rows.next_row()? {
-    println!("{:?}", row);
+    Ok(())
 }
 ```
 
-`next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references reusable internal storage and remains valid only until the next mutable reader operation.
-
-A primary v0.1 use case is finding the first matching row with explicit total-work budgets:
-
-```rust
-use pgdumpx::ScanLimits;
-
-let mut rows = archive.table_rows(b"public", b"orders")?;
-let order_number = rows
-    .column_index(b"order_number")?
-    .ok_or(/* application error */)?;
-
-let scan_limits = ScanLimits::unlimited()
-    .with_max_rows(100_000)
-    .with_max_decompressed_bytes(64 * 1024 * 1024);
-
-let row = rows.find_first_with_limits(scan_limits, |row| {
-    row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
-})?;
-```
-
-`find_first` is the convenience path without additional operation-level scan budgets. `find_first_with_limits` uses the same streaming parser and predicate loop while enforcing the supplied `ScanLimits`.
+`next_row(&mut self)` is intentionally not a normal `Iterator` method: each borrowed `Row` references reusable internal storage and remains valid only until the next mutable reader operation. `find_first` / `find_first_with_limits` retain the generic predicate path; the equality helpers delegate to that same scan.
 
 Column lookup distinguishes three states:
 
@@ -259,6 +287,14 @@ The benchmark harness records the dataset/generator, command/API path, hardware/
 
 The final v0.1 Definition of Done evidence mapping is recorded in [docs/V0.1-RELEASE-AUDIT.md](docs/V0.1-RELEASE-AUDIT.md).
 
+## Contributing and support
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing code or documentation changes.
+- Report reproducible bugs through [GitHub Issues](https://github.com/tappe9/pgdumpx/issues).
+- Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md); do not publish exploit details in a public issue.
+- Check the evidence-backed [compatibility matrix](docs/COMPATIBILITY.md) and [benchmark methodology](benchmarks/README.md) before making compatibility or performance claims.
+- See [packaging constraints](docs/PACKAGING.md) and the [release process](docs/RELEASING.md) for package and publication boundaries.
+
 ## Related projects
 
 - [`libpgdump`](https://github.com/gmr/libpgdump) — a Rust library for reading and writing PostgreSQL custom, directory, and tar dump formats.
@@ -281,7 +317,7 @@ Each document has one primary responsibility to reduce duplication and drift:
 - [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI defaults, evidence, boundary semantics, and migration guidance;
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary;
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — final DoD-to-evidence mapping;
-- [Roadmap](ROADMAP.md) — delivered v0.1 slices, the planned v0.2 issue sequence, and later candidate scope;
+- [Roadmap](ROADMAP.md) — delivered v0.1/v0.2 work and deferred candidate scope;
 - [Architecture Decision Records](docs/adr/) — accepted and superseded design decisions;
 - [Contributing](CONTRIBUTING.md) — contribution and document-update policy;
 - [Security policy](SECURITY.md) — vulnerability reporting and resource-threat model.
