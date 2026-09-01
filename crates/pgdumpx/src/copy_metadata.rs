@@ -158,6 +158,7 @@ pub(crate) fn parse_table_data_metadata(
     parse_table_data_metadata_with_limits(dump_id, copy_statement, Limits::default())
 }
 
+#[cfg(test)]
 pub(crate) fn parse_table_data_metadata_with_limits(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
