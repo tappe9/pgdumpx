@@ -539,14 +539,73 @@ impl fmt::Display for CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{write_inspect, write_list};
+    use super::{FindArguments, write_inspect, write_list};
     use pgdumpx::Archive;
     use std::{
         cell::Cell,
+        ffi::OsString,
         io::{self, Cursor, Read, Seek, SeekFrom},
         path::PathBuf,
         rc::Rc,
     };
+
+    #[test]
+    fn find_defaults_are_finite_and_each_override_preserves_the_other_default() {
+        const DEFAULT_ROWS: u64 = 100_000;
+        const DEFAULT_BYTES: u64 = 64 * 1024 * 1024;
+
+        let defaults = parse_find(&[]).unwrap();
+        assert_eq!(defaults.scan_limits.max_rows(), Some(DEFAULT_ROWS));
+        assert_eq!(
+            defaults.scan_limits.max_decompressed_bytes(),
+            Some(DEFAULT_BYTES)
+        );
+
+        let rows_only = parse_find(&["--max-rows", "5"]).unwrap();
+        assert_eq!(rows_only.scan_limits.max_rows(), Some(5));
+        assert_eq!(
+            rows_only.scan_limits.max_decompressed_bytes(),
+            Some(DEFAULT_BYTES)
+        );
+
+        let bytes_only = parse_find(&["--max-decompressed-bytes", "512"]).unwrap();
+        assert_eq!(bytes_only.scan_limits.max_rows(), Some(DEFAULT_ROWS));
+        assert_eq!(bytes_only.scan_limits.max_decompressed_bytes(), Some(512));
+
+        let both = parse_find(&["--max-rows", "7", "--max-decompressed-bytes", "1024"]).unwrap();
+        assert_eq!(both.scan_limits.max_rows(), Some(7));
+        assert_eq!(both.scan_limits.max_decompressed_bytes(), Some(1024));
+    }
+
+    #[test]
+    fn unlimited_find_is_explicit_and_conflicts_with_finite_options() {
+        let unlimited = parse_find(&["--unlimited"]).unwrap();
+        assert_eq!(unlimited.scan_limits.max_rows(), None);
+        assert_eq!(unlimited.scan_limits.max_decompressed_bytes(), None);
+
+        for options in [
+            &["--unlimited", "--max-rows", "1"][..],
+            &["--max-rows", "1", "--unlimited"][..],
+            &["--unlimited", "--max-decompressed-bytes", "1"][..],
+        ] {
+            let error = parse_find(options).unwrap_err().to_string();
+            assert!(error.contains("cannot be combined"), "error={error:?}");
+        }
+
+        let duplicate = parse_find(&["--unlimited", "--unlimited"])
+            .unwrap_err()
+            .to_string();
+        assert!(duplicate.contains("may be specified only once"));
+    }
+
+    fn parse_find(options: &[&str]) -> Result<FindArguments, super::CliError> {
+        let arguments = options
+            .iter()
+            .copied()
+            .chain(["archive.dump", "public.orders", "order_number", "value"])
+            .map(OsString::from);
+        FindArguments::parse_remaining(arguments)
+    }
 
     #[test]
     fn metadata_rendering_never_reads_or_seeks_after_archive_open() {
