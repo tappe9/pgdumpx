@@ -1,0 +1,4 @@
+# Every cargo-deny advisory/yanked ignore must have one matching [[exception]] record.
+# Required fields: kind, identifier, reason, affected_scope, removal_condition,
+# and either review_after (YYYY-MM-DD) or tracking_issue (#123 or a GitHub issue URL).
+exception = []
