@@ -27,7 +27,7 @@ Trusted workflows that intentionally accept an unbounded sequential scan must op
 pgdumpx find --unlimited backup.dump public.orders order_number 123456
 ```
 
-`--unlimited` is mutually exclusive with `--max-rows` and `--max-decompressed-bytes`. Every option may appear at most once. Conflicts, duplicates, zero, negative, non-decimal, and overflowing values are usage errors.
+`--unlimited` is mutually exclusive with `--max-rows` and `--max-decompressed-bytes`. Every option may appear at most once. Conflicts, duplicates, zero, negative, non-decimal, and overflowing values are usage errors. `pgdumpx find --help` prints both finite default values and the explicit unlimited option.
 
 ## Selection evidence
 
