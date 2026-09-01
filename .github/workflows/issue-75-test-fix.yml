@@ -1,0 +1,60 @@
+name: Normalize Issue 75 tests
+
+on:
+  push:
+    branches:
+      - feat/issue-75-finite-find-defaults
+
+permissions:
+  contents: write
+
+jobs:
+  normalize-tests:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Align synthetic table and format tests
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/pgdumpx-cli/tests/find_default_limits.rs")
+          text = path.read_text()
+          replacements = {
+              'Some(b"data")': 'Some(b"orders")',
+              'CREATE TABLE public.data (value text);': 'CREATE TABLE public.orders (order_number text);',
+              'DROP TABLE public.data;': 'DROP TABLE public.orders;',
+              'COPY public.data (value) FROM stdin;': 'COPY public.orders (order_number) FROM stdin;',
+              '.arg("public.data")': '.arg("public.orders")',
+              '.arg("value")': '.arg("order_number")',
+          }
+          expected_counts = {
+              'Some(b"data")': 2,
+              'CREATE TABLE public.data (value text);': 1,
+              'DROP TABLE public.data;': 1,
+              'COPY public.data (value) FROM stdin;': 1,
+              '.arg("public.data")': 1,
+              '.arg("value")': 1,
+          }
+          for old, new in replacements.items():
+              if text.count(old) != expected_counts[old]:
+                  raise SystemExit(f"unexpected occurrence count for {old!r}")
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+          cargo fmt --all
+
+      - name: Commit tests and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-75-test-fix.yml
+          git add crates/pgdumpx-cli/tests/find_default_limits.rs
+          git diff --cached --check
+          git commit -m "test(cli): correct default budget fixtures"
+          git push origin HEAD:feat/issue-75-finite-find-defaults
