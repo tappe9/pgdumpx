@@ -1,0 +1,42 @@
+name: PR 84 rustfmt fix
+
+on:
+  push:
+    branches:
+      - feat/issue-71-aggregate-metadata-budgets
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/issue-71-aggregate-metadata-budgets
+
+      - name: Install Rust stable with rustfmt
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Format and commit when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          if git diff --quiet; then
+            echo "No formatting changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- crates/pgdumpx/src/copy_metadata.rs \
+            crates/pgdumpx/src/custom/header.rs \
+            crates/pgdumpx/src/custom/toc.rs \
+            crates/pgdumpx/src/metadata_budget.rs
+          git commit -m "style: apply rustfmt to aggregate metadata changes"
+          git push origin HEAD:feat/issue-71-aggregate-metadata-budgets
