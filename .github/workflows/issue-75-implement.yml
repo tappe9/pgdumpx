@@ -1,0 +1,342 @@
+name: Implement Issue 75 finite find defaults
+
+on:
+  push:
+    branches:
+      - feat/issue-75-finite-find-defaults
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchains
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Install MSRV
+        run: rustup toolchain install 1.85.0 --profile minimal
+
+      - name: Implement finite CLI defaults and documentation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(text: str, old: str, new: str, *, count: int = 1, path: Path) -> str:
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(
+                      f"{path}: expected {count} occurrence(s) of {old[:80]!r}, found {actual}"
+                  )
+              return text.replace(old, new, count)
+
+          main = Path("crates/pgdumpx-cli/src/main.rs")
+          text = main.read_text()
+
+          old_constants = """const NO_MATCH_EXIT: u8 = 1;
+          const FAILURE_EXIT: u8 = 2;
+          const DEFAULT_EXTRACT_MAX_DECOMPRESSED_BYTES: u64 = 1_073_741_824;
+          const USAGE: &str = \"usage:\\n  pgdumpx inspect <FILE>\\n  pgdumpx list <FILE>\\n  pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>\\n  pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\\n\\nextract raw-entry limit:\\n  --max-decompressed-bytes <N> positive maximum decompressed entry bytes\\n  omitted limit defaults to 1073741824 bytes (1 GiB)\\n\\nfind scan limits:\\n  --max-rows <N>               positive maximum complete rows evaluated\\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\\n  omitted find limits are unlimited\";
+          """
+          new_constants = """const NO_MATCH_EXIT: u8 = 1;
+          const FAILURE_EXIT: u8 = 2;
+          const DEFAULT_EXTRACT_MAX_DECOMPRESSED_BYTES: u64 = 1_073_741_824;
+          const DEFAULT_FIND_MAX_ROWS: u64 = 100_000;
+          const DEFAULT_FIND_MAX_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+          const USAGE: &str = \"usage:\\n  pgdumpx inspect <FILE>\\n  pgdumpx list <FILE>\\n  pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>\\n  pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\\n\\nextract raw-entry limit:\\n  --max-decompressed-bytes <N> positive maximum decompressed entry bytes\\n  omitted limit defaults to 1073741824 bytes (1 GiB)\\n\\nfind scan limits:\\n  --max-rows <N>               positive maximum complete rows evaluated\\n  omitted row limit defaults to 100000 complete rows\\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\\n  omitted byte limit defaults to 67108864 bytes (64 MiB)\\n  --unlimited                  intentionally disable both total scan budgets\";
+          """
+          text = replace_exact(text, old_constants, new_constants, path=main)
+
+          old_run = """        Command::Find(arguments) => {
+                      let matched = find(&arguments)?;
+          """
+          new_run = """        Command::Help => {
+                      stdout
+                          .write_all(USAGE.as_bytes())
+                          .and_then(|()| stdout.write_all(b\"\\n\"))
+                          .map_err(|source| CliError::runtime(format!(\"stdout error: {source}\")))?;
+                      flush_stdout(stdout)?;
+                      Ok(CliOutcome::Success)
+                  }
+                  Command::Find(arguments) => {
+                      let matched = find(&arguments)?;
+          """
+          text = replace_exact(text, old_run, new_run, path=main)
+
+          old_enum = """enum Command {
+              Inspect { file: PathBuf },
+              List { file: PathBuf },
+              Extract(ExtractArguments),
+              Find(FindArguments),
+          }
+          """
+          new_enum = """enum Command {
+              Inspect { file: PathBuf },
+              List { file: PathBuf },
+              Extract(ExtractArguments),
+              Help,
+              Find(FindArguments),
+          }
+          """
+          text = replace_exact(text, old_enum, new_enum, path=main)
+
+          old_find_parse = """            \"extract\" => Ok(Self::Extract(ExtractArguments::parse_remaining(arguments)?)),
+                      \"find\" => Ok(Self::Find(FindArguments::parse_remaining(arguments)?)),
+          """
+          new_find_parse = """            \"extract\" => Ok(Self::Extract(ExtractArguments::parse_remaining(arguments)?)),
+                      \"find\" => {
+                          let remaining = arguments.collect::<Vec<_>>();
+                          if remaining.len() == 1
+                              && matches!(remaining[0].to_str(), Some(\"--help\" | \"-h\"))
+                          {
+                              Ok(Self::Help)
+                          } else {
+                              Ok(Self::Find(FindArguments::parse_remaining(
+                                  remaining.into_iter(),
+                              )?))
+                          }
+                      }
+          """
+          text = replace_exact(text, old_find_parse, new_find_parse, path=main)
+
+          old_option_state = """        let mut max_rows = None;
+                  let mut max_decompressed_bytes = None;
+          """
+          new_option_state = """        let mut max_rows = None;
+                  let mut max_decompressed_bytes = None;
+                  let mut unlimited = false;
+          """
+          text = replace_exact(text, old_option_state, new_option_state, path=main)
+
+          option_marker = """            if argument.as_os_str() == OsStr::new(\"--max-rows\") {
+          """
+          unlimited_block = """            if argument.as_os_str() == OsStr::new(\"--unlimited\") {
+                          if unlimited {
+                              return Err(CliError::usage(
+                                  \"--unlimited may be specified only once\",
+                              ));
+                          }
+                          unlimited = true;
+                          continue;
+                      }
+
+                      if argument.as_os_str() == OsStr::new(\"--max-rows\") {
+          """
+          text = replace_exact(text, option_marker, unlimited_block, path=main)
+
+          old_limits = """        let (schema, table) = parse_table_selector(&table_selector)?;
+                  let mut scan_limits = ScanLimits::unlimited();
+                  if let Some(value) = max_rows {
+                      scan_limits = scan_limits.with_max_rows(value);
+                  }
+                  if let Some(value) = max_decompressed_bytes {
+                      scan_limits = scan_limits.with_max_decompressed_bytes(value);
+                  }
+          """
+          new_limits = """        let (schema, table) = parse_table_selector(&table_selector)?;
+                  if unlimited && (max_rows.is_some() || max_decompressed_bytes.is_some()) {
+                      return Err(CliError::usage(
+                          \"--unlimited cannot be combined with --max-rows or --max-decompressed-bytes\",
+                      ));
+                  }
+                  let scan_limits = if unlimited {
+                      ScanLimits::unlimited()
+                  } else {
+                      ScanLimits::unlimited()
+                          .with_max_rows(max_rows.unwrap_or(DEFAULT_FIND_MAX_ROWS))
+                          .with_max_decompressed_bytes(
+                              max_decompressed_bytes
+                                  .unwrap_or(DEFAULT_FIND_MAX_DECOMPRESSED_BYTES),
+                          )
+                  };
+          """
+          text = replace_exact(text, old_limits, new_limits, path=main)
+          main.write_text(text)
+
+          readme = Path("README.md")
+          text = readme.read_text()
+          old_syntax = """pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          new_syntax = """pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          text = replace_exact(text, old_syntax, new_syntax, path=readme)
+          old_find_policy = """Each optional scan-limit flag accepts a positive decimal `u64`, may be specified at most once, and appears before `<FILE>`. Omitting a flag leaves that budget unlimited. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses parser-consumed physical COPY-byte accounting; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes.
+          """
+          new_find_policy = """Each optional finite scan-limit flag accepts a positive decimal `u64`, may be specified at most once, and appears before `<FILE>`. Without options, `find` applies inclusive defaults of **100,000 complete rows** and **67,108,864 parser-consumed decompressed bytes (64 MiB)**. Supplying only one finite option overrides only that dimension and leaves the other finite default in force. Trusted workflows may pass `--unlimited` to disable both total-work budgets explicitly; it is mutually exclusive with either finite option. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses parser-consumed physical COPY-byte accounting; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes. See [the `find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) for selection evidence, exact boundaries, and migration guidance.
+          """
+          text = replace_exact(text, old_find_policy, new_find_policy, path=readme)
+          text = replace_exact(
+              text,
+              "It writes a diagnostic to stderr and exits with `2+` even when no matching row was reached before exhaustion.",
+              "It writes a diagnostic to stderr and exits with `2` even when no matching row was reached before exhaustion.",
+              path=readme,
+          )
+          text = replace_exact(
+              text,
+              "2+ usage, I/O, format, integrity, decompression, COPY, encoding,",
+              "2  usage, I/O, format, integrity, decompression, COPY, encoding,",
+              path=readme,
+          )
+          doc_map = "- [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget and partial-output semantics;\n"
+          text = replace_exact(
+              text,
+              doc_map,
+              doc_map + "- [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI defaults, evidence, boundary semantics, and migration guidance;\n",
+              path=readme,
+          )
+          readme.write_text(text)
+
+          readme_ja = Path("README.ja.md")
+          text = readme_ja.read_text()
+          old_syntax_ja = """pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          new_syntax_ja = """pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          text = replace_exact(text, old_syntax_ja, new_syntax_ja, path=readme_ja)
+          old_policy_ja = """optionalなscan-limit flagはそれぞれ正の10進`u64`を1回まで指定でき、`<FILE>`より前に置きます。省略したbudgetはunlimitedです。`--max-rows <N>`はlibrary search pathがevaluateしたcomplete rowを数え、一致rowも含みます。`--max-decompressed-bytes <N>`はparser-consumed physical COPY-byte会計を使い、separator、row terminator、escape spelling、消費したCOPY terminatorを含みますが、decompressor / bufferの未消費lookaheadやlogical decodeによるlength変化は含みません。
+          """
+          new_policy_ja = """optionalなfinite scan-limit flagはそれぞれ正の10進`u64`を1回まで指定でき、`<FILE>`より前に置きます。option未指定時は、**complete row 100,000件**と**parser-consumed decompressed bytes 67,108,864 bytes (64 MiB)**のinclusiveなdefaultを両方適用します。finite optionを片方だけ指定した場合はその次元だけを上書きし、もう一方のfinite defaultは残ります。trusted workflowでは`--unlimited`により両方のtotal-work budgetを明示的に解除できますが、finite optionとは排他的です。`--max-rows <N>`はlibrary search pathがevaluateしたcomplete rowを数え、一致rowも含みます。`--max-decompressed-bytes <N>`はparser-consumed physical COPY-byte会計を使い、separator、row terminator、escape spelling、消費したCOPY terminatorを含みますが、decompressor / bufferの未消費lookaheadやlogical decodeによるlength変化は含みません。数値の根拠、exact boundary、移行手順は[`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md)を参照してください。
+          """
+          text = replace_exact(text, old_policy_ja, new_policy_ja, path=readme_ja)
+          text = replace_exact(
+              text,
+              "stderrへdiagnosticを出し、`2+`で終了します。",
+              "stderrへdiagnosticを出し、`2`で終了します。",
+              path=readme_ja,
+          )
+          text = replace_exact(
+              text,
+              "2+ usage、I/O、format、integrity、decompression、COPY、encoding、",
+              "2  usage、I/O、format、integrity、decompression、COPY、encoding、",
+              path=readme_ja,
+          )
+          ja_map = "- [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte budgetとpartial-output semantics\n"
+          text = replace_exact(
+              text,
+              ja_map,
+              ja_map + "- [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI default、根拠、boundary、migration guidance\n",
+              path=readme_ja,
+          )
+          readme_ja.write_text(text)
+
+          security = Path("SECURITY.md")
+          text = security.read_text()
+          old_security = """Applications processing trusted local backups may choose generous limits. Applications processing untrusted or customer-supplied archives should configure limits appropriate to their service-level and resource constraints.
+
+          A low-level unlimited `EntryDataReader` remains available for trusted callers. The library also provides `entry_reader_with_limits` and `copy_entry_to` bounded raw-extraction paths, and `pgdumpx extract` uses the bounded high-level path with a finite 1 GiB default rather than relying on CLI callers to wrap stdout copying themselves.
+          """
+          new_security = """Applications processing trusted local backups may choose generous limits. Applications processing untrusted or customer-supplied archives should configure limits appropriate to their service-level and resource constraints.
+
+          `pgdumpx find` applies finite defaults of 100,000 complete rows and 64 MiB of parser-consumed decompressed COPY bytes. A one-dimensional override preserves the other finite default. `--unlimited` is an explicit trusted-input opt-in that disables both total-work budgets and must not be used for unreviewed customer-supplied archives merely to bypass a resource error. See [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md).
+
+          A low-level unlimited `EntryDataReader` remains available for trusted callers. The library also provides `entry_reader_with_limits` and `copy_entry_to` bounded raw-extraction paths, and `pgdumpx extract` uses the bounded high-level path with a finite 1 GiB default rather than relying on CLI callers to wrap stdout copying themselves.
+          """
+          text = replace_exact(text, old_security, new_security, path=security)
+          security.write_text(text)
+
+          roadmap = Path("ROADMAP.md")
+          text = roadmap.read_text()
+          roadmap_old_syntax = """pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          roadmap_new_syntax = """pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          text = replace_exact(
+              text,
+              roadmap_old_syntax,
+              roadmap_new_syntax,
+              count=1,
+              path=roadmap,
+          )
+          roadmap_old_multiline = """pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          roadmap_new_multiline = """pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \\
+            <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+          """
+          text = replace_exact(
+              text,
+              roadmap_old_multiline,
+              roadmap_new_multiline,
+              path=roadmap,
+          )
+          old_roadmap_options = """- `pgdumpx find` scan options:
+
+          ```text
+          --max-rows <N>
+          --max-decompressed-bytes <N>
+          ```
+
+          - bounded raw entry extraction with `EntryReadLimits`;
+          """
+          new_roadmap_options = """- `pgdumpx find` scan options and finite CLI defaults:
+
+          ```text
+          --max-rows <N>               default: 100000 complete rows
+          --max-decompressed-bytes <N> default: 67108864 parser-consumed bytes
+          --unlimited                  explicit trusted-input opt-in
+          ```
+
+          - bounded raw entry extraction with `EntryReadLimits`;
+          """
+          text = replace_exact(text, old_roadmap_options, new_roadmap_options, path=roadmap)
+          old_roadmap_find = """Uses UTF-8 command-line arguments, resolves the column through recorded COPY metadata, and compares the supplied value bytes with logical post-unescape field bytes. Scan-budget options delegate to the same library `ScanLimits` accounting path used by Rust callers. A future byte-literal input mode requires a separate CLI design.
+          """
+          new_roadmap_find = """Uses UTF-8 command-line arguments, resolves the column through recorded COPY metadata, and compares the supplied value bytes with logical post-unescape field bytes. The CLI applies finite defaults of 100,000 complete rows and 64 MiB of parser-consumed bytes; one finite override preserves the other default, while `--unlimited` explicitly disables both. Scan-budget options delegate to the same library `ScanLimits` accounting path used by Rust callers. A future byte-literal input mode requires a separate CLI design.
+          """
+          text = replace_exact(text, old_roadmap_find, new_roadmap_find, path=roadmap)
+          text = replace_exact(
+              text,
+              "2+ usage, I/O, format, integrity, decompression, COPY, encoding,",
+              "2  usage, I/O, format, integrity, decompression, COPY, encoding,",
+              path=roadmap,
+          )
+          roadmap.write_text(text)
+          PY
+
+          cargo fmt --all
+
+      - name: Focused CLI tests
+        run: |
+          cargo test -p pgdumpx-cli --bin pgdumpx
+          cargo test -p pgdumpx-cli --test find_default_limits
+          cargo test -p pgdumpx-cli --test find_limits
+          cargo test -p pgdumpx-cli --test find
+
+      - name: Full quality gates
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo fmt --check
+          python3 scripts/verify-doc-links.py
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          cargo doc --workspace --all-features --no-deps
+          cargo +1.85.0 check --workspace --all-targets --all-features
+
+      - name: Commit implementation and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-75-implement.yml
+          git add crates/pgdumpx-cli/src/main.rs \
+            README.md README.ja.md SECURITY.md ROADMAP.md \
+            docs/FIND-SCAN-LIMITS.md \
+            crates/pgdumpx-cli/tests/find_default_limits.rs
+          git diff --cached --check
+          git commit -m "feat(cli): apply finite default find budgets"
+          git push origin HEAD:feat/issue-75-finite-find-defaults
