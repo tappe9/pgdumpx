@@ -1,0 +1,119 @@
+name: Apply Issue 76 cfg fix
+
+on:
+  push:
+    branches:
+      - ci/issue-76-feature-matrix
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Apply precise backend cfg gates
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for feature, compression in (("lz4", "LZ4_COMPRESSION"), ("zstd", "ZSTD_COMPRESSION")):
+              path = Path(f"crates/pgdumpx/tests/{feature}_backend.rs")
+              text = path.read_text()
+              old_imports = """use pgdumpx::{
+              Archive, Compression, DataLocation, EntryReadLimits, FieldRef, OwnedField, PgDumpError,
+          };
+          use std::{
+              cell::Cell,
+              io::{self, Cursor, Read, Seek, SeekFrom},
+              path::PathBuf,
+          };
+          """
+              new_imports = f"""use pgdumpx::{{Archive, Compression, PgDumpError}};
+          use std::{{io::Cursor, path::PathBuf}};
+
+          #[cfg(feature = \"{feature}\")]
+          use pgdumpx::{{DataLocation, EntryReadLimits, FieldRef, OwnedField}};
+          #[cfg(feature = \"{feature}\")]
+          use std::{{
+              cell::Cell,
+              io::{{self, Read, Seek, SeekFrom}},
+          }};
+          """
+              if text.count(old_imports) != 1:
+                  raise SystemExit(f"unexpected import block in {path}")
+              text = text.replace(old_imports, new_imports, 1)
+
+              items = [
+                  "const POSITION_SET:",
+                  "const BLK_DATA:",
+                  f"const {compression}:",
+                  "const EXPECTED_COPY_STREAM:",
+                  "fn pgdump_error(",
+                  "fn compressed_entry_bytes(",
+                  "fn read_archive_int(",
+                  "fn archive_with_block(",
+                  "fn complete_header(",
+                  "fn data_block(",
+                  "fn write_int(",
+                  "fn write_string(",
+                  "#[derive(Debug)]\nstruct OneByteReader",
+                  "impl OneByteReader",
+                  "impl Read for OneByteReader",
+                  "impl Seek for OneByteReader",
+              ]
+              for item in items:
+                  if text.count(item) != 1:
+                      raise SystemExit(f"unexpected occurrence count for {item!r} in {path}")
+                  text = text.replace(item, f"#[cfg(feature = \"{feature}\")]\n{item}", 1)
+              path.write_text(text)
+
+          path = Path("crates/pgdumpx/tests/compression_backend_limits.rs")
+          text = path.read_text()
+          imports = """use pgdumpx::{Archive, EntryReadLimits};
+          use std::{
+              io::{Cursor, Read},
+              path::PathBuf,
+          };
+          """
+          gated_imports = """#[cfg(any(feature = "lz4", feature = "zstd"))]
+          use pgdumpx::{Archive, EntryReadLimits};
+          #[cfg(any(feature = "lz4", feature = "zstd"))]
+          use std::{
+              io::{Cursor, Read},
+              path::PathBuf,
+          };
+          """
+          if text.count(imports) != 1:
+              raise SystemExit(f"unexpected import block in {path}")
+          text = text.replace(imports, gated_imports, 1)
+          for item in ("fn assert_payload_below_limit(", "fn fixture("):
+              if text.count(item) != 1:
+                  raise SystemExit(f"unexpected occurrence count for {item!r} in {path}")
+              text = text.replace(
+                  item,
+                  '#[cfg(any(feature = "lz4", feature = "zstd"))]\n' + item,
+                  1,
+              )
+          path.write_text(text)
+          PY
+
+          cargo fmt --all
+
+      - name: Commit implementation and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-76-apply.yml
+          git add crates/pgdumpx/tests/lz4_backend.rs \
+            crates/pgdumpx/tests/zstd_backend.rs \
+            crates/pgdumpx/tests/compression_backend_limits.rs
+          git diff --cached --check
+          git commit -m "fix(test): cfg-gate backend-specific support"
+          git push origin HEAD:ci/issue-76-feature-matrix
