@@ -28,6 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import base64
           from pathlib import Path
 
           source = Path("crates/pgdumpx/src/copy_metadata.rs")
@@ -42,49 +43,9 @@ jobs:
 
           document = Path("docs/API-DESIGN.md")
           text = document.read_text(encoding="utf-8")
-          start_marker = "## 3. Structural limits\n"
-          end_marker = "## 4. Row-scan work limits\n"
-          start = text.index(start_marker)
-          end = text.index(end_marker)
-          replacement = '''## 3. Structural limits
-
-Configuration fields remain private so the type can evolve without turning struct-literal layout into a compatibility promise.
-
-Implemented shape:
-
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Limits {
-    max_toc_entries: usize,
-    max_string_bytes: usize,
-    max_dependencies_per_entry: usize,
-    max_metadata_string_bytes: usize,
-    max_metadata_dependencies: usize,
-    max_metadata_index_bytes: usize,
-    max_row_bytes: usize,
-    max_fields_per_row: usize,
-}
-
-impl Limits {
-    pub fn default_compatible() -> Self;
-    pub fn with_max_toc_entries(self, value: usize) -> Self;
-    pub fn with_max_string_bytes(self, value: usize) -> Self;
-    pub fn with_max_dependencies_per_entry(self, value: usize) -> Self;
-    pub fn with_max_metadata_string_bytes(self, value: usize) -> Self;
-    pub fn with_max_metadata_dependencies(self, value: usize) -> Self;
-    pub fn with_max_metadata_index_bytes(self, value: usize) -> Self;
-    pub fn with_max_row_bytes(self, value: usize) -> Self;
-    pub fn with_max_fields_per_row(self, value: usize) -> Self;
-}
-```
-
-`Default` delegates to finite compatibility-oriented limits. In addition to the existing per-item bounds, the defaults permit at most 256 MiB of retained header/TOC string bytes, 1,000,000 retained dependencies across all TOC entries, and 64 MiB of variable-length names duplicated into derived metadata/index structures. The index-byte budget covers table schema/name lookup keys and both the ordered and lookup copies of COPY column names. Fixed-size map entries remain bounded by the TOC and field-count limits.
-
-Per-item validation occurs first. An individual string, one entry's dependency list, or one COPY column layout that violates its existing bound therefore retains the existing typed error. Values that pass those checks are charged incrementally to the relevant aggregate counter before retained allocation or growth where possible. All aggregate counters use checked arithmetic, accept a value exactly equal to the configured limit, and reject the first value above it with typed limit, attempted usage, and archive context.
-
-These limits bound metadata retained while opening an archive and the variable-length names materially duplicated by its lookup structures. They do not by themselves bound entry payload, decompression, COPY row, or operation scan work; those remain governed by row structural limits, `ScanLimits`, and `EntryReadLimits`.
-
-'''
+          start = text.index("## 3. Structural limits\n")
+          end = text.index("## 4. Row-scan work limits\n")
+          replacement = base64.b64decode("IyMgMy4gU3RydWN0dXJhbCBsaW1pdHMKCkNvbmZpZ3VyYXRpb24gZmllbGRzIHJlbWFpbiBwcml2YXRlIHNvIHRoZSB0eXBlIGNhbiBldm9sdmUgd2l0aG91dCB0dXJuaW5nIHN0cnVjdC1saXRlcmFsIGxheW91dCBpbnRvIGEgY29tcGF0aWJpbGl0eSBwcm9taXNlLgoKSW1wbGVtZW50ZWQgc2hhcGU6CgpgYGBydXN0CiNbZGVyaXZlKERlYnVnLCBDbG9uZSwgQ29weSwgUGFydGlhbEVxLCBFcSldCnB1YiBzdHJ1Y3QgTGltaXRzIHsKICAgIG1heF90b2NfZW50cmllczogdXNpemUsCiAgICBtYXhfc3RyaW5nX2J5dGVzOiB1c2l6ZSwKICAgIG1heF9kZXBlbmRlbmNpZXNfcGVyX2VudHJ5OiB1c2l6ZSwKICAgIG1heF9tZXRhZGF0YV9zdHJpbmdfYnl0ZXM6IHVzaXplLAogICAgbWF4X21ldGFkYXRhX2RlcGVuZGVuY2llczogdXNpemUsCiAgICBtYXhfbWV0YWRhdGFfaW5kZXhfYnl0ZXM6IHVzaXplLAogICAgbWF4X3Jvd19ieXRlczogdXNpemUsCiAgICBtYXhfZmllbGRzX3Blcl9yb3c6IHVzaXplLAp9CgppbXBsIExpbWl0cyB7CiAgICBwdWIgZm4gZGVmYXVsdF9jb21wYXRpYmxlKCkgLT4gU2VsZjsKICAgIHB1YiBmbiB3aXRoX21heF90b2NfZW50cmllcyhzZWxmLCB2YWx1ZTogdXNpemUpIC0+IFNlbGY7CiAgICBwdWIgZm4gd2l0aF9tYXhfc3RyaW5nX2J5dGVzKHNlbGYsIHZhbHVlOiB1c2l6ZSkgLT4gU2VsZjsKICAgIHB1YiBmbiB3aXRoX21heF9kZXBlbmRlbmNpZXNfcGVyX2VudHJ5KHNlbGYsIHZhbHVlOiB1c2l6ZSkgLT4gU2VsZjsKICAgIHB1YiBmbiB3aXRoX21heF9tZXRhZGF0YV9zdHJpbmdfYnl0ZXMoc2VsZiwgdmFsdWU6IHVzaXplKSAtPiBTZWxmOwogICAgcHViIGZuIHdpdGhfbWF4X21ldGFkYXRhX2RlcGVuZGVuY2llcyhzZWxmLCB2YWx1ZTogdXNpemUpIC0+IFNlbGY7CiAgICBwdWIgZm4gd2l0aF9tZXRhZGF0YV9pbmRleF9ieXRlcyhzZWxmLCB2YWx1ZTogdXNpemUpIC0+IFNlbGY7CiAgICBwdWIgZm4gd2l0aF9tYXhfcm93X2J5dGVzKHNlbGYsIHZhbHVlOiB1c2l6ZSkgLT4gU2VsZjsKICAgIHB1YiBmbiB3aXRoX21heF9maWVsZHNfcGVyX3JvdyhzZWxmLCB2YWx1ZTogdXNpemUpIC0+IFNlbGY7Cn0KYGpiYAoKYERlZmF1bHRgIGRlbGVnYXRlcyB0byBmaW5pdGUgY29tcGF0aWJpbGl0eS1vcmllbnRlZCBsaW1pdHMuIEluIGFkZGl0aW9uIHRvIHRoZSBleGlzdGluZyBwZXItaXRlbSBib3VuZHMsIHRoZSBkZWZhdWx0cyBwZXJtaXQgYXQgbW9zdCAyNTYgTWlCIG9mIHJldGFpbmVkIGhlYWRlci9UT0Mgc3RyaW5nIGJ5dGVzLCAxLDAwMCwwMDAgcmV0YWluZWQgZGVwZW5kZW5jaWVzIGFjcm9zcyBhbGwgVE9DIGVudHJpZXMsIGFuZCA2NCBNaUIgb2YgdmFyaWFibGUtbGVuZ3RoIG5hbWVzIGR1cGxpY2F0ZWQgaW50byBkZXJpdmVkIG1ldGFkYXRhL2luZGV4IHN0cnVjdHVyZXMuIFRoZSBpbmRleC1ieXRlIGJ1ZGdldCBjb3ZlcnMgdGFibGUgc2NoZW1hL25hbWUgbG9va3VwIGtleXMgYW5kIGJvdGggdGhlIG9yZGVyZWQgYW5kIGxvb2t1cCBjb3BpZXMgb2YgQ09QWSBjb2x1bW4gbmFtZXMuIEZpeGVkLXNpemUgbWFwIGVudHJpZXMgcmVtYWluIGJvdW5kZWQgYnkgdGhlIFRPQyBhbmQgZmllbGQtY291bnQgbGltaXRzLgoKUGVyLWl0ZW0gdmFsaWRhdGlvbiBvY2N1cnMgZmlyc3QuIEFuIGluZGl2aWR1YWwgc3RyaW5nLCBvbmUgZW50cnkncyBkZXBlbmRlbmN5IGxpc3QsIG9yIG9uZSBDT1BZIGNvbHVtbiBsYXlvdXQgdGhhdCB2aW9sYXRlcyBpdHMgZXhpc3RpbmcgYm91bmQgdGhlcmVmb3JlIHJldGFpbnMgdGhlIGV4aXN0aW5nIHR5cGVkIGVycm9yLiBWYWx1ZXMgdGhhdCBwYXNzIHRob3NlIGNoZWNrcyBhcmUgY2hhcmdlZCBpbmNyZW1lbnRhbGx5IHRvIHRoZSByZWxldmFudCBhZ2dyZWdhdGUgY291bnRlciBiZWZvcmUgcmV0YWluZWQgYWxsb2NhdGlvbiBvciBncm93dGggd2hlcmUgcG9zc2libGUuIEFsbCBhZ2dyZWdhdGUgY291bnRlcnMgdXNlIGNoZWNrZWQgYXJpdGhtZXRpYywgYWNjZXB0IGEgdmFsdWUgZXhhY3RseSBlcXVhbCB0byB0aGUgY29uZmlndXJlZCBsaW1pdCwgYW5kIHJlamVjdCB0aGUgZmlyc3QgdmFsdWUgYWJvdmUgaXQgd2l0aCB0eXBlZCBsaW1pdCwgYXR0ZW1wdGVkIHVzYWdlLCBhbmQgYXJjaGl2ZSBjb250ZXh0LgoKVGhlc2UgbGltaXRzIGJvdW5kIG1ldGFkYXRhIHJldGFpbmVkIHdoaWxlIG9wZW5pbmcgYW4gYXJjaGl2ZSBhbmQgdGhlIHZhcmlhYmxlLWxlbmd0aCBuYW1lcyBtYXRlcmlhbGx5IGR1cGxpY2F0ZWQgYnkgaXRzIGxvb2t1cCBzdHJ1Y3R1cmVzLiBUaGV5IGRvIG5vdCBieSB0aGVtc2VsdmVzIGJvdW5kIGVudHJ5IHBheWxvYWQsIGRlY29tcHJlc3Npb24sIENPUFkgcm93LCBvciBvcGVyYXRpb24gc2NhbiB3b3JrOyB0aG9zZSByZW1haW4gZ292ZXJuZWQgYnkgcm93IHN0cnVjdHVyYWwgbGltaXRzLCBgU2NhbkxpbWl0c2AsIGFuZCBgRW50cnlSZWFkTGltaXRzYC4KCg==").decode("utf-8")
           document.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
           PY
 
