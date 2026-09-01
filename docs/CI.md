@@ -4,9 +4,23 @@ The repository separates platform coverage from library feature coverage so each
 
 ## Baseline quality gates
 
-The `quality` job runs on Linux and verifies formatting, documentation links, the advisory-policy contract, the scheduled-fuzz orchestration contract, workspace-wide warning-denying Clippy, all-feature workspace tests, and warning-denying rustdoc generation.
+The `quality` job runs on Linux and verifies formatting, documentation links, the advisory-policy contract, the scheduled-fuzz orchestration contract, the workflow-execution policy contract, workspace-wide warning-denying Clippy, all-feature workspace tests, and warning-denying rustdoc generation.
 
 The `msrv` job checks every workspace target with Rust 1.85.0 and all features enabled.
+
+## Workflow execution policy
+
+`scripts/test-workflow-policy.py` enforces the repository-wide GitHub Actions contract:
+
+- workflow permissions include only read-only repository contents unless a separately reviewed workflow documents a narrower exception;
+- every external action reference uses an immutable 40-character commit SHA;
+- every checkout step sets `persist-credentials: false`;
+- every workflow defines concurrency cancellation for duplicate runs on the same workflow/ref group;
+- every job defines a finite `timeout-minutes` value.
+
+The contract contains deterministic regression cases for floating action references, missing timeouts, missing concurrency, persisted checkout credentials, and non-read-only contents permissions. A workflow change must update the contract only when the repository policy intentionally changes; it must not weaken a failing assertion to accept an accidental regression.
+
+The main CI workflow uses job-specific bounds: 30 minutes for quality, platform, feature, and fuzz jobs; 20 minutes for compatibility differential and MSRV checks; and 15 minutes for fixture and benchmark jobs. Release packaging uses a 30-minute bound. Advisory and scheduled-fuzz workflows retain their separately documented finite limits.
 
 ## Platform coverage
 
