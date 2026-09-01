@@ -95,11 +95,7 @@ fn default_row_budget_stops_a_no_match_scan_and_explicit_modes_are_authoritative
     );
     assert_resource_failure(bytes_only, "exceeding limit 100000");
 
-    let rows_only = run_find(
-        archive.path(),
-        &["--max-rows", "100001"],
-        "missing",
-    );
+    let rows_only = run_find(archive.path(), &["--max-rows", "100001"], "missing");
     assert_clean_no_match(rows_only, "row override");
 
     let unlimited = run_find(archive.path(), &["--unlimited"], "missing");
@@ -135,8 +131,8 @@ fn run_find(path: &Path, options: &[&str], value: &str) -> Output {
     command.arg("find").args(options);
     command
         .arg(path)
-        .arg("public.data")
-        .arg("value")
+        .arg("public.orders")
+        .arg("order_number")
         .arg(value)
         .output()
         .expect("pgdumpx must execute")
@@ -227,14 +223,14 @@ fn write_table_entry(bytes: &mut Vec<u8>) {
     write_int(bytes, 0);
     write_string(bytes, Some(b"1259"));
     write_string(bytes, Some(b"16385"));
-    write_string(bytes, Some(b"data"));
+    write_string(bytes, Some(b"orders"));
     write_string(bytes, Some(b"TABLE"));
     write_int(bytes, 2);
     write_string(
         bytes,
-        Some(b"CREATE TABLE public.data (value text);\n"),
+        Some(b"CREATE TABLE public.orders (order_number text);\n"),
     );
-    write_string(bytes, Some(b"DROP TABLE public.data;\n"));
+    write_string(bytes, Some(b"DROP TABLE public.orders;\n"));
     write_string(bytes, None);
     write_string(bytes, Some(b"public"));
     write_string(bytes, None);
@@ -252,12 +248,15 @@ fn write_table_data_entry(bytes: &mut Vec<u8>) {
     write_int(bytes, 1);
     write_string(bytes, Some(b"1259"));
     write_string(bytes, Some(b"16385"));
-    write_string(bytes, Some(b"data"));
+    write_string(bytes, Some(b"orders"));
     write_string(bytes, Some(b"TABLE DATA"));
     write_int(bytes, 3);
     write_string(bytes, None);
     write_string(bytes, None);
-    write_string(bytes, Some(b"COPY public.data (value) FROM stdin;\n"));
+    write_string(
+        bytes,
+        Some(b"COPY public.orders (order_number) FROM stdin;\n"),
+    );
     write_string(bytes, Some(b"public"));
     write_string(bytes, None);
     write_string(bytes, None);
