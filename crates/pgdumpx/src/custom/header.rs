@@ -20,15 +20,6 @@ pub(crate) struct ParsedHeader {
     pub(crate) offset_size: ArchiveOffsetSize,
 }
 
-#[cfg(test)]
-pub(crate) fn read_header<R: Read>(
-    reader: &mut ArchiveReader<R>,
-    limits: Limits,
-) -> Result<ParsedHeader, PgDumpError> {
-    let mut budget = MetadataBudget::new(limits)?;
-    read_header_with_budget(reader, limits, &mut budget)
-}
-
 pub(crate) fn read_header_with_budget<R: Read>(
     reader: &mut ArchiveReader<R>,
     limits: Limits,
