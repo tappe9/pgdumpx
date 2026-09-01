@@ -55,8 +55,6 @@ enum GlobalOption {
 }
 
 mod application {
-    include!("main.rs");
-
     pub(super) fn launch() -> ExitCode {
         main()
     }
@@ -64,6 +62,8 @@ mod application {
     pub(super) fn usage() -> &'static str {
         USAGE
     }
+
+    include!("main.rs");
 }
 
 #[cfg(test)]
