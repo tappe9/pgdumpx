@@ -4,7 +4,7 @@ The repository separates platform coverage from library feature coverage so each
 
 ## Baseline quality gates
 
-The `quality` job runs on Linux and verifies formatting, documentation links, workspace-wide warning-denying Clippy, all-feature workspace tests, and warning-denying rustdoc generation.
+The `quality` job runs on Linux and verifies formatting, documentation links, the advisory-policy contract, workspace-wide warning-denying Clippy, all-feature workspace tests, and warning-denying rustdoc generation.
 
 The `msrv` job checks every workspace target with Rust 1.85.0 and all features enabled.
 
@@ -28,6 +28,18 @@ default
 Backend-specific test imports, helpers, fixtures, and enabled-backend tests must use precise `#[cfg(...)]` gates. Tests that verify an archive remains inspectable while a disabled backend reports `UnsupportedEntryCompression` remain active in configurations where that backend is unavailable.
 
 A feature-specific test must not be skipped by excluding its whole test target from a matrix job. Add a precise compile-time gate to only the code that requires the feature.
+
+## Dependency advisory coverage
+
+`.github/workflows/dependency-advisories.yml` owns Rust dependency advisory checks. It runs on dependency-policy or lockfile changes, daily at `03:17 UTC`, and through `workflow_dispatch`.
+
+The workflow has read-only contents permission, a 20-minute job timeout, and concurrency cancellation for duplicate runs. It validates `deny.toml` against `advisory-exceptions.toml`, installs cargo-deny `0.20.2` with `--locked`, and runs:
+
+```bash
+cargo deny --locked check advisories
+```
+
+The committed `Cargo.lock` is checked against the current RustSec database. Normal cargo-deny diagnostics remain visible so failures identify the advisory ID and affected dependency. The policy intentionally does not add license, source allowlist, or duplicate-version checks.
 
 ## Specialized evidence jobs
 

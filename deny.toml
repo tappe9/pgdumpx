@@ -1,0 +1,8 @@
+# cargo-deny 0.20.2 advisory policy.
+# License, source, and duplicate-version policy intentionally remain out of scope.
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+maximum-db-staleness = "P7D"
+unused-ignored-advisory = "deny"
+ignore = []

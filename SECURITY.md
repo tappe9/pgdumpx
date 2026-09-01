@@ -96,6 +96,22 @@ Unsupported representations fail explicitly before row parsing where the necessa
 
 See [COPY text contract](docs/COPY-TEXT.md) for the byte-level row contract.
 
+## Dependency advisory policy
+
+The committed `Cargo.lock` is checked with cargo-deny `0.20.2` and the repository-root `[advisories]` policy. Dependency-related pull requests and `main` pushes run the check, a daily `03:17 UTC` schedule refreshes the RustSec database without requiring a source change, and maintainers can use `workflow_dispatch` for manual validation.
+
+When a check fails:
+
+1. read the cargo-deny diagnostic for the advisory ID, affected crate/version, and dependency path;
+2. identify whether the affected dependency is used by the library, CLI, development, benchmark, or fuzz scope;
+3. prefer updating the lockfile, upgrading or replacing the dependency, or reducing the affected feature surface;
+4. rerun the repository quality gates and `cargo deny --locked check advisories`;
+5. do not place exploit details, sensitive crash inputs, credentials, or private archive data in public logs or issues.
+
+An exception is a temporary last resort. `deny.toml` must use an object ignore with an advisory ID or yanked crate plus a non-empty reason. `advisory-exceptions.toml` must contain one matching record with the same reason, affected scope, removal condition, and either a review date or tracking Issue. `scripts/verify-advisory-policy.py` rejects bare IDs, incomplete or unmatched metadata, and metadata left behind after an ignore is removed. Delete both records when the removal condition is met.
+
+For cargo-deny tool or schema updates, review the current official release and configuration documentation, update the exact version in the workflow, tests, and documentation together, install it with `--locked`, and manually dispatch the workflow before merging. License, source allowlist, and duplicate-version checks remain outside this policy.
+
 ## Fuzzing
 
 The baseline invariants are:
