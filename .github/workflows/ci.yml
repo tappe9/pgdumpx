@@ -33,6 +33,9 @@ jobs:
       - name: Advisory policy contract
         run: python3 scripts/test-advisory-policy.py
 
+      - name: Fuzz campaign contract
+        run: python3 scripts/test-fuzz-campaign.py
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
