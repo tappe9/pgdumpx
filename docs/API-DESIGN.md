@@ -71,11 +71,11 @@ impl Limits {
     pub fn with_max_dependencies_per_entry(self, value: usize) -> Self;
     pub fn with_max_metadata_string_bytes(self, value: usize) -> Self;
     pub fn with_max_metadata_dependencies(self, value: usize) -> Self;
-    pub fn with_metadata_index_bytes(self, value: usize) -> Self;
+    pub fn with_max_metadata_index_bytes(self, value: usize) -> Self;
     pub fn with_max_row_bytes(self, value: usize) -> Self;
     pub fn with_max_fields_per_row(self, value: usize) -> Self;
 }
-`jb`
+```
 
 `Default` delegates to finite compatibility-oriented limits. In addition to the existing per-item bounds, the defaults permit at most 256 MiB of retained header/TOC string bytes, 1,000,000 retained dependencies across all TOC entries, and 64 MiB of variable-length names duplicated into derived metadata/index structures. The index-byte budget covers table schema/name lookup keys and both the ordered and lookup copies of COPY column names. Fixed-size map entries remain bounded by the TOC and field-count limits.
 
