@@ -197,22 +197,22 @@ Limit exhaustion is an error, not successful truncation. Because output is strea
 ### `find`
 
 ```text
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \
+pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \
   <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
-Each optional scan-limit flag accepts a positive decimal `u64`, may be specified at most once, and appears before `<FILE>`. Omitting a flag leaves that budget unlimited. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses parser-consumed physical COPY-byte accounting; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes.
+Each optional finite scan-limit flag accepts a positive decimal `u64`, may be specified at most once, and appears before `<FILE>`. Without options, `find` applies inclusive defaults of **100,000 complete rows** and **67,108,864 parser-consumed decompressed bytes (64 MiB)**. Supplying only one finite option overrides only that dimension and leaves the other finite default in force. Trusted workflows may pass `--unlimited` to disable both total-work budgets explicitly; it is mutually exclusive with either finite option. `--max-rows <N>` counts complete rows evaluated by the library search path, including the matching row. `--max-decompressed-bytes <N>` uses parser-consumed physical COPY-byte accounting; it includes separators, row terminators, escape spellings, and a consumed COPY terminator, but excludes unread decompressor/buffer lookahead and decoded logical-length changes. See [the `find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) for selection evidence, exact boundaries, and migration guidance.
 
 A match writes exactly one **normalized COPY text record** to stdout. Fields remain in COPY column order, are separated by ASCII tabs, and the record ends with LF. NULL is `\N`; an empty byte field is an empty field. Backslash, tab, LF, and CR are emitted as `\\`, `\t`, `\n`, and `\r`; other non-printable or non-ASCII bytes use three-digit octal escapes such as `\377`. This keeps stdout deterministic and ASCII-safe without lossy UTF-8 conversion. No match produces no output, and diagnostics are written only to stderr.
 
-A resource limit is an operation failure, not a clean no-match result. It writes a diagnostic to stderr and exits with `2+` even when no matching row was reached before exhaustion.
+A resource limit is an operation failure, not a clean no-match result. It writes a diagnostic to stderr and exits with `2` even when no matching row was reached before exhaustion.
 
 Stable exit behavior:
 
 ```text
 0  match found
 1  completed scan with no matching row
-2+ usage, I/O, format, integrity, decompression, COPY, encoding,
+2  usage, I/O, format, integrity, decompression, COPY, encoding,
    unsupported representation, unknown column, or resource error
 ```
 
@@ -278,6 +278,7 @@ Each document has one primary responsibility to reduce duplication and drift:
 - [COPY text contract](docs/COPY-TEXT.md) — row and field byte semantics;
 - [Compatibility matrix](docs/COMPATIBILITY.md) — target versus fixture-verified support;
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget and partial-output semantics;
+- [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI defaults, evidence, boundary semantics, and migration guidance;
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary;
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — final DoD-to-evidence mapping;
 - [Roadmap](ROADMAP.md) — delivered v0.1 slices, the planned v0.2 issue sequence, and later candidate scope;

@@ -15,7 +15,9 @@ use std::{
 const NO_MATCH_EXIT: u8 = 1;
 const FAILURE_EXIT: u8 = 2;
 const DEFAULT_EXTRACT_MAX_DECOMPRESSED_BYTES: u64 = 1_073_741_824;
-const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>\n  pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\n\nextract raw-entry limit:\n  --max-decompressed-bytes <N> positive maximum decompressed entry bytes\n  omitted limit defaults to 1073741824 bytes (1 GiB)\n\nfind scan limits:\n  --max-rows <N>               positive maximum complete rows evaluated\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\n  omitted find limits are unlimited";
+const DEFAULT_FIND_MAX_ROWS: u64 = 100_000;
+const DEFAULT_FIND_MAX_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+const USAGE: &str = "usage:\n  pgdumpx inspect <FILE>\n  pgdumpx list <FILE>\n  pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>\n  pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>\n\nextract raw-entry limit:\n  --max-decompressed-bytes <N> positive maximum decompressed entry bytes\n  omitted limit defaults to 1073741824 bytes (1 GiB)\n\nfind scan limits:\n  --max-rows <N>               positive maximum complete rows evaluated\n  omitted row limit defaults to 100000 complete rows\n  --max-decompressed-bytes <N> positive maximum parser-consumed COPY bytes\n  omitted byte limit defaults to 67108864 bytes (64 MiB)\n  --unlimited                  intentionally disable both total scan budgets";
 
 fn main() -> ExitCode {
     let stdout = io::stdout();
@@ -53,6 +55,14 @@ where
             let result = extract(&arguments, stdout);
             flush_stdout(stdout)?;
             result?;
+            Ok(CliOutcome::Success)
+        }
+        Command::Help => {
+            stdout
+                .write_all(USAGE.as_bytes())
+                .and_then(|()| stdout.write_all(b"\n"))
+                .map_err(|source| CliError::runtime(format!("stdout error: {source}")))?;
+            flush_stdout(stdout)?;
             Ok(CliOutcome::Success)
         }
         Command::Find(arguments) => {
@@ -273,6 +283,7 @@ enum Command {
     Inspect { file: PathBuf },
     List { file: PathBuf },
     Extract(ExtractArguments),
+    Help,
     Find(FindArguments),
 }
 
@@ -292,7 +303,16 @@ impl Command {
                 file: parse_metadata_file(arguments)?,
             }),
             "extract" => Ok(Self::Extract(ExtractArguments::parse_remaining(arguments)?)),
-            "find" => Ok(Self::Find(FindArguments::parse_remaining(arguments)?)),
+            "find" => {
+                let remaining = arguments.collect::<Vec<_>>();
+                if remaining.len() == 1 && matches!(remaining[0].to_str(), Some("--help" | "-h")) {
+                    Ok(Self::Help)
+                } else {
+                    Ok(Self::Find(FindArguments::parse_remaining(
+                        remaining.into_iter(),
+                    )?))
+                }
+            }
             _ => Err(CliError::usage(format!("unsupported command {command:?}"))),
         }
     }
@@ -394,11 +414,20 @@ impl FindArguments {
     {
         let mut max_rows = None;
         let mut max_decompressed_bytes = None;
+        let mut unlimited = false;
 
         let file = loop {
             let argument = arguments
                 .next()
                 .ok_or_else(|| CliError::usage("FILE is required"))?;
+
+            if argument.as_os_str() == OsStr::new("--unlimited") {
+                if unlimited {
+                    return Err(CliError::usage("--unlimited may be specified only once"));
+                }
+                unlimited = true;
+                continue;
+            }
 
             if argument.as_os_str() == OsStr::new("--max-rows") {
                 let value = parse_positive_limit(&mut arguments, "--max-rows")?;
@@ -448,13 +477,20 @@ impl FindArguments {
         }
 
         let (schema, table) = parse_table_selector(&table_selector)?;
-        let mut scan_limits = ScanLimits::unlimited();
-        if let Some(value) = max_rows {
-            scan_limits = scan_limits.with_max_rows(value);
+        if unlimited && (max_rows.is_some() || max_decompressed_bytes.is_some()) {
+            return Err(CliError::usage(
+                "--unlimited cannot be combined with --max-rows or --max-decompressed-bytes",
+            ));
         }
-        if let Some(value) = max_decompressed_bytes {
-            scan_limits = scan_limits.with_max_decompressed_bytes(value);
-        }
+        let scan_limits = if unlimited {
+            ScanLimits::unlimited()
+        } else {
+            ScanLimits::unlimited()
+                .with_max_rows(max_rows.unwrap_or(DEFAULT_FIND_MAX_ROWS))
+                .with_max_decompressed_bytes(
+                    max_decompressed_bytes.unwrap_or(DEFAULT_FIND_MAX_DECOMPRESSED_BYTES),
+                )
+        };
 
         Ok(Self {
             file,
@@ -539,14 +575,73 @@ impl fmt::Display for CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{write_inspect, write_list};
+    use super::{FindArguments, write_inspect, write_list};
     use pgdumpx::Archive;
     use std::{
         cell::Cell,
+        ffi::OsString,
         io::{self, Cursor, Read, Seek, SeekFrom},
         path::PathBuf,
         rc::Rc,
     };
+
+    #[test]
+    fn find_defaults_are_finite_and_each_override_preserves_the_other_default() {
+        const DEFAULT_ROWS: u64 = 100_000;
+        const DEFAULT_BYTES: u64 = 64 * 1024 * 1024;
+
+        let defaults = parse_find(&[]).unwrap();
+        assert_eq!(defaults.scan_limits.max_rows(), Some(DEFAULT_ROWS));
+        assert_eq!(
+            defaults.scan_limits.max_decompressed_bytes(),
+            Some(DEFAULT_BYTES)
+        );
+
+        let rows_only = parse_find(&["--max-rows", "5"]).unwrap();
+        assert_eq!(rows_only.scan_limits.max_rows(), Some(5));
+        assert_eq!(
+            rows_only.scan_limits.max_decompressed_bytes(),
+            Some(DEFAULT_BYTES)
+        );
+
+        let bytes_only = parse_find(&["--max-decompressed-bytes", "512"]).unwrap();
+        assert_eq!(bytes_only.scan_limits.max_rows(), Some(DEFAULT_ROWS));
+        assert_eq!(bytes_only.scan_limits.max_decompressed_bytes(), Some(512));
+
+        let both = parse_find(&["--max-rows", "7", "--max-decompressed-bytes", "1024"]).unwrap();
+        assert_eq!(both.scan_limits.max_rows(), Some(7));
+        assert_eq!(both.scan_limits.max_decompressed_bytes(), Some(1024));
+    }
+
+    #[test]
+    fn unlimited_find_is_explicit_and_conflicts_with_finite_options() {
+        let unlimited = parse_find(&["--unlimited"]).unwrap();
+        assert_eq!(unlimited.scan_limits.max_rows(), None);
+        assert_eq!(unlimited.scan_limits.max_decompressed_bytes(), None);
+
+        for options in [
+            &["--unlimited", "--max-rows", "1"][..],
+            &["--max-rows", "1", "--unlimited"][..],
+            &["--unlimited", "--max-decompressed-bytes", "1"][..],
+        ] {
+            let error = parse_find(options).unwrap_err().to_string();
+            assert!(error.contains("cannot be combined"), "error={error:?}");
+        }
+
+        let duplicate = parse_find(&["--unlimited", "--unlimited"])
+            .unwrap_err()
+            .to_string();
+        assert!(duplicate.contains("may be specified only once"));
+    }
+
+    fn parse_find(options: &[&str]) -> Result<FindArguments, super::CliError> {
+        let arguments = options
+            .iter()
+            .copied()
+            .chain(["archive.dump", "public.orders", "order_number", "value"])
+            .map(OsString::from);
+        FindArguments::parse_remaining(arguments)
+    }
 
     #[test]
     fn metadata_rendering_never_reads_or_seeks_after_archive_open() {

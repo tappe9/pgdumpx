@@ -50,11 +50,12 @@ Delivered:
 - public structural `Limits` with finite compatibility-oriented defaults for TOC entries, archive strings, dependencies, row bytes, and fields per row;
 - contextual typed-error taxonomy and `std::error::Error::source` behavior;
 - exact library `ScanLimits` accounting for complete rows and physical decompressed COPY bytes consumed by the parser;
-- `pgdumpx find` scan options:
+- `pgdumpx find` scan options and finite CLI defaults:
 
 ```text
---max-rows <N>
---max-decompressed-bytes <N>
+--max-rows <N>               default: 100000 complete rows
+--max-decompressed-bytes <N> default: 67108864 parser-consumed bytes
+--unlimited                  explicit trusted-input opt-in
 ```
 
 - bounded raw entry extraction with `EntryReadLimits`;
@@ -65,7 +66,7 @@ Delivered:
 pgdumpx inspect <FILE>
 pgdumpx list <FILE>
 pgdumpx extract [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE>
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
+pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
 - binary-safe `extract` output of the selected decompressed table-data body;
@@ -161,18 +162,18 @@ The command uses a finite 1,073,741,824-byte (1 GiB) default and allows a positi
 ### `find`
 
 ```text
-pgdumpx find [--max-rows <N>] [--max-decompressed-bytes <N>] \
+pgdumpx find [--unlimited | [--max-rows <N>] [--max-decompressed-bytes <N>]] \
   <FILE> <SCHEMA.TABLE> <COLUMN> <VALUE>
 ```
 
-Uses UTF-8 command-line arguments, resolves the column through recorded COPY metadata, and compares the supplied value bytes with logical post-unescape field bytes. Scan-budget options delegate to the same library `ScanLimits` accounting path used by Rust callers. A future byte-literal input mode requires a separate CLI design.
+Uses UTF-8 command-line arguments, resolves the column through recorded COPY metadata, and compares the supplied value bytes with logical post-unescape field bytes. The CLI applies finite defaults of 100,000 complete rows and 64 MiB of parser-consumed bytes; one finite override preserves the other default, while `--unlimited` explicitly disables both. Scan-budget options delegate to the same library `ScanLimits` accounting path used by Rust callers. A future byte-literal input mode requires a separate CLI design.
 
 Stable exit behavior:
 
 ```text
 0  match found
 1  no matching row
-2+ usage, I/O, format, integrity, decompression, COPY, encoding,
+2  usage, I/O, format, integrity, decompression, COPY, encoding,
    unsupported representation, unknown column, or resource error
 ```
 
