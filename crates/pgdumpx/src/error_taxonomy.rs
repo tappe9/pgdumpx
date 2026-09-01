@@ -39,6 +39,12 @@ pub enum ResourceLimit {
     TocEntries,
     /// Number of dependencies attached to one TOC entry.
     DependenciesPerEntry,
+    /// Retained bytes across all header and TOC archive strings.
+    MetadataStringBytes,
+    /// Dependencies retained across all TOC entries.
+    MetadataDependencies,
+    /// Variable-length names retained by derived metadata and lookup indexes.
+    MetadataIndexBytes,
     /// Number of columns in COPY statement metadata.
     CopyColumns,
     /// Physical bytes in one COPY text row.
@@ -130,11 +136,14 @@ impl PgDumpError {
             Self::InvalidUtf8 { .. } => ErrorCategory::Encoding,
             Self::ArchiveStringLimitExceeded { .. }
             | Self::ArchiveStringAllocationFailed { .. }
+            | Self::MetadataStringByteLimitExceeded { .. }
             | Self::TocEntryLimitExceeded { .. }
             | Self::TocAllocationFailed { .. }
             | Self::DependencyLimitExceeded { .. }
             | Self::DependencyAllocationFailed { .. }
+            | Self::MetadataDependencyLimitExceeded { .. }
             | Self::ArchiveIndexAllocationFailed { .. }
+            | Self::MetadataIndexByteLimitExceeded { .. }
             | Self::CopyColumnCountLimitExceeded { .. }
             | Self::CopyColumnMetadataAllocationFailed { .. }
             | Self::EntryBufferAllocationFailed { .. }
@@ -174,6 +183,7 @@ impl PgDumpError {
             | Self::ArchiveOffsetOutOfRange { offset }
             | Self::ArchiveStringLimitExceeded { offset, .. }
             | Self::ArchiveStringAllocationFailed { offset, .. }
+            | Self::MetadataStringByteLimitExceeded { offset, .. }
             | Self::MissingRequiredArchiveString { offset, .. }
             | Self::InvalidTocEntryCount { offset, .. }
             | Self::TocEntryLimitExceeded { offset, .. }
@@ -183,6 +193,7 @@ impl PgDumpError {
             | Self::InvalidDependencyEncoding { offset, .. }
             | Self::DependencyLimitExceeded { offset, .. }
             | Self::DependencyAllocationFailed { offset, .. }
+            | Self::MetadataDependencyLimitExceeded { offset, .. }
             | Self::InvalidDataOffset { offset, .. }
             | Self::UnexpectedDataBlockType { offset, .. }
             | Self::DataBlockDumpIdMismatch { offset, .. }
@@ -215,6 +226,7 @@ impl PgDumpError {
             Self::CopyIo { consumed, .. } => Some(*consumed),
             Self::DuplicateDumpId { .. }
             | Self::ArchiveIndexAllocationFailed { .. }
+            | Self::MetadataIndexByteLimitExceeded { .. }
             | Self::DuplicateTableIdentity { .. }
             | Self::AmbiguousTableDataRelationship { .. }
             | Self::ConflictingTableDataRelationship { .. }
@@ -251,7 +263,8 @@ impl PgDumpError {
             Self::InvalidSection { entry_id, .. }
             | Self::InvalidDependencyEncoding { entry_id, .. }
             | Self::DependencyLimitExceeded { entry_id, .. }
-            | Self::DependencyAllocationFailed { entry_id, .. } => *entry_id,
+            | Self::DependencyAllocationFailed { entry_id, .. }
+            | Self::MetadataDependencyLimitExceeded { entry_id, .. } => *entry_id,
             Self::DuplicateDumpId { dump_id }
             | Self::CopyColumnMetadataUnavailable { dump_id }
             | Self::MalformedCopyStatement { dump_id, .. }
@@ -293,12 +306,14 @@ impl PgDumpError {
             | Self::ArchiveOffsetOutOfRange { .. }
             | Self::ArchiveStringLimitExceeded { .. }
             | Self::ArchiveStringAllocationFailed { .. }
+            | Self::MetadataStringByteLimitExceeded { .. }
             | Self::MissingRequiredArchiveString { .. }
             | Self::InvalidTocEntryCount { .. }
             | Self::TocEntryLimitExceeded { .. }
             | Self::TocAllocationFailed { .. }
             | Self::InvalidDumpId { .. }
             | Self::ArchiveIndexAllocationFailed { .. }
+            | Self::MetadataIndexByteLimitExceeded { .. }
             | Self::TableNotFound
             | Self::CopyIo { .. }
             | Self::MalformedCopyEscape { .. }
@@ -373,6 +388,27 @@ impl PgDumpError {
                 ResourceLimit::DependenciesPerEntry,
                 *limit,
                 *count,
+            )),
+            Self::MetadataStringByteLimitExceeded {
+                limit, attempted, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::MetadataStringBytes,
+                *limit,
+                *attempted,
+            )),
+            Self::MetadataDependencyLimitExceeded {
+                limit, attempted, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::MetadataDependencies,
+                *limit,
+                *attempted,
+            )),
+            Self::MetadataIndexByteLimitExceeded {
+                limit, attempted, ..
+            } => Some(LimitContext::new(
+                ResourceLimit::MetadataIndexBytes,
+                *limit,
+                *attempted,
             )),
             Self::CopyColumnCountLimitExceeded { limit, actual, .. } => Some(LimitContext::new(
                 ResourceLimit::CopyColumns,

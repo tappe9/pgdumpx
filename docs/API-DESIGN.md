@@ -52,11 +52,14 @@ Configuration fields remain private so the type can evolve without turning struc
 Implemented shape:
 
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     max_toc_entries: usize,
     max_string_bytes: usize,
     max_dependencies_per_entry: usize,
+    max_metadata_string_bytes: usize,
+    max_metadata_dependencies: usize,
+    max_metadata_index_bytes: usize,
     max_row_bytes: usize,
     max_fields_per_row: usize,
 }
@@ -66,14 +69,19 @@ impl Limits {
     pub fn with_max_toc_entries(self, value: usize) -> Self;
     pub fn with_max_string_bytes(self, value: usize) -> Self;
     pub fn with_max_dependencies_per_entry(self, value: usize) -> Self;
+    pub fn with_max_metadata_string_bytes(self, value: usize) -> Self;
+    pub fn with_max_metadata_dependencies(self, value: usize) -> Self;
+    pub fn with_max_metadata_index_bytes(self, value: usize) -> Self;
     pub fn with_max_row_bytes(self, value: usize) -> Self;
     pub fn with_max_fields_per_row(self, value: usize) -> Self;
 }
 ```
 
-`Default` delegates to finite compatibility-oriented limits. Applications processing hostile input can select stricter values. An unbounded structural mode is not the default.
+`Default` delegates to finite compatibility-oriented limits. In addition to the existing per-item bounds, the defaults permit at most 256 MiB of retained header/TOC string bytes, 1,000,000 retained dependencies across all TOC entries, and 64 MiB of variable-length names duplicated into derived metadata/index structures. The index-byte budget covers table schema/name lookup keys and both the ordered and lookup copies of COPY column names. Fixed-size map entries remain bounded by the TOC and field-count limits.
 
-These limits protect individual allocations and metadata cardinalities. They do not by themselves bound the total CPU/decompression work of scanning many otherwise-small rows.
+Per-item validation occurs first. An individual string, one entry's dependency list, or one COPY column layout that violates its existing bound therefore retains the existing typed error. Values that pass those checks are charged incrementally to the relevant aggregate counter before retained allocation or growth where possible. All aggregate counters use checked arithmetic, accept a value exactly equal to the configured limit, and reject the first value above it with typed limit, attempted usage, and archive context.
+
+These limits bound metadata retained while opening an archive and the variable-length names materially duplicated by its lookup structures. They do not by themselves bound entry payload, decompression, COPY row, or operation scan work; those remain governed by row structural limits, `ScanLimits`, and `EntryReadLimits`.
 
 ## 4. Row-scan work limits
 

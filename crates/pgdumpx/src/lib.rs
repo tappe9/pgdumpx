@@ -130,6 +130,7 @@ mod extraction_plan;
 mod file;
 mod io;
 mod limits;
+mod metadata_budget;
 mod metadata_filter;
 mod model;
 mod raw_entry;
@@ -144,6 +145,8 @@ mod copy_tests;
 mod error_tests;
 #[cfg(test)]
 mod extraction_plan_tests;
+#[cfg(test)]
+mod metadata_budget_tests;
 #[cfg(test)]
 mod metadata_open_tests;
 #[cfg(test)]

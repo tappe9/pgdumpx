@@ -1,9 +1,13 @@
 use crate::{
     Limits,
     error::PgDumpError,
+    metadata_budget::MetadataBudget,
     model::{ArchiveString, DumpId},
 };
-use std::{collections::HashMap, str::Utf8Error};
+use std::{
+    collections::{HashMap, HashSet},
+    str::Utf8Error,
+};
 
 /// The logical representation recorded for one table-data entry.
 ///
@@ -154,10 +158,21 @@ pub(crate) fn parse_table_data_metadata(
     parse_table_data_metadata_with_limits(dump_id, copy_statement, Limits::default())
 }
 
+#[cfg(test)]
 pub(crate) fn parse_table_data_metadata_with_limits(
     dump_id: DumpId,
     copy_statement: Option<&[u8]>,
     limits: Limits,
+) -> Result<TableDataMetadata, PgDumpError> {
+    let mut budget = MetadataBudget::new(limits)?;
+    parse_table_data_metadata_with_limits_and_budget(dump_id, copy_statement, limits, &mut budget)
+}
+
+pub(crate) fn parse_table_data_metadata_with_limits_and_budget(
+    dump_id: DumpId,
+    copy_statement: Option<&[u8]>,
+    limits: Limits,
+    budget: &mut MetadataBudget,
 ) -> Result<TableDataMetadata, PgDumpError> {
     let Some(statement) = copy_statement else {
         return Ok(TableDataMetadata::Unsupported(
@@ -178,7 +193,7 @@ pub(crate) fn parse_table_data_metadata_with_limits(
         };
 
     match parsed {
-        ParsedStatement::Copy(columns) => match CopyColumnLayout::new(columns, dump_id)? {
+        ParsedStatement::Copy(columns) => match CopyColumnLayout::new(columns, dump_id, budget)? {
             Ok(layout) => Ok(TableDataMetadata::Copy(layout)),
             Err(reason) => Ok(TableDataMetadata::Malformed { reason }),
         },
@@ -192,8 +207,32 @@ impl CopyColumnLayout {
     fn new(
         columns: Vec<Column>,
         dump_id: DumpId,
+        budget: &mut MetadataBudget,
     ) -> Result<Result<Self, &'static str>, PgDumpError> {
         let requested = to_u64(columns.len())?;
+        let mut unique_names = HashSet::new();
+        unique_names.try_reserve(columns.len()).map_err(|_| {
+            PgDumpError::CopyColumnMetadataAllocationFailed {
+                dump_id: dump_id.as_i32(),
+                requested,
+            }
+        })?;
+
+        let mut logical_name_bytes = 0_usize;
+        for column in &columns {
+            if !unique_names.insert(column.name_bytes()) {
+                return Ok(Err("duplicate COPY column name"));
+            }
+            logical_name_bytes = logical_name_bytes
+                .checked_add(column.name_bytes().len())
+                .ok_or(PgDumpError::ArithmeticOverflow { offset: 0 })?;
+        }
+
+        let retained_name_bytes = logical_name_bytes
+            .checked_mul(2)
+            .ok_or(PgDumpError::ArithmeticOverflow { offset: 0 })?;
+        budget.charge_index_bytes(retained_name_bytes, "COPY column metadata and lookup")?;
+
         let mut by_name = HashMap::new();
         by_name.try_reserve(columns.len()).map_err(|_| {
             PgDumpError::CopyColumnMetadataAllocationFailed {
@@ -204,9 +243,7 @@ impl CopyColumnLayout {
 
         for (index, column) in columns.iter().enumerate() {
             let key = clone_bytes(column.name_bytes(), dump_id)?;
-            if by_name.insert(key, index).is_some() {
-                return Ok(Err("duplicate COPY column name"));
-            }
+            by_name.insert(key, index);
         }
 
         Ok(Ok(Self { columns, by_name }))
