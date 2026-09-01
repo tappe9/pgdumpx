@@ -117,6 +117,18 @@ def verify_manifest_metadata(errors: list[str]) -> None:
             )
 
     cli = load_toml(ROOT / "crates" / "pgdumpx-cli" / "Cargo.toml")
+    require_equal(
+        errors,
+        "pgdumpx-cli.package.autobins",
+        cli.get("package", {}).get("autobins"),
+        False,
+    )
+    require_equal(
+        errors,
+        "pgdumpx-cli binary targets",
+        cli.get("bin"),
+        [{"name": "pgdumpx", "path": "src/entrypoint.rs", "doc": False}],
+    )
     dependency = cli.get("dependencies", {}).get("pgdumpx", {})
     require_equal(errors, "pgdumpx-cli dependency path", dependency.get("path"), "../pgdumpx")
     require_equal(errors, "pgdumpx-cli dependency version", dependency.get("version"), VERSION)
