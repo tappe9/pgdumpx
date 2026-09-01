@@ -1,4 +1,6 @@
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 use pgdumpx::{Archive, EntryReadLimits};
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 use std::{
     io::{Cursor, Read},
     path::PathBuf,
@@ -16,6 +18,7 @@ fn zstd_raw_payload_below_limit_streams_completely() {
     assert_payload_below_limit("pg18-zstd-copy-basic.dump");
 }
 
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 fn assert_payload_below_limit(fixture_name: &str) {
     let bytes = fixture(fixture_name);
 
@@ -49,6 +52,7 @@ fn assert_payload_below_limit(fixture_name: &str) {
     assert_eq!(actual, expected);
 }
 
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/archives")
