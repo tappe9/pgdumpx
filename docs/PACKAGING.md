@@ -9,9 +9,9 @@ This document records the package, dependency, and staged-verification boundary 
 The workspace publishes two crates in dependency order:
 
 - `pgdumpx 0.2.0` — the reusable library;
-- `pgdumpx-cli 0.2.0` — the `pgdumpx` command-line binary.
+- `pgdumpx-cli 0.2.0` — the package that installs one executable named `pgdumpx`.
 
-Both packages inherit edition 2024, Rust 1.85.0, the `MIT OR Apache-2.0` license expression, repository, homepage, and root README metadata. Each package declares crates.io discovery metadata and is restricted to the `crates-io` registry. The CLI dependency is:
+Both packages inherit edition 2024, Rust 1.85.0, the `MIT OR Apache-2.0` license expression, repository, homepage, and root README metadata. Each package declares crates.io discovery metadata and is restricted to the `crates-io` registry. The CLI disables automatic binary discovery so `src/main.rs` remains an internal implementation module rather than a second published executable. Its library dependency is:
 
 ```toml
 pgdumpx = { path = "../pgdumpx", version = "0.2.0", default-features = false }
@@ -56,7 +56,7 @@ python3 scripts/verify-release-packaging.py
 
 The audit performs all of the following without uploading a package:
 
-1. validates version, package metadata, the CLI path-plus-version dependency, licenses, and workspace lint inheritance;
+1. validates version, package metadata, the single CLI binary target, the CLI path-plus-version dependency, licenses, and workspace lint inheritance;
 2. audits the locked default runtime dependency closure and accepted license expressions;
 3. checks package file lists for required and forbidden content;
 4. exercises default, no-optional, LZ4-only, and Zstandard-only library builds;

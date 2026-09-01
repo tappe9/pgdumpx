@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -140,6 +142,65 @@ def verify_manifest_metadata(errors: list[str]) -> None:
     )
 
 
+def verify_cargo_binary_targets(errors: list[str]) -> None:
+    result = subprocess.run(
+        [
+            "cargo",
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--locked",
+        ],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        errors.append(
+            "cargo metadata failed while verifying CLI targets: "
+            + result.stderr.strip()
+        )
+        return
+
+    metadata = json.loads(result.stdout)
+    packages = [
+        package
+        for package in metadata.get("packages", [])
+        if package.get("name") == "pgdumpx-cli"
+    ]
+    if len(packages) != 1:
+        errors.append(
+            f"cargo metadata returned {len(packages)} pgdumpx-cli packages, expected 1"
+        )
+        return
+
+    targets = [
+        {
+            "name": target.get("name"),
+            "src_path": Path(target.get("src_path", ""))
+            .resolve()
+            .relative_to(ROOT)
+            .as_posix(),
+        }
+        for target in packages[0].get("targets", [])
+        if "bin" in target.get("kind", [])
+    ]
+    require_equal(
+        errors,
+        "pgdumpx-cli Cargo binary targets",
+        targets,
+        [
+            {
+                "name": "pgdumpx",
+                "src_path": "crates/pgdumpx-cli/src/entrypoint.rs",
+            }
+        ],
+    )
+
+
 def verify_lockfile(errors: list[str]) -> None:
     lockfile = load_toml(ROOT / "Cargo.lock")
     packages = lockfile.get("package", [])
@@ -195,6 +256,7 @@ def verify_release_documents(errors: list[str]) -> None:
             "cargo package --workspace --locked",
             "cargo publish --dry-run -p pgdumpx --locked",
             "pgdumpx-cli",
+            "one executable named `pgdumpx`",
         ],
     )
     require_snippets(
@@ -227,10 +289,11 @@ def main() -> int:
     errors: list[str] = []
     try:
         verify_manifest_metadata(errors)
+        verify_cargo_binary_targets(errors)
         verify_lockfile(errors)
         verify_release_documents(errors)
         verify_packaging_script(errors)
-    except (OSError, tomllib.TOMLDecodeError) as error:
+    except (json.JSONDecodeError, OSError, subprocess.SubprocessError, tomllib.TOMLDecodeError) as error:
         errors.append(str(error))
 
     if errors:

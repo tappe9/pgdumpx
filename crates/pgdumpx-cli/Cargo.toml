@@ -1,6 +1,7 @@
 [package]
 name = "pgdumpx-cli"
 description = "Command-line inspection, extraction, and row scanning for PostgreSQL custom-format dumps"
+autobins = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
