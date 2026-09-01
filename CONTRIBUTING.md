@@ -128,6 +128,23 @@ Verify the declared MSRV separately:
 cargo +1.85.0 check --workspace --all-targets --all-features
 ```
 
+### Dependency advisory changes
+
+Dependency or advisory-policy changes must also run the repository policy tests and the pinned advisory command:
+
+```bash
+python3 scripts/test-advisory-policy.py
+python3 scripts/verify-advisory-policy.py
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --locked check advisories
+```
+
+The dedicated workflow runs for Cargo manifest, `Cargo.lock`, policy, verifier, and workflow changes. It also runs daily so a newly published RustSec advisory can fail the current lockfile without a source-code change.
+
+Prefer removing or upgrading an affected dependency. An exception is temporary and requires both an object entry in `deny.toml` with a non-empty `reason` and one matching `[[exception]]` record in `advisory-exceptions.toml`. The record must include the advisory ID or yanked crate, the same reason, affected scope, removal condition, and either an ISO review date or a tracking Issue. Bare advisory IDs are rejected. Remove both records as soon as the removal condition is met.
+
+When updating cargo-deny, change the exact version in the workflow, contract test, and documentation together; install with `--locked`; run the manual workflow; and review current upstream configuration-schema changes before merging.
+
 Parser changes should additionally run the relevant fixture, differential, fuzz/regression, and benchmark checks described by the repository's current CI and evidence documentation.
 
 Documentation-only changes should verify at least:
