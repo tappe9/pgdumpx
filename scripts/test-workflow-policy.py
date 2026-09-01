@@ -13,13 +13,16 @@ WORKFLOW_DIR = ROOT / ".github" / "workflows"
 ACTION_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 USES_RE = re.compile(r"^\s*uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE)
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
+PERMISSION_RE = re.compile(
+    r"^([A-Za-z0-9_-]+):\s*([A-Za-z-]+)\s*(?:#.*)?$"
+)
 
 
 def _top_level_block(text: str, key: str) -> str | None:
     lines = text.splitlines()
     marker = f"{key}:"
     for index, line in enumerate(lines):
-        if line.rstrip() != marker or line[: len(line) - len(line.lstrip())]:
+        if line != line.lstrip() or line.rstrip() != marker:
             continue
         block = [line]
         for following in lines[index + 1 :]:
@@ -28,6 +31,19 @@ def _top_level_block(text: str, key: str) -> str | None:
             block.append(following)
         return "\n".join(block)
     return None
+
+
+def _permission_entries(block: str) -> list[tuple[str, str]] | None:
+    entries: list[tuple[str, str]] = []
+    for line in block.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = PERMISSION_RE.fullmatch(stripped)
+        if match is None:
+            return None
+        entries.append((match.group(1), match.group(2)))
+    return entries
 
 
 def _job_blocks(text: str) -> list[tuple[str, str]]:
@@ -79,10 +95,10 @@ def validate_workflow(path: Path, text: str) -> list[str]:
     errors: list[str] = []
 
     permissions = _top_level_block(text, "permissions")
-    if permissions is None or not re.search(
-        r"^  contents:\s*read\s*(?:#.*)?$", permissions, re.MULTILINE
-    ):
-        errors.append(f"{path}: top-level permissions must include contents: read")
+    if permissions is None or _permission_entries(permissions) != [("contents", "read")]:
+        errors.append(
+            f"{path}: top-level permissions must contain only contents: read"
+        )
 
     concurrency = _top_level_block(text, "concurrency")
     if concurrency is None:
