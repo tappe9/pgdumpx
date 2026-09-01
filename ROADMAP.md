@@ -1,8 +1,8 @@
 # pgdumpx Roadmap
 
-Status: **v0.1 implementation and release-readiness complete; v0.2 planned, with no v0.2 production code merged yet; publication remains separate work.**
+Status: **v0.1 foundation complete; v0.2 implementation complete; the 0.2.0 publication process is tracked separately from source delivery.**
 
-This roadmap records the delivered v0.1 vertical slices, the active v0.2 implementation plan, and possible later directions. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final v0.1 evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, GitHub Tracking Issue #30 records the completed v0.1 implementation sequence, and [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56) owns the v0.2 delivery sequence.
+This roadmap records completed v0.1/v0.2 work and explicitly deferred candidates. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final v0.1 evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, GitHub Tracking Issue #30 records the v0.1 sequence, and [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56) records the completed v0.2 sequence.
 
 ## v0.1 — Bounded row scanning for Custom Format archives
 
@@ -179,83 +179,33 @@ Stable exit behavior:
 
 No-match remains distinct from failure.
 
-## v0.2 — Extraction ergonomics and multi-table workflows — planned
+## v0.2 — Completed
 
-No v0.2 production behavior has merged into `main` yet. The implementation plan is tracked in [Issue #56](https://github.com/tappe9/pgdumpx/issues/56) and is deliberately built on the existing v0.1 `Read + Seek`, validated-entry, decompression, row-parser, and raw-output paths rather than introducing parallel or indexed alternatives prematurely.
+The v0.2 implementation builds on the v0.1 `Read + Seek`, validated-entry, decompression, row-parser, and raw-output paths. It preserves the single mutable seekable-source invariant and does not add parallel or indexed alternatives.
 
-### Sprint 1 — File and reusable selection foundations
+### Delivered
 
-- [#57 — file-oriented archive convenience APIs](https://github.com/tappe9/pgdumpx/issues/57): add path/file ergonomics while delegating parsing to the existing generic archive-open path.
-- [#58 — owned byte-oriented table selectors](https://github.com/tappe9/pgdumpx/issues/58): introduce archive-independent exact `(schema, table)` selection values without assuming UTF-8.
-- [#59 — reusable extraction plans](https://github.com/tappe9/pgdumpx/issues/59): compose owned selectors with extraction policy and metadata-only preflight. **Depends on #58.**
+- #57–#63 ([tracking issue #56](https://github.com/tappe9/pgdumpx/issues/56)) delivered file-oriented archive opening, owned exact-byte `TableSelector` values, reusable `ExtractionPlan` preflight, bounded deterministic sequential multi-table execution, metadata-only `MetadataFilter`, exact named-column equality helpers, and benchmark-driven evaluation through production paths.
+- #70–#78 ([first follow-up](https://github.com/tappe9/pgdumpx/issues/70)) delivered correctness, security, and maintenance follow-ups: destination flush-error propagation, aggregate metadata budgets, terminal COPY reader failures, row field-count validation, linear plan duplicate detection, finite CLI scan defaults, warning-clean feature coverage, scheduled fuzzing, and dependency advisory policy.
+- [#89](https://github.com/tappe9/pgdumpx/issues/89) hardened GitHub Actions with pinned dependencies, bounded execution, least-privilege permissions, and cancellation policy.
+- [#92](https://github.com/tappe9/pgdumpx/issues/92) prepared reproducible `pgdumpx 0.2.0` and `pgdumpx-cli 0.2.0` package metadata, changelog, release notes, packaging verification, and staged release instructions.
 
-Preferred implementation order for the first sprint is **#57 → #58 → #59**. Only the selector-to-plan edge is a hard dependency; #57 remains an independent convenience foundation.
+The `0.2.0` source and package contract is complete. Registry publication, the annotated tag, and the GitHub Release follow the independently verified process in `docs/RELEASING.md`; this roadmap does not infer their live state.
 
-### Sprint 2 — Sequential multi-table extraction
+## v0.3+ — Deferred candidates
 
-- [#60 — bounded sequential multi-table plan execution](https://github.com/tappe9/pgdumpx/issues/60): execute preflighted plans deterministically on one mutable seekable source, reusing v0.1 validation, decompression, and `EntryReadLimits`. **Depends on #59.**
-
-This is the first multi-table production slice. It remains sequential and does not introduce shared-source concurrent seeking, source cloning, or independently reopened handles.
-
-### Sprint 3 — Selection and query ergonomics
-
-- [#61 — reusable metadata filtering](https://github.com/tappe9/pgdumpx/issues/61): filter TOC metadata by exact byte-oriented schema/name plus object type, and feed matched normal tables into the same selector/plan model. **Depends on #58.**
-- [#62 — reusable byte-equality row matcher helpers](https://github.com/tappe9/pgdumpx/issues/62): factor the common exact-column-equality search pattern over existing `find_first` semantics without creating a SQL/value system.
-
-The generic predicate API remains the row-query foundation; the equality helper is narrowly justified by existing `pgdumpx find` usage.
-
-### Sprint 4 — Benchmark-driven tuning
-
-After the multi-table production path exists, use the reproducible benchmark/peak-RSS harness to evaluate buffer-size or orchestration tuning. Production defaults change only when recorded evidence justifies the tradeoff; ordinary CI continues to compile/smoke benchmark targets rather than run full performance campaigns.
-
-### Explicitly deferred from active v0.2 scope
-
-The current v0.2 issues intentionally do **not** include:
+The following are candidates, not active commitments:
 
 - parallel extraction, concurrent seeking, or source-factory/reopen designs;
 - persistent/sidecar row indexes or decompression restart-point schemes;
-- data-only archive identity synthesis or support changes for standalone `TABLE DATA` without a normal `TABLE` identity;
-- SQL `WHERE`, a general predicate/query DSL, SQL coercion/collation, or a broad typed-value system;
-- CSV/JSONL/Arrow/Polars/Parquet integrations;
-- Directory/Tar format expansion;
-- publish/tag/release work unless requested separately.
+- data-only archive identity synthesis for standalone `TABLE DATA`;
+- SQL `WHERE`, a predicate DSL, SQL coercion/collation, or a broad typed-value system;
+- CSV, JSON Lines, Arrow, Polars, or Parquet integrations;
+- Directory/Tar archive formats;
+- Python or other language bindings;
+- archive versions older than 1.14 or newly discovered row representations.
 
-These can be reconsidered only as later roadmap work with independent requirements and evidence.
-
-## v0.3 — Data ecosystem integrations
-
-Candidate companion crates or optional features:
-
-- CSV output;
-- JSON Lines output;
-- Apache Arrow integration;
-- Polars integration;
-- Parquet export.
-
-These integrations consume the core row stream and must not move DataFrame dependencies into the mandatory parser core.
-
-## v0.4 — Optional format expansion
-
-Only if demonstrated demand exists, evaluate PostgreSQL Directory Format (`pg_dump -Fd`) or other archive formats behind the same conceptual archive/entry API where semantics genuinely align.
-
-Custom Format remains the primary specialization; broad format coverage is not a success criterion by itself.
-
-## v0.5 — Language bindings
-
-Candidate scope:
-
-- PyO3-based Python package;
-- Python iteration over archive metadata and table rows;
-- first-match queries using Python callables or narrowly scoped filters;
-- wheels for common platforms;
-- optional Arrow handoff for analytical workloads.
-
-## v0.6 — Broader archive compatibility
-
-Candidate scope only if real-world demand exists:
-
-- archive versions older than 1.14;
-- additional COPY/data representations discovered in real archives.
+Any candidate needs independent requirements, compatibility/resource analysis, and evidence before it becomes scheduled work.
 
 ## v1.0 — Stable read API
 

@@ -4,7 +4,9 @@ pgdumpx parses archive files that may be attacker controlled. Parser safety and 
 
 ## Supported versions
 
-The v0.1 implementation and release-readiness audit are complete, but pgdumpx has no supported published release yet. This section will be updated when releases begin.
+Security fixes target the latest published 0.2.x release, when one exists, and the current `main` branch. A published release is the stable package source for users; `main` may contain unreleased changes and should be identified by exact commit when reporting or testing an issue.
+
+If no package has been published yet, use the current source tree and report the exact commit. Source preparation, a Cargo version, or a changelog entry does not by itself prove that a version is available from crates.io. Check the registry and repository release state independently.
 
 ## Reporting a vulnerability
 

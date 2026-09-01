@@ -19,7 +19,7 @@ REQUIRED_SNIPPETS = {
         "`TableSelector`",
         "`ExtractionPlan`",
         "`MetadataFilter`",
-        "`find_first_equal_by_name_with_limits`",
+        "`find_first_equal_with_limits`",
     ],
     "README.ja.md": [
         "現在のソースバージョン: `0.2.0`",
@@ -31,7 +31,7 @@ REQUIRED_SNIPPETS = {
         "`TableSelector`",
         "`ExtractionPlan`",
         "`MetadataFilter`",
-        "`find_first_equal_by_name_with_limits`",
+        "`find_first_equal_with_limits`",
     ],
     "ROADMAP.md": [
         "## v0.2 — Completed",
@@ -93,7 +93,7 @@ ALIGNED_README_IDENTIFIERS = [
     "TableSelector",
     "ExtractionPlan",
     "MetadataFilter",
-    "find_first_equal_by_name_with_limits",
+    "find_first_equal_with_limits",
     "100,000",
     "64 MiB",
     "Binary COPY",

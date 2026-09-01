@@ -2,7 +2,7 @@
 
 **PostgreSQL Custom Formatをrestoreせず、byte-orientedなrowとして安全にscanするRustライブラリ / CLI。**
 
-> ステータス: v0.1の実装とrelease-readiness作業は完了しています。v0.2は[Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56)で計画済みですが、v0.2のproduction codeはまだ`main`へmergeされていません。crate / CLIの公開releaseもまだ行っていません。
+> 現在のソースバージョン: `0.2.0`。v0.1のfoundationとv0.2の機能は実装済みです。registry commandを使うには、対象package versionがcrates.ioに存在する必要があります。ソースからのinstallはregistry公開状態に依存しません。
 
 pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベースへrestoreせずに検査するread-onlyのRustライブラリ / CLIです。
 
@@ -16,9 +16,10 @@ pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベ�
 
 ## 現在の開発状況
 
-- **`main`で実装済み:** metadata inspection、4種類のcompression backend、bounded raw extraction、COPY row parsing、first-match search、各種limits、fuzz / benchmark / CI evidence、rustdoc、packaging / release-readiness verificationを含むv0.1全体。
-- **次に実装するv0.2:** file-oriented convenience API ([#57](https://github.com/tappe9/pgdumpx/issues/57))、owned byte-oriented table selector ([#58](https://github.com/tappe9/pgdumpx/issues/58))、reusable extraction plan ([#59](https://github.com/tappe9/pgdumpx/issues/59))をfoundationとし、sequential multi-table executionとselection helperを[#60](https://github.com/tappe9/pgdumpx/issues/60)〜[#62](https://github.com/tappe9/pgdumpx/issues/62)で追加する計画です。
-- **activeなv0.2実装範囲から明示的に除外:** parallel extraction、sidecar index / restart-point scheme、data-only archive identity support、v0.3以降のdata ecosystem integration。
+- **v0.1 foundation完了:** metadata inspection、4種類のcompression backend、bounded raw extraction、COPY row parsing、first-match search、各種limits、fuzz / benchmark / CI evidence、rustdoc、packaging verification。
+- **v0.2完了:** file-oriented opening、owned byte-oriented selector、reusable extraction plan、deterministicなsequential multi-table extraction、metadata filtering、exact named-column equality helperを実装済みです。
+- **correctness / maintenance follow-up完了:** destination flush failure、aggregate metadata budget、terminal row-reader error、field-count validation、linear duplicate detection、finite CLI scan default、feature matrix test、scheduled fuzz、advisory policy、workflow hardeningを現在のsourceに含みます。
+- **v0.3以降のcandidateはdeferred:** parallel extraction、sidecar index / restart-point scheme、data-only archive identity support、data ecosystem integrationはactive commitmentではありません。
 
 実装順と依存関係は[ROADMAP.md](ROADMAP.md)を参照してください。
 
@@ -43,7 +44,7 @@ flowchart TD
     J --> K["sequential predicate scan<br/>first matchでearly stop"]
 ```
 
-v0.1では次を重視します。
+実装では次を重視します。
 
 - PostgreSQL Custom Format (`-Fc`) の**read-only parser**
 - 実行時にPostgreSQL server、`libpq`、`pg_restore`を必要としない構成
@@ -71,15 +72,15 @@ PostgreSQL dumpをrestore専用ファイルではなく、offline data sourceと
 - 選択したrow streamをCSV、JSON Lines、Arrow、Parquet等へ変換する
 - Rust coreを共通基盤としてCLIや将来のPython bindingを構築する
 
-## v0.1の対象
+## 対応範囲
 
-v0.1はPostgreSQL Custom Formatだけを対象にします。
+pgdumpxはPostgreSQL Custom Formatだけを対象にします。
 
 ```bash
 pg_dump -Fc mydb > backup.dump
 ```
 
-実装済みのv0.1互換範囲はArchive Format Version **1.14〜1.16**と、次のcompressionです。
+実装済みの互換範囲はArchive Format Version **1.14〜1.16**と、次のcompressionです。
 
 - none
 - gzip
@@ -88,7 +89,7 @@ pg_dump -Fc mydb > backup.dump
 
 older archive versionについて、すべてのbackendのfixtureが存在するとは限らないため、fixture-backed verificationは意図的により狭く記述しています。version / compressionごとの正確なevidence matrixは[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)を参照してください。そこに記載するclaimはofficial PostgreSQL-generated fixtureとproduction-path differential checkで裏付けた範囲に限定します。
 
-row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQL `COPY` text形式のtable dataです。次はv0.1 row parserの対象外です。
+row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQL `COPY` text形式のtable dataです。次はrow parserの対象外です。
 
 - `--inserts`
 - `--column-inserts`
@@ -97,50 +98,77 @@ row-aware APIが対象にするのは、通常のpg_dumpが生成するPostgreSQ
 
 unsupported representationはCOPY textとして推測せず、row APIからtyped errorで失敗させます。archive entry自体が読める場合はraw extractionを利用できる可能性があります。
 
+## v0.2で追加したlibrary機能
+
+- `Archive::open_path` / `Archive::open_path_with_limits`は、同じgeneric `Read + Seek` parserへ委譲するfile-oriented openingです。
+- `TableSelector`はschema / table nameのexact bytesを所有し、複数archiveで再利用できます。
+- `ExtractionPlan`はordered selectorと`EntryReadLimits`を保持します。全targetのmetadata-only preflightをdestination作成前に完了し、その後deterministicなselector orderでbounded raw extractionをsequentialに実行します。
+- multi-table executionは1つのmutable seekable sourceを維持します。2つ目のhandleを開いたり、concurrent extractionを保証したりしません。
+- 後続targetが失敗しても、先に完了したtargetは結果へ残ります。失敗したdestinationにはpartial bytesが存在し得て、destinationの`flush` failureも成功ではなくoutput errorとして返します。
+- `MetadataFilter`はpayloadを読まず、parse済みTOC metadataをexact schema / object type / nameでfilterします。namespace absentとpresent empty namespaceは別状態です。
+- `TableRowReader`は`find_first_equal` / `find_first_equal_with_limits`を提供します。どちらもcolumnを1回resolveし、logical COPY bytesをexact比較します。SQL NULL、empty bytes、literal `b"\\N"` bytesは区別されます。
+
+すべてのrow searchはsequential scanのままです。helperは再利用可能なselection policyを追加しますが、row-level indexは追加しません。
+
+## インストール
+
+### crates.io から
+
+crates.ioでpackage versionを確認してからinstallまたはdependency追加を行ってください。次のregistry commandには`0.2.0`がcrates.ioに存在することが必要です。
+
+```bash
+cargo info pgdumpx@0.2.0
+cargo info pgdumpx-cli@0.2.0
+cargo install pgdumpx-cli --version 0.2.0 --locked
+```
+
+library consumerは次を追加できます。
+
+```toml
+[dependencies]
+pgdumpx = "0.2.0"
+```
+
+### ソースから
+
+この手順はcrates.ioの公開状態に依存しません。
+
+```bash
+git clone https://github.com/tappe9/pgdumpx.git
+cd pgdumpx
+cargo install --path crates/pgdumpx-cli --locked
+pgdumpx --help
+```
+
 ## Rust API
 
-v0.1 libraryではmetadata inspection、selected-entry streaming、COPY row access、first-match search、structural / scan / raw-extraction limits、contextual typed error、4種類の対応compression backendを実装済みです。
+libraryではmetadata inspection、selected-entry streaming、COPY row access、reusable extraction policy、exact equality search、structural / scan / raw-extraction limits、contextual typed error、4種類の対応compression backendを実装済みです。
 
 ```rust
-use pgdumpx::{Archive, FieldRef};
+use pgdumpx::{Archive, ColumnEqualityResult, FieldRef, ScanLimits};
 
-let file = std::fs::File::open("backup.dump")?;
-let mut archive = Archive::open(file)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut archive = Archive::open_path("backup.dump")?;
+    let mut rows = archive.table_rows(b"public", b"orders")?;
+    let scan_limits = ScanLimits::unlimited()
+        .with_max_rows(100_000)
+        .with_max_decompressed_bytes(64 * 1024 * 1024);
 
-println!("archive version: {:?}", archive.header().version());
+    let result = rows.find_first_equal_with_limits(
+        scan_limits,
+        b"order_number",
+        FieldRef::Bytes(b"123456"),
+    )?;
 
-for entry in archive.entries() {
-    println!("{entry:?}");
-}
+    if let ColumnEqualityResult::Match(row) = result {
+        println!("{row:?}");
+    }
 
-let mut rows = archive.table_rows(b"public", b"orders")?;
-while let Some(row) = rows.next_row()? {
-    println!("{:?}", row);
+    Ok(())
 }
 ```
 
-`next_row(&mut self)`を通常の`Iterator`にしないのは意図的です。borrowed `Row`は再利用可能な内部storageを参照し、次のmutable reader operationまでだけ有効です。
-
-明示的なtotal-work budgetの下で、最初に一致する1行を取得できます。
-
-```rust
-use pgdumpx::ScanLimits;
-
-let mut rows = archive.table_rows(b"public", b"orders")?;
-let order_number = rows
-    .column_index(b"order_number")?
-    .ok_or(/* application error */)?;
-
-let scan_limits = ScanLimits::unlimited()
-    .with_max_rows(100_000)
-    .with_max_decompressed_bytes(64 * 1024 * 1024);
-
-let row = rows.find_first_with_limits(scan_limits, |row| {
-    row.field(order_number) == Some(FieldRef::Bytes(b"123456"))
-})?;
-```
-
-`find_first`は追加のoperation-level scan budgetを適用しないconvenience pathです。`find_first_with_limits`は同じstreaming parser / predicate loopへ`ScanLimits`を適用します。
+`next_row(&mut self)`を通常の`Iterator`にしないのは意図的です。borrowed `Row`は再利用可能な内部storageを参照し、次のmutable reader operationまでだけ有効です。`find_first` / `find_first_with_limits`はgeneric predicate pathとして残り、equality helperも同じscanへ委譲します。
 
 `column_index()`は次を区別します。
 
@@ -259,6 +287,14 @@ benchmark harnessはdataset / generator、command/API path、hardware/OS、exact
 
 v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](docs/V0.1-RELEASE-AUDIT.md)に記録しています。
 
+## Contribution / support
+
+- code / documentation changeを提案する前に[CONTRIBUTING.md](CONTRIBUTING.md)を確認してください。
+- 再現可能なbugは[GitHub Issues](https://github.com/tappe9/pgdumpx/issues)で報告してください。
+- vulnerabilityは[SECURITY.md](SECURITY.md)に従ってprivateに報告し、public issueへexploit detailを投稿しないでください。
+- compatibility / performance claimの前に、evidence-backedな[compatibility matrix](docs/COMPATIBILITY.md)と[benchmark methodology](benchmarks/README.md)を確認してください。
+- package / publication boundaryは[packaging constraints](docs/PACKAGING.md)と[release process](docs/RELEASING.md)を参照してください。
+
 ## Related projects
 
 - [`libpgdump`](https://github.com/gmr/libpgdump) — PostgreSQL custom / directory / tar dumpをread/writeするRust library
@@ -281,7 +317,7 @@ v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](
 - [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI default、根拠、boundary、migration guidance
 - [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — 最終DoD-to-evidence mapping
-- [Roadmap](ROADMAP.md) — delivered v0.1 slice、planned v0.2 issue sequence、later candidate scope
+- [Roadmap](ROADMAP.md) — delivered v0.1 / v0.2 work、deferred candidate scope
 - [Architecture Decision Records](docs/adr/) — accepted / superseded design decisions
 - [Contributing](CONTRIBUTING.md) — contribution / document-update policy
 - [Security policy](SECURITY.md) — vulnerability reporting / resource-threat model
