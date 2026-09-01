@@ -1,15 +1,21 @@
-use pgdumpx::{
-    Archive, Compression, DataLocation, EntryReadLimits, FieldRef, OwnedField, PgDumpError,
-};
+use pgdumpx::{Archive, Compression, PgDumpError};
+use std::{io::Cursor, path::PathBuf};
+
+#[cfg(feature = "zstd")]
+use pgdumpx::{DataLocation, EntryReadLimits, FieldRef, OwnedField};
+#[cfg(feature = "zstd")]
 use std::{
     cell::Cell,
-    io::{self, Cursor, Read, Seek, SeekFrom},
-    path::PathBuf,
+    io::{self, Read, Seek, SeekFrom},
 };
 
+#[cfg(feature = "zstd")]
 const POSITION_SET: u8 = 2;
+#[cfg(feature = "zstd")]
 const BLK_DATA: u8 = 1;
+#[cfg(feature = "zstd")]
 const ZSTD_COMPRESSION: u8 = 3;
+#[cfg(feature = "zstd")]
 const EXPECTED_COPY_STREAM: &[u8] = b"1\tEARLY-100\tcustomer-a\tplain\t\n\
 2\tSECOND-200\trepeat\ttab\\tvalue\tfilled\n\
 3\tTHIRD-300\tcustomer-c\tline1\\nline2\tfilled\n\
@@ -177,6 +183,7 @@ fn zstd_metadata_opens_but_selected_read_reports_backend_unavailable() {
     ));
 }
 
+#[cfg(feature = "zstd")]
 fn pgdump_error(error: &io::Error) -> &PgDumpError {
     error
         .get_ref()
@@ -190,6 +197,7 @@ fn fixture() -> Vec<u8> {
     std::fs::read(path).expect("official Zstandard fixture must be readable")
 }
 
+#[cfg(feature = "zstd")]
 fn compressed_entry_bytes(bytes: &[u8]) -> Vec<u8> {
     let archive = Archive::open(Cursor::new(bytes.to_vec())).unwrap();
     let id = archive
@@ -226,6 +234,7 @@ fn compressed_entry_bytes(bytes: &[u8]) -> Vec<u8> {
     compressed
 }
 
+#[cfg(feature = "zstd")]
 fn read_archive_int(bytes: &[u8], offset: usize) -> (i32, usize) {
     let negative = bytes[offset] != 0;
     let magnitude = u32::from_le_bytes(bytes[offset + 1..offset + 5].try_into().unwrap());
@@ -233,6 +242,7 @@ fn read_archive_int(bytes: &[u8], offset: usize) -> (i32, usize) {
     (if negative { -value } else { value }, offset + 5)
 }
 
+#[cfg(feature = "zstd")]
 fn archive_with_block(compression: u8, block: &[u8]) -> Vec<u8> {
     let mut bytes = complete_header(compression);
     write_int(&mut bytes, 1);
@@ -262,6 +272,7 @@ fn archive_with_block(compression: u8, block: &[u8]) -> Vec<u8> {
     bytes
 }
 
+#[cfg(feature = "zstd")]
 fn complete_header(compression: u8) -> Vec<u8> {
     let mut bytes = b"PGDMP".to_vec();
     bytes.extend_from_slice(&[1, 16, 0]);
@@ -278,6 +289,7 @@ fn complete_header(compression: u8) -> Vec<u8> {
     bytes
 }
 
+#[cfg(feature = "zstd")]
 fn data_block(marker: u8, dump_id: i32, chunks: &[&[u8]]) -> Vec<u8> {
     let mut block = vec![marker];
     write_int(&mut block, dump_id);
@@ -289,11 +301,13 @@ fn data_block(marker: u8, dump_id: i32, chunks: &[&[u8]]) -> Vec<u8> {
     block
 }
 
+#[cfg(feature = "zstd")]
 fn write_int(output: &mut Vec<u8>, value: i32) {
     output.push(u8::from(value.is_negative()));
     output.extend_from_slice(&value.unsigned_abs().to_le_bytes());
 }
 
+#[cfg(feature = "zstd")]
 fn write_string(output: &mut Vec<u8>, value: Option<&[u8]>) {
     match value {
         Some(bytes) => {
@@ -304,11 +318,13 @@ fn write_string(output: &mut Vec<u8>, value: Option<&[u8]>) {
     }
 }
 
+#[cfg(feature = "zstd")]
 #[derive(Debug)]
 struct OneByteReader {
     inner: Cursor<Vec<u8>>,
 }
 
+#[cfg(feature = "zstd")]
 impl OneByteReader {
     fn new(bytes: Vec<u8>) -> Self {
         Self {
@@ -317,6 +333,7 @@ impl OneByteReader {
     }
 }
 
+#[cfg(feature = "zstd")]
 impl Read for OneByteReader {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         if output.is_empty() {
@@ -326,6 +343,7 @@ impl Read for OneByteReader {
     }
 }
 
+#[cfg(feature = "zstd")]
 impl Seek for OneByteReader {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
         self.inner.seek(position)
