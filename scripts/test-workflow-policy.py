@@ -7,7 +7,6 @@ import re
 import sys
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
@@ -153,6 +152,15 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_accepts_bounded_pinned_read_only_workflow(self) -> None:
         self.assertEqual(self.validate(_VALID_WORKFLOW), [])
+
+    def test_rejects_additional_write_permission(self) -> None:
+        errors = self.validate(
+            _VALID_WORKFLOW.replace(
+                "  contents: read\n",
+                "  contents: read\n  issues: write\n",
+            )
+        )
+        self.assertTrue(any("only contents: read" in error for error in errors))
 
     def test_rejects_floating_action_revision(self) -> None:
         errors = self.validate(
