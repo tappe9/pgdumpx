@@ -15,7 +15,7 @@ publish = ["crates-io"]
 
 [[bin]]
 name = "pgdumpx"
-path = "src/main.rs"
+path = "src/entrypoint.rs"
 doc = false
 
 [features]
