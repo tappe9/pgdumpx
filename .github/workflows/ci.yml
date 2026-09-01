@@ -36,6 +36,9 @@ jobs:
       - name: Fuzz campaign contract
         run: python3 scripts/test-fuzz-campaign.py
 
+      - name: Workflow policy contract
+        run: python3 scripts/test-workflow-policy.py
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
