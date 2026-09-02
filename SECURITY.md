@@ -4,9 +4,15 @@ pgdumpx parses archive files that may be attacker controlled. Parser safety and 
 
 ## Supported versions
 
-Security fixes target the latest published 0.2.x release, when one exists, and the current `main` branch. A published release is the stable package source for users; `main` may contain unreleased changes and should be identified by exact commit when reporting or testing an issue.
+Security fixes target the latest published 0.2.x release and the current `main` branch.
 
-If no package has been published yet, use the current source tree and report the exact commit. Source preparation, a Cargo version, or a changelog entry does not by itself prove that a version is available from crates.io. Check the registry and repository release state independently.
+| Channel | Support status | Location |
+| --- | --- | --- |
+| Latest stable release | Supported | [`pgdumpx 0.2.0`](https://crates.io/crates/pgdumpx/0.2.0) and [`v0.2.0`](https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0) |
+| Current `main` | Supported for unreleased fixes | Identify reports and test results by exact commit |
+| Older or yanked releases | Case-by-case | Upgrade to the latest supported patch release where possible |
+
+Registry history is available at <https://crates.io/crates/pgdumpx>, and source releases are available at <https://github.com/tappe9/pgdumpx/releases>. A published release is the stable package source for users; `main` may contain unreleased changes and should be identified by exact commit when reporting or testing an issue.
 
 ## Reporting a vulnerability
 
@@ -92,43 +98,8 @@ Raw extraction byte limits count decompressed bytes exposed to the caller or cop
 
 ## COPY representation boundary
 
-The v0.1 row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
+The row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
 
 Unsupported representations fail explicitly before row parsing where the necessary metadata is available.
 
 See [COPY text contract](docs/COPY-TEXT.md) for the byte-level row contract.
-
-## Dependency advisory policy
-
-The committed `Cargo.lock` is checked with cargo-deny `0.20.2` and the repository-root `[advisories]` policy. Dependency-related pull requests and `main` pushes run the check, a daily `03:17 UTC` schedule refreshes the RustSec database without requiring a source change, and maintainers can use `workflow_dispatch` for manual validation.
-
-When a check fails:
-
-1. read the cargo-deny diagnostic for the advisory ID, affected crate/version, and dependency path;
-2. identify whether the affected dependency is used by the library, CLI, development, benchmark, or fuzz scope;
-3. prefer updating the lockfile, upgrading or replacing the dependency, or reducing the affected feature surface;
-4. rerun the repository quality gates and `cargo deny --locked check advisories`;
-5. do not place exploit details, sensitive crash inputs, credentials, or private archive data in public logs or issues.
-
-An exception is a temporary last resort. `deny.toml` must use an object ignore with an advisory ID or yanked crate plus a non-empty reason. `advisory-exceptions.toml` must contain one matching record with the same reason, affected scope, removal condition, and either a review date or tracking Issue. `scripts/verify-advisory-policy.py` rejects bare IDs, incomplete or unmatched metadata, and metadata left behind after an ignore is removed. Delete both records when the removal condition is met.
-
-For cargo-deny tool or schema updates, review the current official release and configuration documentation, update the exact version in the workflow, tests, and documentation together, install it with `--locked`, and manually dispatch the workflow before merging. License, source allowlist, and duplicate-version checks remain outside this policy.
-
-## Fuzzing
-
-The baseline invariants are:
-
-```text
-arbitrary archive bytes -> successful parse/extraction or typed error, never parser panic
-arbitrary COPY bytes    -> rows or typed error, never parser panic
-```
-
-The committed `cargo-fuzz` harnesses cover raw archive opening, TOC/metadata parsing with structural limits, selected-entry block/chunk framing, COPY row/escape parsing, COPY column metadata, and structural/scan/raw-output limit accounting. Each harness uses bounded inputs and the normal production parser/limit paths.
-
-Pull-request CI compiles all six targets and retains the short deterministic 64-run smoke gate. A dedicated workflow runs all six targets weekly and on manual dispatch with a finite five-minute budget per target, 64 KiB maximum inputs, a 10-second individual-input timeout, and a 15-minute job timeout. Relevant branch pushes use a 10-second target budget to validate the workflow without turning pull-request CI into a long campaign.
-
-The campaign runner saves each command's exit status and execution log, allows the `if: always()` artifact step to collect target failure artifacts and logs, then re-emits the original status. Crash, hang, sanitizer, and other non-zero results therefore remain job failures. Artifacts are target/commit/run-specific, retained for 7 days, and exclude corpus evolution.
-
-The repository campaign may use only committed, reviewed, non-sensitive seeds and generated mutations. Actions artifacts are not a confidential vulnerability-disclosure channel: never introduce production dumps, customer data, credentials, personal data, proprietary inputs, or embargoed vulnerability material into the scheduled workflow. Security-sensitive findings must move to private reporting before payloads or exploit details are shared.
-
-When fuzzing finds a panic, hang, sanitizer finding, or boundary defect, minimize the input and add a deterministic failing regression test through the same production path before changing production code. A discovered corpus input may be committed only after provenance, checksum, minimization, public-distribution safety, and reviewer approval are recorded. Reproducible commands, target frequency, bounds, artifact handling, triage, and corpus policy are documented in [`fuzz/README.md`](fuzz/README.md).
