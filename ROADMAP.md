@@ -1,8 +1,8 @@
 # pgdumpx Roadmap
 
-Status: **v0.1 foundation complete; v0.2 implementation complete; the 0.2.0 publication process is tracked separately from source delivery.**
+Status: **v0.2.0 released; v0.1 foundation and v0.2 implementation complete; v0.3+ candidates remain deferred.**
 
-This roadmap records completed v0.1/v0.2 work and explicitly deferred candidates. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final v0.1 evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, GitHub Tracking Issue #30 records the v0.1 sequence, and [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56) records the completed v0.2 sequence.
+This roadmap records completed v0.1/v0.2 work, the published `0.2.0` release, and explicitly deferred candidates. The normative v0.1 contract remains in `docs/REQUIREMENTS.md`, final v0.1 evidence is mapped in `docs/V0.1-RELEASE-AUDIT.md`, GitHub Tracking Issue #30 records the v0.1 sequence, and [Tracking Issue #56](https://github.com/tappe9/pgdumpx/issues/56) records the completed v0.2 sequence.
 
 ## v0.1 — Bounded row scanning for Custom Format archives
 
@@ -179,7 +179,7 @@ Stable exit behavior:
 
 No-match remains distinct from failure.
 
-## v0.2 — Completed
+## v0.2 — Completed and released
 
 The v0.2 implementation builds on the v0.1 `Read + Seek`, validated-entry, decompression, row-parser, and raw-output paths. It preserves the single mutable seekable-source invariant and does not add parallel or indexed alternatives.
 
@@ -190,7 +190,15 @@ The v0.2 implementation builds on the v0.1 `Read + Seek`, validated-entry, decom
 - [#89](https://github.com/tappe9/pgdumpx/issues/89) hardened GitHub Actions with pinned dependencies, bounded execution, least-privilege permissions, and cancellation policy.
 - [#92](https://github.com/tappe9/pgdumpx/issues/92) prepared reproducible `pgdumpx 0.2.0` and `pgdumpx-cli 0.2.0` package metadata, changelog, release notes, packaging verification, and staged release instructions.
 
-The `0.2.0` source and package contract is complete. Registry publication, the annotated tag, and the GitHub Release follow the independently verified process in `docs/RELEASING.md`; this roadmap does not infer their live state.
+### Published artifacts
+
+- Library: <https://crates.io/crates/pgdumpx/0.2.0>
+- CLI: <https://crates.io/crates/pgdumpx-cli/0.2.0>
+- Library API documentation: <https://docs.rs/pgdumpx/0.2.0/pgdumpx/>
+- GitHub Release: <https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0>
+- Release commit: `aaae67749e3f389bdde5c28f555436508e219fc8`
+
+The library and CLI packages were published on 2026-09-01 UTC in dependency order and remain non-yanked. The annotated `v0.2.0` tag and GitHub Release point to the verified release commit. See `docs/RELEASING.md` for the completed release record and reusable staged procedure.
 
 ## v0.3+ — Deferred candidates
 

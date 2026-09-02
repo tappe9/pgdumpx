@@ -4,9 +4,15 @@ pgdumpx parses archive files that may be attacker controlled. Parser safety and 
 
 ## Supported versions
 
-Security fixes target the latest published 0.2.x release, when one exists, and the current `main` branch. A published release is the stable package source for users; `main` may contain unreleased changes and should be identified by exact commit when reporting or testing an issue.
+Security fixes target the latest published 0.2.x release and the current `main` branch.
 
-If no package has been published yet, use the current source tree and report the exact commit. Source preparation, a Cargo version, or a changelog entry does not by itself prove that a version is available from crates.io. Check the registry and repository release state independently.
+| Channel | Support status | Location |
+| --- | --- | --- |
+| Latest stable release | Supported | [`pgdumpx 0.2.0`](https://crates.io/crates/pgdumpx/0.2.0) and [`v0.2.0`](https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0) |
+| Current `main` | Supported for unreleased fixes | Identify reports and test results by exact commit |
+| Older or yanked releases | Case-by-case | Upgrade to the latest supported patch release where possible |
+
+Registry history is available at <https://crates.io/crates/pgdumpx>, and source releases are available at <https://github.com/tappe9/pgdumpx/releases>. A published release is the stable package source for users; `main` may contain unreleased changes and should be identified by exact commit when reporting or testing an issue.
 
 ## Reporting a vulnerability
 
@@ -92,7 +98,7 @@ Raw extraction byte limits count decompressed bytes exposed to the caller or cop
 
 ## COPY representation boundary
 
-The v0.1 row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
+The row API parses supported pg_dump-generated COPY text table data only. INSERT-based dump modes and Binary COPY are not treated as valid COPY text merely because their containing Custom Format entry is readable.
 
 Unsupported representations fail explicitly before row parsing where the necessary metadata is available.
 

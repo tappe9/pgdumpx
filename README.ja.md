@@ -1,8 +1,14 @@
 # pgdumpx
 
+[![crates.io](https://img.shields.io/crates/v/pgdumpx.svg)](https://crates.io/crates/pgdumpx)
+[![docs.rs](https://docs.rs/pgdumpx/badge.svg)](https://docs.rs/pgdumpx/0.2.0/pgdumpx/)
+[![CI](https://github.com/tappe9/pgdumpx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tappe9/pgdumpx/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
 **PostgreSQL Custom Formatをrestoreせず、byte-orientedなrowとして安全にscanするRustライブラリ / CLI。**
 
-> 現在のソースバージョン: `0.2.0`。v0.1のfoundationとv0.2の機能は実装済みです。registry commandを使うには、対象package versionがcrates.ioに存在する必要があります。ソースからのinstallはregistry公開状態に依存しません。
+> `pgdumpx 0.2.0`はcrates.ioで公開済みです。再利用可能なRustライブラリと、install可能なCLI packageの両方を提供します。
 
 pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベースへrestoreせずに検査するread-onlyのRustライブラリ / CLIです。
 
@@ -14,8 +20,18 @@ pgdumpxは、PostgreSQL Custom Format (`pg_dump -Fc`) archiveを、データベ�
 
 [English README](README.md)
 
+## 公開成果物
+
+| 成果物 | Version | 用途 |
+| --- | --- | --- |
+| [`pgdumpx`](https://crates.io/crates/pgdumpx/0.2.0) | `0.2.0` | 再利用可能なRustライブラリ |
+| [`pgdumpx-cli`](https://crates.io/crates/pgdumpx-cli/0.2.0) | `0.2.0` | `pgdumpx` executableをinstallするCLI package |
+| [API documentation](https://docs.rs/pgdumpx/0.2.0/pgdumpx/) | `0.2.0` | 公開済みlibrary rustdoc |
+| [GitHub Release](https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0) | `v0.2.0` | source releaseとrelease notes |
+
 ## 現在の開発状況
 
+- **v0.2.0公開完了:** library、CLI package、annotated source tag、GitHub Release、API documentationを上記リンクから利用できます。
 - **v0.1 foundation完了:** metadata inspection、4種類のcompression backend、bounded raw extraction、COPY row parsing、first-match search、各種limits、fuzz / benchmark / CI evidence、rustdoc、packaging verification。
 - **v0.2完了:** file-oriented opening、owned byte-oriented selector、reusable extraction plan、deterministicなsequential multi-table extraction、metadata filtering、exact named-column equality helperを実装済みです。
 - **correctness / maintenance follow-up完了:** destination flush failure、aggregate metadata budget、terminal row-reader error、field-count validation、linear duplicate detection、finite CLI scan default、feature matrix test、scheduled fuzz、advisory policy、workflow hardeningを現在のsourceに含みます。
@@ -112,26 +128,33 @@ unsupported representationはCOPY textとして推測せず、row APIからtyped
 
 ## インストール
 
-### crates.io から
-
-crates.ioでpackage versionを確認してからinstallまたはdependency追加を行ってください。次のregistry commandには`0.2.0`がcrates.ioに存在することが必要です。
+### crates.ioからCLIをinstall
 
 ```bash
-cargo info pgdumpx@0.2.0
-cargo info pgdumpx-cli@0.2.0
 cargo install pgdumpx-cli --version 0.2.0 --locked
+pgdumpx --version
+pgdumpx --help
 ```
 
-library consumerは次を追加できます。
+package名は`pgdumpx-cli`、installされるexecutable名は`pgdumpx`です。
+
+### crates.ioからlibraryを利用
 
 ```toml
 [dependencies]
 pgdumpx = "0.2.0"
 ```
 
+公開済みAPI documentationは[docs.rs](https://docs.rs/pgdumpx/0.2.0/pgdumpx/)で確認できます。registry metadataは次のcommandでも確認できます。
+
+```bash
+cargo info pgdumpx@0.2.0
+cargo info pgdumpx-cli@0.2.0
+```
+
 ### ソースから
 
-この手順はcrates.ioの公開状態に依存しません。
+現在の`main`やlocal変更を試す場合はsource pathを利用します。
 
 ```bash
 git clone https://github.com/tappe9/pgdumpx.git
@@ -188,7 +211,7 @@ APIでは次を別のlimitとして扱います。
 
 `Limits::default()`はfiniteなcompatibility-oriented defaultで、`Archive::open_with_limits`ではTOC / string / dependency / row / fieldへより厳しいlimitを指定できます。`ScanLimits::default()`と`ScanLimits::unlimited()`はoperation-levelの2つのoptional budgetを未設定にします。`max_rows = N`では、一致rowを含めて最大`N`件のcomplete rowだけをyield / evaluateできます。decompressed-byte budgetは、field separator、row terminator、escape spelling、消費したCOPY terminatorを含む、parserが消費した物理COPY byteを数えます。logical fieldのdecode後lengthや、decoder / `BufRead`が先読みした未消費byteは数えません。budgetをcrossするrowはyieldもpredicate評価もされず、limit / consumed-work contextを持つtyped resource errorを返します。
 
-詳細は[Public API design](docs/API-DESIGN.md)とcrate rustdocを参照してください。
+詳細は[Public API design](docs/API-DESIGN.md)と[公開済みcrate documentation](https://docs.rs/pgdumpx/0.2.0/pgdumpx/)を参照してください。
 
 ## CLI
 
@@ -204,7 +227,7 @@ pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
   backup.dump public.orders order_number 123456
 ```
 
-table-oriented commandの`<SCHEMA.TABLE>`はASCIIの`.`をちょうど1個含み、schema / tableの両componentをnon-emptyとします。SQL identifierのquote / escapeや`.`を含むidentifierはv0.1 CLIでは未対応です。CLI境界のquery identifier / valueはUTF-8で、Rust APIはbyte-orientedのままです。
+table-oriented commandの`<SCHEMA.TABLE>`はASCIIの`.`をちょうど1個含み、schema / tableの両componentをnon-emptyとします。SQL identifierのquote / escapeや`.`を含むidentifierは現在のCLI grammarでは未対応です。CLI境界のquery identifier / valueはUTF-8で、Rust APIはbyte-orientedのままです。
 
 ### `inspect` / `list`
 
@@ -306,7 +329,7 @@ v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](
 
 各documentのprimary responsibilityを分け、重複とdriftを抑えます。
 
-- [README](README.md) / [日本語 README](README.ja.md) — product value、現在の実装/release status、example、high-level scope
+- [README](README.md) / [日本語 README](README.ja.md) — product value、公開済みrelease status、example、high-level scope
 - [Requirements](docs/REQUIREMENTS.md) — normative v0.1 behaviorとDefinition of Done
 - [Architecture](ARCHITECTURE.md) — 実装済みboundaryとdata flow
 - [Public API design](docs/API-DESIGN.md) — 実装済みRust API semanticsとownership/resource contract
@@ -315,9 +338,10 @@ v0.1の最終Definition of Done evidence mappingは[docs/V0.1-RELEASE-AUDIT.md](
 - [Compatibility matrix](docs/COMPATIBILITY.md) — targetとfixture-verified supportの区別
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget / partial-output semantics
 - [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI default、根拠、boundary、migration guidance
-- [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary
+- [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundaryと公開済みpackage record
+- [Release process](docs/RELEASING.md) — release procedureと完了済みrelease record
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — 最終DoD-to-evidence mapping
-- [Roadmap](ROADMAP.md) — delivered v0.1 / v0.2 work、deferred candidate scope
+- [Roadmap](ROADMAP.md) — delivered / published v0.1・v0.2 work、deferred candidate scope
 - [Architecture Decision Records](docs/adr/) — accepted / superseded design decisions
 - [Contributing](CONTRIBUTING.md) — contribution / document-update policy
 - [Security policy](SECURITY.md) — vulnerability reporting / resource-threat model

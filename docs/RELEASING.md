@@ -1,6 +1,21 @@
 # Release process
 
-This document defines the staged publication procedure for `pgdumpx 0.2.0`, the first public release of both workspace packages.
+This document defines the staged publication procedure for `pgdumpx` and records the completed `0.2.0` first public release.
+
+## 0.2.0 completion record
+
+The release sequence completed successfully on 2026-09-01 UTC:
+
+| Item | Result |
+| --- | --- |
+| Published library package | [`pgdumpx 0.2.0`](https://crates.io/crates/pgdumpx/0.2.0), published 2026-09-01 12:36:29 UTC |
+| Published CLI package | [`pgdumpx-cli 0.2.0`](https://crates.io/crates/pgdumpx-cli/0.2.0), published 2026-09-01 12:36:56 UTC |
+| Release commit | `aaae67749e3f389bdde5c28f555436508e219fc8` |
+| Git tag | `v0.2.0`, resolving to the release commit |
+| GitHub Release | <https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0> |
+| Library documentation | <https://docs.rs/pgdumpx/0.2.0/pgdumpx/> |
+
+Both crates.io versions remain non-yanked. Published versions are immutable; this completion record does not authorize rebuilding or overwriting the released archives.
 
 ## Release identity
 
@@ -15,6 +30,8 @@ This document defines the staged publication procedure for `pgdumpx 0.2.0`, the 
 | Changelog range | repository inception through the release commit |
 
 Both packages use the same version for the initial release train. The CLI retains a path dependency for workspace development and a matching `0.2.0` version requirement for published packages.
+
+For a future release, replace the version, tag, release-notes path, and changelog range consistently before executing these steps.
 
 ## Preconditions
 
@@ -99,17 +116,17 @@ cargo info pgdumpx@0.2.0
 cargo info pgdumpx-cli@0.2.0
 ```
 
-The tag must resolve to `RELEASE_SHA`. docs.rs builds are asynchronous; verify the `pgdumpx 0.2.0` documentation after the registry has accepted the package. The CLI package intentionally has no public Rust library target, so its primary usage documentation remains the repository README and CLI help.
+The tag must resolve to `RELEASE_SHA`. Verify the `pgdumpx` library documentation on docs.rs after the registry accepts the package. The CLI package intentionally has no public Rust library target, so its primary usage documentation remains the repository README and CLI help.
 
 ## Partial publication recovery
 
 ### Library published, CLI not published
 
-If the library publishes but the CLI fails, do not create `v0.2.0` or a GitHub Release and do not attempt to overwrite `pgdumpx 0.2.0`.
+If the library publishes but the CLI fails, do not create the corresponding tag or GitHub Release and do not attempt to overwrite the published library version.
 
-- If the CLI package itself is the only problem and `pgdumpx-cli 0.2.0` was never accepted, correct the CLI or release metadata, re-run every gate, and publish the same still-unpublished CLI version against `pgdumpx 0.2.0`.
-- If the correction requires changing the published library API or package, prepare `0.2.1` for both packages and repeat the library-first sequence.
-- Yank `pgdumpx 0.2.0` only for a severe correctness or security defect that justifies excluding it from new dependency resolution. Yanking does not delete the published archive.
+- If the CLI package itself is the only problem and its version was never accepted, correct the CLI or release metadata, re-run every gate, and publish the same still-unpublished CLI version against the published library.
+- If the correction requires changing the published library API or package, prepare the next patch version for both packages and repeat the library-first sequence.
+- Yank a published library only for a severe correctness or security defect that justifies excluding it from new dependency resolution. Yanking does not delete the published archive.
 
 ### Packages published, tag or Release creation failed
 

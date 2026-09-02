@@ -1,8 +1,14 @@
 # pgdumpx
 
+[![crates.io](https://img.shields.io/crates/v/pgdumpx.svg)](https://crates.io/crates/pgdumpx)
+[![docs.rs](https://docs.rs/pgdumpx/badge.svg)](https://docs.rs/pgdumpx/0.2.0/pgdumpx/)
+[![CI](https://github.com/tappe9/pgdumpx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tappe9/pgdumpx/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
 **A bounded, byte-oriented row scanner for PostgreSQL custom-format dumps.**
 
-> Current source version: `0.2.0`. The v0.1 foundation and v0.2 functionality are implemented. Registry commands require the exact package version to be available on crates.io; the source installation path works independently of registry publication.
+> `pgdumpx 0.2.0` is published on crates.io as both a reusable Rust library and an installable CLI package.
 
 pgdumpx is a read-only Rust library and CLI for inspecting PostgreSQL custom-format (`pg_dump -Fc`) archives without restoring them into a database.
 
@@ -14,8 +20,18 @@ A representative use case is:
 
 [日本語 README](README.ja.md)
 
+## Published artifacts
+
+| Artifact | Version | Purpose |
+| --- | --- | --- |
+| [`pgdumpx`](https://crates.io/crates/pgdumpx/0.2.0) | `0.2.0` | Reusable Rust library |
+| [`pgdumpx-cli`](https://crates.io/crates/pgdumpx-cli/0.2.0) | `0.2.0` | Installs the `pgdumpx` executable |
+| [API documentation](https://docs.rs/pgdumpx/0.2.0/pgdumpx/) | `0.2.0` | Published library rustdoc |
+| [GitHub Release](https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0) | `v0.2.0` | Source release and release notes |
+
 ## Current development status
 
+- **v0.2.0 published:** the library, CLI package, annotated source tag, GitHub Release, and API documentation are available from the links above.
 - **v0.1 foundation completed:** metadata inspection, four compression backends, bounded raw extraction, COPY row parsing, first-match search, limits, fuzz/benchmark/CI evidence, rustdoc, and packaging verification.
 - **v0.2 completed:** file-oriented opening, owned byte-oriented selectors, reusable extraction plans, deterministic sequential multi-table extraction, metadata filtering, and exact named-column equality helpers are implemented.
 - **Correctness and maintenance follow-ups completed:** destination flush failures, aggregate metadata budgets, terminal row-reader errors, field-count validation, linear duplicate detection, finite CLI scan defaults, feature-matrix testing, scheduled fuzzing, advisory policy, and workflow hardening are included in the current source.
@@ -112,26 +128,33 @@ All row searches remain sequential scans. The helpers add reusable selection pol
 
 ## Installation
 
-### From crates.io
-
-Registry commands require `0.2.0` to be available on crates.io. Check the exact versions before installing or adding the dependency:
+### CLI from crates.io
 
 ```bash
-cargo info pgdumpx@0.2.0
-cargo info pgdumpx-cli@0.2.0
 cargo install pgdumpx-cli --version 0.2.0 --locked
+pgdumpx --version
+pgdumpx --help
 ```
 
-Library consumers can add:
+The package name is `pgdumpx-cli`; the installed executable is named `pgdumpx`.
+
+### Library from crates.io
 
 ```toml
 [dependencies]
 pgdumpx = "0.2.0"
 ```
 
+Published API documentation is available on [docs.rs](https://docs.rs/pgdumpx/0.2.0/pgdumpx/). Registry metadata can also be inspected with:
+
+```bash
+cargo info pgdumpx@0.2.0
+cargo info pgdumpx-cli@0.2.0
+```
+
 ### From source
 
-This path works independently of crates.io publication:
+Use the source path to test the current `main` branch or local changes:
 
 ```bash
 git clone https://github.com/tappe9/pgdumpx.git
@@ -188,7 +211,7 @@ The API keeps three resource concepts separate:
 
 `Limits::default()` is finite and compatibility-oriented, and `Archive::open_with_limits` accepts stricter caller-selected TOC/string/dependency/row/field bounds. `ScanLimits::default()` and `ScanLimits::unlimited()` leave both operation-level budgets unset. `max_rows = N` permits at most `N` complete rows to be yielded or evaluated, including a matching row. The decompressed-byte scan budget counts physical COPY bytes consumed by the parser—including field separators, row terminators, escape spellings, and the COPY terminator when consumed—not logical decoded field length or unread decoder/`BufRead` lookahead. A crossing row is not yielded or passed to the predicate, and exhaustion is returned as a typed resource error with limit and consumed-work context.
 
-See [Public API design](docs/API-DESIGN.md) and the crate rustdoc for the complete public contract.
+See [Public API design](docs/API-DESIGN.md) and the [published crate documentation](https://docs.rs/pgdumpx/0.2.0/pgdumpx/) for the complete public contract.
 
 ## CLI
 
@@ -204,7 +227,7 @@ pgdumpx find --max-rows 100000 --max-decompressed-bytes 67108864 \
   backup.dump public.orders order_number 123456
 ```
 
-For table-oriented commands, `<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting/escaping and identifiers containing `.` are not supported by the v0.1 CLI. Query identifiers/values at the CLI boundary are UTF-8; the Rust API remains byte-oriented.
+For table-oriented commands, `<SCHEMA.TABLE>` contains exactly one ASCII `.` separator and non-empty schema and table components. SQL identifier quoting/escaping and identifiers containing `.` are not supported by the current CLI grammar. Query identifiers/values at the CLI boundary are UTF-8; the Rust API remains byte-oriented.
 
 ### `inspect` / `list`
 
@@ -306,7 +329,7 @@ These projects cover adjacent PostgreSQL dump use cases. pgdumpx keeps a deliber
 
 Each document has one primary responsibility to reduce duplication and drift:
 
-- [README](README.md) / [日本語 README](README.ja.md) — product value, current implementation/release status, examples, and high-level scope;
+- [README](README.md) / [日本語 README](README.ja.md) — product value, published release status, examples, and high-level scope;
 - [Requirements](docs/REQUIREMENTS.md) — normative v0.1 behavior and Definition of Done;
 - [Architecture](ARCHITECTURE.md) — implemented boundaries and data flow;
 - [Public API design](docs/API-DESIGN.md) — implemented Rust API semantics and ownership/resource contracts;
@@ -315,9 +338,10 @@ Each document has one primary responsibility to reduce duplication and drift:
 - [Compatibility matrix](docs/COMPATIBILITY.md) — target versus fixture-verified support;
 - [Bounded raw extraction](docs/RAW-EXTRACTION.md) — raw byte-budget and partial-output semantics;
 - [`find` scan-budget policy](docs/FIND-SCAN-LIMITS.md) — finite CLI defaults, evidence, boundary semantics, and migration guidance;
-- [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary;
+- [Packaging audit](docs/PACKAGING.md) — package/license/runtime dependency boundary and published package record;
+- [Release process](docs/RELEASING.md) — release procedure and completed release record;
 - [v0.1 release audit](docs/V0.1-RELEASE-AUDIT.md) — final DoD-to-evidence mapping;
-- [Roadmap](ROADMAP.md) — delivered v0.1/v0.2 work and deferred candidate scope;
+- [Roadmap](ROADMAP.md) — delivered and published v0.1/v0.2 work plus deferred candidate scope;
 - [Architecture Decision Records](docs/adr/) — accepted and superseded design decisions;
 - [Contributing](CONTRIBUTING.md) — contribution and document-update policy;
 - [Security policy](SECURITY.md) — vulnerability reporting and resource-threat model.
