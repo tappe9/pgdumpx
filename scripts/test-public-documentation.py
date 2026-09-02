@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SNIPPETS = {
     "README.md": [
         "`pgdumpx 0.2.0` is published on crates.io",
+        "## Installation",
+        "### CLI from crates.io",
+        "### Library from crates.io",
+        "### From source",
         "https://crates.io/crates/pgdumpx",
         "https://crates.io/crates/pgdumpx-cli",
         "https://docs.rs/pgdumpx/0.2.0/pgdumpx/",
@@ -23,6 +27,10 @@ REQUIRED_SNIPPETS = {
     ],
     "README.ja.md": [
         "`pgdumpx 0.2.0`はcrates.ioで公開済みです",
+        "## インストール",
+        "### crates.ioからCLIをinstall",
+        "### crates.ioからlibraryを利用",
+        "### ソースから",
         "https://crates.io/crates/pgdumpx",
         "https://crates.io/crates/pgdumpx-cli",
         "https://docs.rs/pgdumpx/0.2.0/pgdumpx/",
@@ -36,6 +44,11 @@ REQUIRED_SNIPPETS = {
     "ROADMAP.md": [
         "Status: **v0.2.0 released",
         "## v0.2 — Completed and released",
+        "### Delivered",
+        "#57–#63",
+        "#70–#78",
+        "#89",
+        "#92",
         "https://crates.io/crates/pgdumpx/0.2.0",
         "https://crates.io/crates/pgdumpx-cli/0.2.0",
         "https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0",
@@ -53,6 +66,8 @@ REQUIRED_SNIPPETS = {
         "Security fixes target the latest published 0.2.x release and the current `main` branch.",
         "https://crates.io/crates/pgdumpx",
         "https://github.com/tappe9/pgdumpx/releases",
+        "## Dependency advisory policy",
+        "## Fuzzing",
     ],
     "CONTRIBUTING.md": [
         "python3 scripts/test-public-documentation.py",
@@ -89,21 +104,29 @@ FORBIDDEN_SNIPPETS = {
         "Check the exact versions before installing",
         "v0.2 is planned",
         "no v0.2 production code has merged yet",
+        "**Planned next:** v0.2",
     ],
     "README.ja.md": [
         "registry commandを使うには、対象package versionがcrates.ioに存在する必要があります",
         "crates.ioでpackage versionを確認してから",
+        "v0.2は[Tracking Issue #56]",
         "v0.2のproduction codeはまだ`main`へmergeされていません",
+        "**次に実装するv0.2:**",
     ],
     "ROADMAP.md": [
         "the 0.2.0 publication process is tracked separately from source delivery",
         "this roadmap does not infer their live state",
         "## v0.2 candidate",
+        "No production implementation exists yet",
+    ],
+    "docs/API-DESIGN.md": [
+        "The current repository is still in the design phase",
     ],
     "SECURITY.md": [
         "If no package has been published yet",
         "when one exists",
         "pgdumpx has no published release version yet",
+        "## Current v0.1 scope boundary",
     ],
     "docs/PACKAGING.md": [
         "registry publication pending credentials",
