@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that public documentation matches pgdumpx 0.2.0."""
+"""Verify that public documentation matches the published pgdumpx 0.2.0 release."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_SNIPPETS = {
     "README.md": [
-        "Current source version: `0.2.0`",
-        "## Installation",
-        "### From crates.io",
-        "### From source",
-        "Registry commands require",
+        "`pgdumpx 0.2.0` is published on crates.io",
+        "https://crates.io/crates/pgdumpx",
+        "https://crates.io/crates/pgdumpx-cli",
+        "https://docs.rs/pgdumpx/0.2.0/pgdumpx/",
+        "cargo install pgdumpx-cli --version 0.2.0 --locked",
         "`Archive::open_path`",
         "`TableSelector`",
         "`ExtractionPlan`",
@@ -22,11 +22,11 @@ REQUIRED_SNIPPETS = {
         "`find_first_equal_with_limits`",
     ],
     "README.ja.md": [
-        "現在のソースバージョン: `0.2.0`",
-        "## インストール",
-        "### crates.io から",
-        "### ソースから",
-        "crates.ioでpackage versionを確認してから",
+        "`pgdumpx 0.2.0`はcrates.ioで公開済みです",
+        "https://crates.io/crates/pgdumpx",
+        "https://crates.io/crates/pgdumpx-cli",
+        "https://docs.rs/pgdumpx/0.2.0/pgdumpx/",
+        "cargo install pgdumpx-cli --version 0.2.0 --locked",
         "`Archive::open_path`",
         "`TableSelector`",
         "`ExtractionPlan`",
@@ -34,12 +34,11 @@ REQUIRED_SNIPPETS = {
         "`find_first_equal_with_limits`",
     ],
     "ROADMAP.md": [
-        "## v0.2 — Completed",
-        "### Delivered",
-        "#57–#63",
-        "#70–#78",
-        "#89",
-        "#92",
+        "Status: **v0.2.0 released",
+        "## v0.2 — Completed and released",
+        "https://crates.io/crates/pgdumpx/0.2.0",
+        "https://crates.io/crates/pgdumpx-cli/0.2.0",
+        "https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0",
         "## v0.3+ — Deferred candidates",
     ],
     "docs/API-DESIGN.md": [
@@ -51,9 +50,9 @@ REQUIRED_SNIPPETS = {
         "## 16.1 Exact named-column equality",
     ],
     "SECURITY.md": [
-        "latest published 0.2.x release",
-        "current `main`",
-        "If no package has been published yet",
+        "Security fixes target the latest published 0.2.x release and the current `main` branch.",
+        "https://crates.io/crates/pgdumpx",
+        "https://github.com/tappe9/pgdumpx/releases",
     ],
     "CONTRIBUTING.md": [
         "python3 scripts/test-public-documentation.py",
@@ -61,34 +60,62 @@ REQUIRED_SNIPPETS = {
         "python3 scripts/verify-release-packaging.py",
         "[Release procedure](docs/RELEASING.md)",
     ],
+    "docs/PACKAGING.md": [
+        "Status: **0.2.0 published on crates.io**",
+        "`pgdumpx 0.2.0` — published 2026-09-01 12:36:29 UTC",
+        "`pgdumpx-cli 0.2.0` — published 2026-09-01 12:36:56 UTC",
+        "ef4d0cb73fdf21a87dd7e2515adf83cdf4415e13707dfed41bd9ad4576e9dd6b",
+        "9a6f0d8f690d4ab65bc9a2e5079397966b12d473629bdd21cfc939bcb56414fe",
+    ],
+    "docs/RELEASING.md": [
+        "## 0.2.0 completion record",
+        "Published library package",
+        "Published CLI package",
+        "GitHub Release",
+        "https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0",
+    ],
+    "docs/release-notes/0.2.0.md": [
+        "## Published artifacts",
+        "https://crates.io/crates/pgdumpx/0.2.0",
+        "https://crates.io/crates/pgdumpx-cli/0.2.0",
+        "https://docs.rs/pgdumpx/0.2.0/pgdumpx/",
+        "cargo install pgdumpx-cli --version 0.2.0 --locked",
+    ],
 }
 
 FORBIDDEN_SNIPPETS = {
     "README.md": [
+        "Registry commands require the exact package version to be available",
+        "Check the exact versions before installing",
         "v0.2 is planned",
         "no v0.2 production code has merged yet",
-        "**Planned next:** v0.2",
     ],
     "README.ja.md": [
-        "v0.2は[Tracking Issue #56]",
+        "registry commandを使うには、対象package versionがcrates.ioに存在する必要があります",
+        "crates.ioでpackage versionを確認してから",
         "v0.2のproduction codeはまだ`main`へmergeされていません",
-        "**次に実装するv0.2:**",
     ],
     "ROADMAP.md": [
+        "the 0.2.0 publication process is tracked separately from source delivery",
+        "this roadmap does not infer their live state",
         "## v0.2 candidate",
-        "No production implementation exists yet",
-    ],
-    "docs/API-DESIGN.md": [
-        "The current repository is still in the design phase",
     ],
     "SECURITY.md": [
+        "If no package has been published yet",
+        "when one exists",
         "pgdumpx has no published release version yet",
-        "## Current v0.1 scope boundary",
+    ],
+    "docs/PACKAGING.md": [
+        "registry publication pending credentials",
+    ],
+    "docs/release-notes/0.2.0.md": [
+        "After both crates.io packages are published:",
     ],
 }
 
 ALIGNED_README_IDENTIFIERS = [
     "0.2.0",
+    "pgdumpx-cli",
     "Archive::open_path",
     "TableSelector",
     "ExtractionPlan",
@@ -146,7 +173,7 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
 
-    print("public documentation contract passed for pgdumpx 0.2.0")
+    print("public documentation contract passed for published pgdumpx 0.2.0")
     return 0
 
 
