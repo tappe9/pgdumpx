@@ -1,8 +1,29 @@
 # Packaging and dependency constraints
 
-Status: **0.2.0 publication preflight; registry publication pending credentials**
+Status: **0.2.0 published on crates.io**
 
-This document records the package, dependency, and staged-verification boundary for the first public release.
+This document records the package, dependency, staged-verification, and publication boundary for the first public release.
+
+## Published 0.2.0 record
+
+The two workspace packages were published in dependency order and remain non-yanked:
+
+- `pgdumpx 0.2.0` — published 2026-09-01 12:36:29 UTC;
+- `pgdumpx-cli 0.2.0` — published 2026-09-01 12:36:56 UTC.
+
+The crates.io package checksums recorded by the registry index are:
+
+```text
+pgdumpx      0.2.0  ef4d0cb73fdf21a87dd7e2515adf83cdf4415e13707dfed41bd9ad4576e9dd6b
+pgdumpx-cli  0.2.0  9a6f0d8f690d4ab65bc9a2e5079397966b12d473629bdd21cfc939bcb56414fe
+```
+
+Published package pages:
+
+- <https://crates.io/crates/pgdumpx/0.2.0>
+- <https://crates.io/crates/pgdumpx-cli/0.2.0>
+
+The matching source release is [`v0.2.0`](https://github.com/tappe9/pgdumpx/releases/tag/v0.2.0), created from commit `aaae67749e3f389bdde5c28f555436508e219fc8` after both packages were visible in the registry. Published crate archives and versions are immutable; later corrections require a new version unless yanking is justified by a severe correctness or security defect.
 
 ## Package set and versioning
 
@@ -66,10 +87,10 @@ The audit performs all of the following without uploading a package:
 8. runs `cargo publish --dry-run -p pgdumpx --locked`;
 9. verifies that the source tree remains unchanged.
 
-The CLI package is assembled and build-verified through workspace packaging before the library exists in crates.io. Its final publication dry-run is intentionally staged after `pgdumpx 0.2.0` is visible in the registry:
+The CLI package is assembled and build-verified through workspace packaging before a new library version exists in crates.io. Its final publication dry-run is intentionally staged after the matching `pgdumpx` version is visible in the registry:
 
 ```bash
 cargo publish --dry-run -p pgdumpx-cli --locked
 ```
 
-See `RELEASING.md` for the complete publication order, registry verification, tag creation, and recovery procedure. The preflight never uploads packages, creates tags, or creates a GitHub Release.
+See [RELEASING.md](RELEASING.md) for the complete publication order, registry verification, tag creation, and recovery procedure. The preflight never uploads packages, creates tags, or creates a GitHub Release.
